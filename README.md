@@ -49,3 +49,4 @@ Compatibility behavior implemented in the sync pipeline:
 
 This allows the edge app to keep an auditable reprint/cancel trail while remaining compatible with the current Supabase constraints.
 # controlia-os-hub
+# controlia-os-hub
