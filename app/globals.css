@@ -1,26 +1,218 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-bg: oklch(98% 0.01 240);
+  --color-surface: oklch(100% 0 0);
+  --color-border: oklch(90% 0.01 240);
+  --color-primary: oklch(62% 0.18 250);
+  --color-success: oklch(70% 0.17 145);
+  --color-warning: oklch(78% 0.16 75);
+  --color-danger: oklch(62% 0.22 25);
+
+  --color-foreground: oklch(18% 0.02 260);
+  --color-primary-foreground: oklch(99% 0 0);
+  --color-surface-2: color-mix(in oklab, var(--color-surface) 90%, var(--color-bg));
+  --color-muted: color-mix(in oklab, var(--color-foreground) 65%, var(--color-surface));
+  --color-bg-veil: color-mix(in oklab, var(--color-foreground) 24%, transparent);
+
+  --radius-base: 14px;
+  --shadow-soft: 0 10px 30px -16px oklch(20% 0.02 260 / 0.25);
+  --shadow-raise: 0 16px 34px -18px oklch(20% 0.02 260 / 0.34);
+
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 400ms ease;
+
+  --surface: var(--color-surface);
+  --surface-2: var(--color-surface-2);
+  --background: var(--color-bg);
+  --foreground: var(--color-foreground);
+  --muted: var(--color-muted);
+  --border: var(--color-border);
+  --primary: var(--color-primary);
+  --primary-foreground: var(--color-primary-foreground);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --danger: var(--color-danger);
 }
 
-@theme inline {
+html[data-theme="dark"] {
+  --color-bg: oklch(14% 0.02 260);
+  --color-surface: oklch(18% 0.02 260);
+  --color-border: oklch(30% 0.02 260);
+  --color-primary: oklch(70% 0.18 250);
+  --color-foreground: oklch(96% 0.01 240);
+  --color-primary-foreground: oklch(12% 0.02 260);
+  --color-surface-2: color-mix(in oklab, var(--color-surface) 84%, var(--color-bg));
+  --color-muted: color-mix(in oklab, var(--color-foreground) 64%, var(--color-surface));
+  --color-bg-veil: color-mix(in oklab, var(--color-foreground) 30%, transparent);
+  --shadow-soft: 0 12px 34px -18px oklch(0% 0 0 / 0.55);
+  --shadow-raise: 0 18px 40px -20px oklch(0% 0 0 / 0.65);
+}
+
+@theme {
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-bg-veil: var(--color-bg-veil);
+
+  --radius-base: var(--radius-base);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  min-height: 100%;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes modal-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@keyframes collapse-down {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes collapse-up {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.25;
+  }
+}
+
+.modal-overlay-in {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--foreground) 35%, transparent);
+  animation: overlay-in var(--transition-fast) forwards;
+}
+
+.modal-overlay-out {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--foreground) 35%, transparent);
+  animation: overlay-out var(--transition-fast) forwards;
+}
+
+.modal-panel-in {
+  animation: modal-in var(--transition-base) forwards;
+}
+
+.modal-panel-out {
+  animation: modal-out var(--transition-base) forwards;
+}
+
+.motion-lift {
+  transition: transform var(--transition-base), box-shadow var(--transition-base);
+}
+
+.motion-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-soft);
+}
+
+.page-enter {
+  animation: page-enter var(--transition-base) both;
+}
+
+.surface-card {
+  transition:
+    border-color var(--transition-base),
+    box-shadow var(--transition-base),
+    transform var(--transition-base);
+}
+
+.surface-card:hover {
+  border-color: color-mix(in oklab, var(--border) 76%, var(--primary));
+  box-shadow: var(--shadow-raise);
+  transform: translateY(-2px);
+}
+
+.segmented-tabs {
+  backdrop-filter: saturate(115%) blur(2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter,
+  .surface-card,
+  .surface-card:hover {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
 }

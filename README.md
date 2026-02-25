@@ -34,3 +34,18 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## POS Sync Notes
+
+The POS order sync endpoint (`/api/tenant/:tenantSlug/pos/sync/orders`) expects canonical order and event values:
+
+- Order status: `PAID` or `CANCELED`.
+- Order event type: `PRINTED`, `REPRINTED`, `PRINT_ERROR`, `CANCELED`, `CUT_PRINTED`.
+
+Compatibility behavior implemented in the sync pipeline:
+
+- `canceled_at` and `cancel_reason` are persisted on `public.orders` when provided.
+- `created_at` from POS events is preserved on `public.order_events` when provided.
+
+This allows the edge app to keep an auditable reprint/cancel trail while remaining compatible with the current Supabase constraints.
+# controlia-os-hub
