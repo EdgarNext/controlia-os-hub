@@ -10,6 +10,7 @@ type TenantRow = {
 type PosDeviceRow = {
   id: string;
   tenant_id: string;
+  kiosk_id: string;
   device_id: string;
   name: string;
   status: string;
@@ -20,6 +21,7 @@ type PosDeviceRow = {
 export type AuthenticatedPosDevice = {
   tenantId: string;
   tenantSlug: string;
+  kioskId: string;
   deviceId: string;
   deviceName: string;
 };
@@ -89,7 +91,7 @@ export async function authenticatePosDevice(input: {
 
   const { data: device, error: deviceError } = await supabase
     .from("pos_devices")
-    .select("id, tenant_id, device_id, name, status, secret_salt, secret_hash")
+    .select("id, tenant_id, kiosk_id, device_id, name, status, secret_salt, secret_hash")
     .eq("tenant_id", tenant.id)
     .eq("device_id", deviceId)
     .limit(1)
@@ -121,6 +123,7 @@ export async function authenticatePosDevice(input: {
   return {
     tenantId: tenant.id,
     tenantSlug: tenant.slug,
+    kioskId: device.kiosk_id,
     deviceId: device.device_id,
     deviceName: device.name,
   };

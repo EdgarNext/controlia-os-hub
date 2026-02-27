@@ -1,4 +1,3 @@
-import { PageFrame } from "@/components/layout/PageFrame";
 import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { isTenantAccessDeniedError } from "../../../lib/access-errors";
 import { getEventDetailsData } from "../actions/eventActions";
@@ -36,38 +35,30 @@ export default async function EventDetailsPage({ params }: EventDetailsPageProps
 
   if (result.permissionDenied) {
     return (
-      <PageFrame>
-        <StatePanel
-          kind="error"
-          title="Sin permisos para ver este evento"
-          message="Tu usuario no tiene acceso a este recurso dentro del tenant. Contacta al administrador."
-        />
-      </PageFrame>
+      <StatePanel
+        kind="permission"
+        title="Sin permisos para ver este evento"
+        message="Tu usuario no tiene acceso a este recurso dentro del tenant. Contacta al administrador."
+      />
     );
   }
 
   const { tenant, data } = result;
 
   if (!data.event) {
-    return (
-      <PageFrame>
-        <StatePanel kind="empty" title="Event not found" message="No event is available for this tenant and identifier." />
-      </PageFrame>
-    );
+    return <StatePanel kind="empty" title="Evento no encontrado" message="No existe un evento con ese identificador en este tenant." />;
   }
 
   return (
-    <PageFrame>
-      <EventDetailsClient
-        tenantId={data.tenantId}
-        tenantSlug={tenant.tenantSlug}
-        event={data.event}
-        room={data.room}
-        layout={data.layout}
-        equipmentMissing={data.equipmentMissing}
-        conflictEvents={data.conflictEvents}
-        publishChecks={data.publishChecks}
-      />
-    </PageFrame>
+    <EventDetailsClient
+      tenantId={data.tenantId}
+      tenantSlug={tenant.tenantSlug}
+      event={data.event}
+      room={data.room}
+      layout={data.layout}
+      equipmentMissing={data.equipmentMissing}
+      conflictEvents={data.conflictEvents}
+      publishChecks={data.publishChecks}
+    />
   );
 }

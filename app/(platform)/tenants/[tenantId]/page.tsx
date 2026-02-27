@@ -35,7 +35,7 @@ export default async function TenantDetailPage({ params, searchParams }: TenantD
         </Card>
       ) : (
         <Card className="space-y-4">
-          <h2 className="text-base font-semibold">Modules (solo lectura)</h2>
+          <h2 className="text-base font-semibold">Modulos (solo lectura)</h2>
           <TenantModulesReadOnly modules={modules} />
         </Card>
       )}
@@ -43,7 +43,7 @@ export default async function TenantDetailPage({ params, searchParams }: TenantD
       <Card>
         <h2 className="mb-2 text-base font-semibold">Snapshot de branding</h2>
         <p className="text-sm text-muted">
-          Display: {branding?.display_name ?? "sin configurar"} | Logo: {branding?.logo_url ?? "sin URL"}
+          Nombre visible: {branding?.display_name ?? "sin configurar"} | Logo: {branding?.logo_url ?? "sin URL"}
         </p>
       </Card>
     </div>

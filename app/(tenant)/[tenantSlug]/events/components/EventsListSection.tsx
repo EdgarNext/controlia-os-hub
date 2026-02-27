@@ -43,7 +43,7 @@ export async function EventsListSection({ tenantSlug, statusFilter }: { tenantSl
   if (result.permissionDenied) {
     return (
       <StatePanel
-        kind="error"
+        kind="permission"
         title="Sin permisos para eventos"
         message="No tienes permisos para consultar eventos de este tenant. Contacta al administrador para habilitar acceso."
       />
@@ -77,7 +77,7 @@ export async function EventsListSection({ tenantSlug, statusFilter }: { tenantSl
               href={`/${tenant.tenantSlug}/venue/rooms`}
               className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface px-3 py-1.5 text-sm"
             >
-              Create a room
+              Crear sala
             </Link>
           </div>
         </div>
@@ -95,16 +95,18 @@ export async function EventsListSection({ tenantSlug, statusFilter }: { tenantSl
               href={`/${tenant.tenantSlug}/venue`}
               className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface px-3 py-1.5 text-sm"
             >
-              Resolve venue setup
+              Resolver configuracion del venue
             </Link>
           </div>
         </div>
       ) : null}
 
       {filteredEvents.length === 0 ? (
-        <div className="rounded-[var(--radius-base)] border border-border bg-surface p-5 text-sm text-muted">
-          Aun no hay eventos. Crea un borrador para empezar.
-        </div>
+        <StatePanel
+          kind="empty"
+          title="Aun no hay eventos"
+          message="Crea un borrador para comenzar la operacion."
+        />
       ) : (
         <ul className="space-y-2">
           {filteredEvents.map((event) => (
@@ -113,7 +115,7 @@ export async function EventsListSection({ tenantSlug, statusFilter }: { tenantSl
                 <div>
                   <p className="font-medium">{event.name}</p>
                   <p className="text-sm text-muted">
-                    {formatEventDate(event.starts_at)} | Room: {event.venue_room_id ? roomById.get(event.venue_room_id)?.name ?? "No room" : "No room"}
+                    {formatEventDate(event.starts_at)} | Sala: {event.venue_room_id ? roomById.get(event.venue_room_id)?.name ?? "Sin sala" : "Sin sala"}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -122,7 +124,7 @@ export async function EventsListSection({ tenantSlug, statusFilter }: { tenantSl
                     href={`/${tenant.tenantSlug}/events/${event.id}`}
                     className="rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-1.5 text-sm"
                   >
-                    Open
+                    Abrir
                   </Link>
                 </div>
               </div>

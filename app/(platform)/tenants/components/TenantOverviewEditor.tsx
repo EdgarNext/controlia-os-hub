@@ -59,15 +59,15 @@ export function TenantOverviewEditor({ tenant }: TenantOverviewEditorProps) {
       <Collapsible title="Configuracion avanzada" defaultOpen>
         <div className="space-y-3">
           <label className="block space-y-1 text-sm">
-            <span className="text-muted">Status</span>
+            <span className="text-muted">Estado</span>
             <select
               name="status"
               defaultValue={tenant.status}
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
             >
-              <option value="active">active</option>
-              <option value="inactive">inactive</option>
-              <option value="archived">archived</option>
+              <option value="active">Activo</option>
+              <option value="inactive">Inactivo</option>
+              <option value="archived">Archivado</option>
             </select>
           </label>
 

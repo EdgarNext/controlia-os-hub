@@ -22,9 +22,9 @@ export function TenantsTable({ tenants }: TenantsTableProps) {
       <table className="min-w-full border-collapse text-sm">
         <thead className="bg-surface-2 text-left">
           <tr>
-            <th className="px-4 py-3 font-medium">Name</th>
+            <th className="px-4 py-3 font-medium">Nombre</th>
             <th className="px-4 py-3 font-medium">Slug</th>
-            <th className="px-4 py-3 font-medium">Status</th>
+            <th className="px-4 py-3 font-medium">Estado</th>
             <th className="px-4 py-3 font-medium">Acciones</th>
           </tr>
         </thead>
@@ -48,7 +48,7 @@ export function TenantsTable({ tenants }: TenantsTableProps) {
                     href={`/tenants/${tenant.id}/users`}
                     className="rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-1.5 text-xs hover:bg-surface"
                   >
-                    Users
+                    Usuarios
                   </Link>
                   <Link
                     href={`/tenants/${tenant.id}/branding`}

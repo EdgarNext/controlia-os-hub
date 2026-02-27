@@ -36,8 +36,8 @@ export default async function VenueEquipmentPage({ params }: VenueEquipmentPageP
   if (result.permissionDenied) {
     return (
       <StatePanel
-        kind="error"
-        title="Sin permisos para equipment"
+        kind="permission"
+        title="Sin permisos para equipo"
         message="No tienes permisos para gestionar el catalogo de equipo de este tenant. Contacta al administrador."
       />
     );

@@ -7,14 +7,14 @@ import { StatePanel } from "./components/StatePanel";
 
 export default function VenueError({ error, reset }: { error: Error; reset: () => void }) {
   useEffect(() => {
-    toast.error(error.message || "Unable to load venue config.");
+    toast.error(error.message || "No se pudo cargar la configuracion del venue.");
   }, [error]);
 
   return (
     <div className="space-y-4">
-      <StatePanel kind="error" title="Unable to load venue config" message={error.message} />
+      <StatePanel kind="error" title="No se pudo cargar la configuracion del venue" message={error.message} />
       <Button type="button" onClick={() => reset()}>
-        Retry
+        Reintentar
       </Button>
     </div>
   );

@@ -41,14 +41,26 @@ export type PosCatalogVariant = {
   updated_at: string;
 };
 
+export type PosCatalogUser = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  pin_hash: string;
+  role: string;
+  is_active: boolean;
+  updated_at: string;
+};
+
 export type PosSyncCatalogResponse = {
   tenantId: string;
   tenantSlug: string;
   syncedAt: string;
   incremental: boolean;
+  imageBaseUrl?: string | null;
   categories: PosCatalogCategory[];
   items: PosCatalogItem[];
   variants: PosCatalogVariant[];
+  users: PosCatalogUser[];
 };
 
 export type PosOrderSyncEvent = {
@@ -181,6 +193,7 @@ export type PosSyncMutationCancelTab = PosSyncMutationBase & {
 
 export type PosSyncMutationSaleCreate = PosSyncMutationBase & {
   type: "SALE_CREATE";
+  user_id: string;
   folio_number: number;
   folio_text: string;
   total_cents: number;
@@ -204,6 +217,7 @@ export type PosSyncMutationSaleCreate = PosSyncMutationBase & {
 
 export type PosSyncMutationSaleReprint = PosSyncMutationBase & {
   type: "SALE_REPRINT";
+  user_id: string;
   print_status?: "SENT" | "FAILED" | "UNKNOWN";
   print_attempt_count?: number;
   last_print_error?: string | null;
@@ -213,6 +227,7 @@ export type PosSyncMutationSaleReprint = PosSyncMutationBase & {
 
 export type PosSyncMutationSaleCancel = PosSyncMutationBase & {
   type: "SALE_CANCEL";
+  user_id: string;
   canceled_at?: string | null;
   cancel_reason?: string | null;
   meta?: Record<string, unknown> | null;

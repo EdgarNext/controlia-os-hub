@@ -13,7 +13,7 @@ export function AddTenantMemberModal({ tenantId }: { tenantId: string }) {
   return (
     <>
       <Button type="button" onClick={() => setOpen(true)}>
-        Add user
+        Agregar usuario
       </Button>
 
       <Modal open={open} onClose={() => setOpen(false)} title="Agregar usuario al tenant">

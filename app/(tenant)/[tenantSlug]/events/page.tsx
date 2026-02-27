@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { CalendarDays } from "lucide-react";
-import { PageFrame } from "@/components/layout/PageFrame";
 import { EventsListSection } from "./components/EventsListSection";
 import { EventsStatusFilter } from "./components/EventsStatusFilter";
 
@@ -37,31 +36,29 @@ export default async function EventsPage({
   const statusFilter = normalizeStatusFilter(status);
 
   return (
-    <PageFrame>
-      <div className="space-y-4">
-        <header className="flex items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="inline-flex items-center gap-2">
-              <CalendarDays className="h-5 w-5 text-primary" aria-hidden="true" />
-              <h1 className="text-xl font-semibold">Events</h1>
-            </div>
-            <p className="text-sm text-muted">Manage event drafts and lifecycle for this tenant.</p>
+    <div className="space-y-4">
+      <header className="flex items-center justify-between gap-3">
+        <div className="space-y-1">
+          <div className="inline-flex items-center gap-2">
+            <CalendarDays className="h-5 w-5 text-primary" aria-hidden="true" />
+            <h1 className="text-xl font-semibold">Eventos</h1>
           </div>
+          <p className="text-sm text-muted">Administra borradores y ciclo de vida de eventos de este tenant.</p>
+        </div>
 
-          <Link
-            href={`/${tenantSlug}/events/new`}
-            className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
-          >
-            Create event
-          </Link>
-        </header>
+        <Link
+          href={`/${tenantSlug}/events/new`}
+          className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
+        >
+          Crear evento
+        </Link>
+      </header>
 
-        <EventsStatusFilter selected={statusFilter} />
+      <EventsStatusFilter selected={statusFilter} />
 
-        <Suspense key={statusFilter} fallback={<EventsListFallback />}>
-          <EventsListSection tenantSlug={tenantSlug} statusFilter={statusFilter} />
-        </Suspense>
-      </div>
-    </PageFrame>
+      <Suspense key={statusFilter} fallback={<EventsListFallback />}>
+        <EventsListSection tenantSlug={tenantSlug} statusFilter={statusFilter} />
+      </Suspense>
+    </div>
   );
 }

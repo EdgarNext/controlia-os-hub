@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { PageFrame } from "@/components/layout/PageFrame";
 import { SectionHeader } from "./components/SectionHeader";
 import { VenueNavTabs } from "./components/VenueNavTabs";
 
@@ -13,12 +12,10 @@ export default async function VenueLayout({
   const { tenantSlug } = await params;
 
   return (
-    <PageFrame>
-      <div className="space-y-4">
-        <SectionHeader title="Venue Config" description="Venue Overview, Rooms, Equipment y Setup por sala." />
-        <VenueNavTabs tenantSlug={tenantSlug} />
-        {children}
-      </div>
-    </PageFrame>
+    <div className="space-y-4">
+      <SectionHeader title="Configuracion de venue" description="Resumen, salas, equipo y configuracion por sala." />
+      <VenueNavTabs tenantSlug={tenantSlug} />
+      {children}
+    </div>
   );
 }

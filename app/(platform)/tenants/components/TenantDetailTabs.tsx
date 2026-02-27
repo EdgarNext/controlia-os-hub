@@ -8,10 +8,10 @@ type TenantDetailTabsProps = {
 };
 
 const tabs = [
-  { key: "overview", label: "Overview", href: (id: string) => `/tenants/${id}` },
-  { key: "users", label: "Users", href: (id: string) => `/tenants/${id}/users` },
+  { key: "overview", label: "Resumen", href: (id: string) => `/tenants/${id}` },
+  { key: "users", label: "Usuarios", href: (id: string) => `/tenants/${id}/users` },
   { key: "branding", label: "Branding", href: (id: string) => `/tenants/${id}/branding` },
-  { key: "modules", label: "Modules", href: (id: string) => `/tenants/${id}?tab=modules` },
+  { key: "modules", label: "Modulos", href: (id: string) => `/tenants/${id}?tab=modules` },
 ] as const;
 
 export function TenantDetailTabs({ tenantId }: TenantDetailTabsProps) {

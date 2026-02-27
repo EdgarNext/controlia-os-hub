@@ -2,6 +2,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
   PosCatalogCategory,
   PosCatalogItem,
+  PosCatalogUser,
   PosCatalogVariant,
   PosSyncCatalogResponse,
 } from "@/types/pos";
@@ -48,6 +49,12 @@ export async function getCatalogSyncPayload(input: {
     .eq("tenant_id", input.tenantId)
     .order("updated_at", { ascending: true });
 
+  const usersQuery = supabase
+    .from("pos_users")
+    .select("id, tenant_id, name, pin_hash, role, is_active, updated_at")
+    .eq("tenant_id", input.tenantId)
+    .order("updated_at", { ascending: true });
+
   const filteredCategories = sinceIso
     ? categoriesQuery.or(`updated_at.gt.${sinceIso},deleted_at.gt.${sinceIso}`)
     : categoriesQuery.is("deleted_at", null);
@@ -57,11 +64,13 @@ export async function getCatalogSyncPayload(input: {
     : itemsQuery.is("deleted_at", null);
 
   const filteredVariants = sinceIso ? variantsQuery.gt("updated_at", sinceIso) : variantsQuery;
+  const filteredUsers = sinceIso ? usersQuery.gt("updated_at", sinceIso) : usersQuery;
 
-  const [categoriesResult, itemsResult, variantsResult] = await Promise.all([
+  const [categoriesResult, itemsResult, variantsResult, usersResult] = await Promise.all([
     filteredCategories,
     filteredItems,
     filteredVariants,
+    filteredUsers,
   ]);
 
   if (categoriesResult.error) {
@@ -76,13 +85,21 @@ export async function getCatalogSyncPayload(input: {
     throw new Error(`Unable to sync variants: ${variantsResult.error.message}`);
   }
 
+  if (usersResult.error) {
+    throw new Error(`Unable to sync users: ${usersResult.error.message}`);
+  }
+
   return {
     tenantId: input.tenantId,
     tenantSlug: input.tenantSlug,
     syncedAt: new Date().toISOString(),
     incremental: Boolean(sinceIso),
+    imageBaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL
+      ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/catalog-images`
+      : null,
     categories: (categoriesResult.data ?? []) as PosCatalogCategory[],
     items: (itemsResult.data ?? []) as PosCatalogItem[],
     variants: (variantsResult.data ?? []) as PosCatalogVariant[],
+    users: (usersResult.data ?? []) as PosCatalogUser[],
   };
 }

@@ -1,12 +1,19 @@
 import { redirect } from "next/navigation";
-import { getUser } from "@/lib/auth/get-user";
+import { getUserCached } from "@/lib/auth/get-user";
+import { perfMark, perfMeasure } from "@/lib/observability/perf";
 
 export async function requireUser() {
-  const user = await getUser();
+  const startMark = perfMark("requireUser");
 
-  if (!user) {
-    redirect("/auth/login");
+  try {
+    const user = await getUserCached();
+
+    if (!user) {
+      redirect("/auth/login");
+    }
+
+    return user;
+  } finally {
+    perfMeasure("requireUser", startMark);
   }
-
-  return user;
 }

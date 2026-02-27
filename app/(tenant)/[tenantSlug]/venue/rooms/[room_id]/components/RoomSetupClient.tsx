@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { StatePanel } from "@/components/ui/state-panel";
 import type { Equipment, Room } from "@/types/venue";
 import type { RoomSetupEquipment } from "../../../actions/venueActions";
 import { assignRoomEquipmentAction, unassignRoomEquipmentAction } from "../../../actions/venueActions";
@@ -93,7 +94,7 @@ export function RoomSetupClient({
           <div>
             <h2 className="text-lg font-semibold">{room.name}</h2>
             <p className="text-sm text-muted">
-              Capacity: {room.default_capacity} | Code: {room.code ?? "-"}
+              Capacidad: {room.default_capacity} | Codigo: {room.code ?? "-"}
             </p>
           </div>
           <RoomSetupStatusBadge needsSetup={assignedEquipment.length === 0} />
@@ -101,19 +102,17 @@ export function RoomSetupClient({
       </section>
 
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h3 className="mb-3 text-base font-semibold">Assigned equipment</h3>
+        <h3 className="mb-3 text-base font-semibold">Equipo asignado</h3>
 
         {assignedEquipment.length === 0 ? (
-          <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-4 text-sm text-muted">
-            Esta sala todavía no tiene equipo asignado.
-          </div>
+          <StatePanel kind="empty" title="Sin equipo asignado" message="Esta sala todavia no tiene equipo asignado." />
         ) : (
           <ul className="space-y-2">
             {assignedEquipment.map((item) => (
               <li key={item.id} className="flex items-center justify-between gap-3 rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2">
                 <div>
                   <p className="text-sm font-medium">{item.equipment_name}</p>
-                  <p className="text-xs text-muted">Category: {item.equipment_type ?? "-"} | Qty: {item.quantity}</p>
+                  <p className="text-xs text-muted">Categoria: {item.equipment_type ?? "-"} | Cantidad: {item.quantity}</p>
                 </div>
                 <Button
                   type="button"
@@ -122,7 +121,7 @@ export function RoomSetupClient({
                   onClick={() => removeEquipment(item.id)}
                 >
                   <Trash2 className="h-4 w-4" />
-                  Remove
+                  Quitar
                 </Button>
               </li>
             ))}
@@ -131,7 +130,7 @@ export function RoomSetupClient({
       </section>
 
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h3 className="mb-3 text-base font-semibold">Add equipment</h3>
+        <h3 className="mb-3 text-base font-semibold">Agregar equipo</h3>
 
         <label className="relative mb-3 block">
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted" aria-hidden="true" />
@@ -144,19 +143,17 @@ export function RoomSetupClient({
         </label>
 
         {availableEquipment.length === 0 ? (
-          <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-4 text-sm text-muted">
-            No hay equipos disponibles para agregar.
-          </div>
+          <StatePanel kind="empty" title="Sin equipo disponible" message="No hay equipos disponibles para agregar." />
         ) : (
           <ul className="space-y-2">
             {availableEquipment.map((item) => (
               <li key={item.id} className="flex items-center justify-between gap-3 rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2">
                 <div>
                   <p className="text-sm font-medium">{item.name}</p>
-                  <p className="text-xs text-muted">Category: {item.equipment_type ?? "-"}</p>
+                  <p className="text-xs text-muted">Categoria: {item.equipment_type ?? "-"}</p>
                 </div>
                 <Button type="button" isLoading={isPending} onClick={() => addEquipment(item.id)}>
-                  Add equipment
+                  Agregar equipo
                 </Button>
               </li>
             ))}

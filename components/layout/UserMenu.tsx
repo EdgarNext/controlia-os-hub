@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut, Moon, Sun, User } from "lucide-react";
 import { signOutAction } from "@/actions/auth/sign-out";
@@ -13,6 +13,7 @@ type UserMenuProps = {
 
 export function UserMenu({ userEmail }: UserMenuProps) {
   const router = useRouter();
+  const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [isThemePending, startThemeTransition] = useTransition();
   const [isSignOutPending, startSignOutTransition] = useTransition();
@@ -41,8 +42,38 @@ export function UserMenu({ userEmail }: UserMenuProps) {
     });
   };
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (!rootRef.current?.contains(target)) {
+        setOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
+
   return (
-    <div className="relative">
+    <div ref={rootRef} className="relative">
       <button
         type="button"
         className="inline-flex h-10 min-w-10 items-center justify-center rounded-[var(--radius-base)] border border-border bg-surface px-3 text-sm transition-colors duration-200 hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"

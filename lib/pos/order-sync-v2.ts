@@ -121,6 +121,21 @@ async function assertProductBelongsToTenant(productId: string, tenantId: string)
   if (!data) throw new Error("product_id does not belong to tenant.");
 }
 
+async function assertPosUserBelongsToTenant(userId: string, tenantId: string): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("pos_users")
+    .select("id")
+    .eq("id", userId)
+    .eq("tenant_id", tenantId)
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+
+  if (error) throw new Error(`Unable to validate POS user: ${error.message}`);
+  if (!data) throw new Error("user_id does not belong to tenant or is inactive.");
+}
+
 async function findOrder(tenantId: string, orderId: string): Promise<OrderRow | null> {
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
@@ -647,9 +662,11 @@ async function applySaleCreate(tenantId: string, mutation: PosSyncMutationV2): P
   const folioNumber = ensureNonNegativeInt(mutation.folio_number, "folio_number");
   const folioText = ensureNonEmptyString(mutation.folio_text, "folio_text");
   const totalCents = ensureNonNegativeInt(mutation.total_cents, "total_cents");
+  const userId = ensureNonEmptyString(mutation.user_id, "user_id");
   const lines = Array.isArray(mutation.lines) ? mutation.lines : [];
 
   await assertKioskBelongsToTenant(mutation.kiosk_id, tenantId);
+  await assertPosUserBelongsToTenant(userId, tenantId);
   const existing = await findOrder(tenantId, mutation.order_id);
   if (existing) {
     throw new MutationConflictError("Order already exists.", {
@@ -711,6 +728,7 @@ async function applySaleCreate(tenantId: string, mutation: PosSyncMutationV2): P
     createdAt,
     meta: {
       source: "quick_sale",
+      user_id: userId,
       ...(mutation.meta || {}),
     },
   });
@@ -722,6 +740,8 @@ async function applySaleReprint(tenantId: string, mutation: PosSyncMutationV2): 
   if (mutation.type !== "SALE_REPRINT") throw new Error("Invalid mutation type.");
   const supabase = getSupabaseAdminClient();
   const createdAt = parseIsoOrNow(mutation.created_at, "created_at");
+  const userId = ensureNonEmptyString(mutation.user_id, "user_id");
+  await assertPosUserBelongsToTenant(userId, tenantId);
   const order = await findOrder(tenantId, mutation.order_id);
   if (!order) throw new Error("Order does not exist.");
 
@@ -747,6 +767,7 @@ async function applySaleReprint(tenantId: string, mutation: PosSyncMutationV2): 
     createdAt,
     meta: {
       source: "quick_sale",
+      user_id: userId,
       ...(mutation.meta || {}),
     },
   });
@@ -758,6 +779,8 @@ async function applySaleCancel(tenantId: string, mutation: PosSyncMutationV2): P
   if (mutation.type !== "SALE_CANCEL") throw new Error("Invalid mutation type.");
   const supabase = getSupabaseAdminClient();
   const canceledAt = parseIsoOrNow(mutation.canceled_at ?? mutation.created_at, "canceled_at");
+  const userId = ensureNonEmptyString(mutation.user_id, "user_id");
+  await assertPosUserBelongsToTenant(userId, tenantId);
   const order = await findOrder(tenantId, mutation.order_id);
   if (!order) throw new Error("Order does not exist.");
 
@@ -782,6 +805,7 @@ async function applySaleCancel(tenantId: string, mutation: PosSyncMutationV2): P
     createdAt: canceledAt,
     meta: {
       source: "quick_sale",
+      user_id: userId,
       reason: mutation.cancel_reason ?? null,
       ...(mutation.meta || {}),
     },

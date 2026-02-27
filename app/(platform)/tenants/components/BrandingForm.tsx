@@ -34,7 +34,7 @@ export function BrandingForm({ tenantId, branding }: BrandingFormProps) {
       }}
     >
       <label className="block space-y-1 text-sm">
-        <span className="text-muted">Display name</span>
+        <span className="text-muted">Nombre para mostrar</span>
         <input
           name="display_name"
           defaultValue={branding?.display_name ?? ""}
@@ -44,7 +44,7 @@ export function BrandingForm({ tenantId, branding }: BrandingFormProps) {
       </label>
 
       <label className="block space-y-1 text-sm">
-        <span className="text-muted">Logo URL</span>
+        <span className="text-muted">URL del logo</span>
         <input
           name="logo_url"
           type="url"
@@ -60,7 +60,7 @@ export function BrandingForm({ tenantId, branding }: BrandingFormProps) {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={branding.logo_url}
-            alt="Tenant logo"
+            alt="Logo del tenant"
             className="h-14 w-14 rounded-[var(--radius-base)] border border-border object-cover"
           />
         </div>

@@ -46,13 +46,13 @@ export function EventCreateForm({
       <div className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
         <div className="mb-3 flex items-center gap-2">
           <CalendarPlus2 className="h-5 w-5 text-primary" aria-hidden="true" />
-          <h1 className="text-xl font-semibold">Create Event</h1>
+          <h1 className="text-xl font-semibold">Crear evento</h1>
         </div>
-        <p className="text-sm text-muted">Create a draft event and publish it once venue validations pass.</p>
+        <p className="text-sm text-muted">Crea un borrador y publicalo cuando pase todas las validaciones de venue.</p>
 
         {actionError ? (
           <div className="mt-4">
-            <StatePanel kind="error" title="Validation blocked" message={actionError} />
+            <StatePanel kind="error" title="Validacion bloqueada" message={actionError} />
           </div>
         ) : null}
 
@@ -80,7 +80,6 @@ export function EventCreateForm({
 
               if (!result.ok) {
                 setActionError(result.message);
-                toast.error(result.message);
                 return;
               }
 
@@ -97,17 +96,17 @@ export function EventCreateForm({
           }}
         >
           <label className="space-y-1 text-sm md:col-span-2">
-            <span className="text-muted">Event name</span>
+            <span className="text-muted">Nombre del evento</span>
             <input
               name="name"
               required
-              placeholder="Annual Partner Summit"
+              placeholder="Cumbre anual de socios"
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
             />
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Room</span>
+            <span className="text-muted">Sala</span>
             <select
               name="venueRoomId"
               required
@@ -115,7 +114,7 @@ export function EventCreateForm({
               value={selectedRoomId}
               onChange={(event) => setSelectedRoomId(event.target.value)}
             >
-              <option value="">Select room</option>
+              <option value="">Seleccionar sala</option>
               {rooms.map((room) => (
                 <option key={room.id} value={room.id}>
                   {room.name} (cap. {room.default_capacity})
@@ -125,13 +124,13 @@ export function EventCreateForm({
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Layout</span>
+            <span className="text-muted">Distribucion</span>
             <select
               name="venueRoomLayoutId"
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
               disabled={!selectedRoomId}
             >
-              <option value="">No layout</option>
+              <option value="">Sin distribucion</option>
               {layoutsForRoom.map((layout) => (
                 <option key={layout.id} value={layout.id}>
                   {layout.name} (cap. {layout.capacity})
@@ -141,7 +140,7 @@ export function EventCreateForm({
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Expected attendance</span>
+            <span className="text-muted">Asistencia esperada</span>
             <input
               name="expectedAttendance"
               required
@@ -153,31 +152,31 @@ export function EventCreateForm({
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Starts at</span>
+            <span className="text-muted">Inicio</span>
             <input name="startsAt" type="datetime-local" className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2" />
           </label>
 
           <label className="space-y-1 text-sm md:col-span-2">
-            <span className="text-muted">Ends at</span>
+            <span className="text-muted">Fin</span>
             <input name="endsAt" type="datetime-local" className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2" />
           </label>
 
           <div className="md:col-span-2">
-            <Button type="submit" isLoading={isPending}>Create draft event</Button>
+            <Button type="submit" isLoading={isPending}>Crear borrador</Button>
           </div>
         </form>
       </div>
 
       <div className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h2 className="mb-3 text-base font-semibold">Recent events</h2>
+        <h2 className="mb-3 text-base font-semibold">Eventos recientes</h2>
         {recentEvents.length === 0 ? (
-          <StatePanel kind="empty" title="No events yet" message="Create the first event draft for this tenant." />
+          <StatePanel kind="empty" title="Aun no hay eventos" message="Crea el primer borrador de evento para este tenant." />
         ) : (
           <ul className="space-y-2 text-sm">
             {recentEvents.slice(0, 5).map((item) => (
               <li key={item.id} className="rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2">
                 <p className="font-medium">{item.name}</p>
-                <p className="text-muted">Status: {item.status}</p>
+                <p className="text-muted">Estado: {item.status}</p>
               </li>
             ))}
           </ul>

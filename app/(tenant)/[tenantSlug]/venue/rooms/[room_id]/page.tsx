@@ -38,8 +38,8 @@ export default async function RoomSetupPage({ params }: RoomSetupPageProps) {
   if (result.permissionDenied) {
     return (
       <StatePanel
-        kind="error"
-        title="Sin permisos para room setup"
+        kind="permission"
+        title="Sin permisos para configurar sala"
         message="No tienes permisos para configurar el equipo de esta sala. Contacta al administrador."
       />
     );
@@ -58,7 +58,7 @@ export default async function RoomSetupPage({ params }: RoomSetupPageProps) {
           href={`/${tenant.tenantSlug}/venue/rooms`}
           className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
         >
-          Back to rooms
+          Volver a salas
         </Link>
       </div>
 

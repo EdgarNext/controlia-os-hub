@@ -6,6 +6,7 @@ import { Pencil, Plus, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/button";
+import { StatePanel } from "@/components/ui/state-panel";
 import type { RoomWithSetup } from "../../actions/venueActions";
 import { createRoomAction, deleteRoomAction, updateRoomAction } from "../../actions/venueActions";
 import { RoomSetupStatusBadge } from "../../components/RoomSetupStatusBadge";
@@ -136,19 +137,17 @@ export function RoomsManagerClient({ tenantId, tenantSlug, rooms }: RoomsManager
     <>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Rooms</h2>
+          <h2 className="text-lg font-semibold">Salas</h2>
           <p className="text-sm text-muted">Administra salas y su estado de preparación para eventos.</p>
         </div>
         <Button type="button" onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
-          Create room
+          Crear sala
         </Button>
       </div>
 
       {rooms.length === 0 ? (
-        <div className="rounded-[var(--radius-base)] border border-border bg-surface p-5 text-sm text-muted">
-          No tienes salas aún. Crea una sala para poder crear eventos.
-        </div>
+        <StatePanel kind="empty" title="Aun no hay salas" message="Crea una sala para poder crear eventos." />
       ) : (
         <ul className="space-y-3">
           {rooms.map((room) => (
@@ -160,7 +159,7 @@ export function RoomsManagerClient({ tenantId, tenantSlug, rooms }: RoomsManager
                     <RoomSetupStatusBadge needsSetup={room.needsSetup} />
                   </div>
                   <p className="text-sm text-muted">
-                    Code: {room.code ?? "-"} | Capacity: {room.default_capacity} | Equipment assigned: {room.equipmentCount}
+                    Codigo: {room.code ?? "-"} | Capacidad: {room.default_capacity} | Equipo asignado: {room.equipmentCount}
                   </p>
                 </div>
 
@@ -170,15 +169,15 @@ export function RoomsManagerClient({ tenantId, tenantSlug, rooms }: RoomsManager
                     className="inline-flex items-center gap-2 rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
                   >
                     <Settings2 className="h-4 w-4" />
-                    Setup room
+                    Configurar sala
                   </Link>
                   <Button type="button" variant="secondary" onClick={() => openEdit(room)}>
                     <Pencil className="h-4 w-4" />
-                    Edit
+                    Editar
                   </Button>
                   <Button type="button" variant="danger" onClick={() => removeRoom(room)} isLoading={isPending}>
                     <Trash2 className="h-4 w-4" />
-                    Delete
+                    Eliminar
                   </Button>
                 </div>
               </div>
@@ -187,20 +186,20 @@ export function RoomsManagerClient({ tenantId, tenantSlug, rooms }: RoomsManager
         </ul>
       )}
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create room">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Crear sala">
         <div className="space-y-3">
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Name</span>
+            <span className="text-muted">Nombre</span>
             <input
               value={createForm.name}
               onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
-              placeholder="Main Hall"
+              placeholder="Salon principal"
             />
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Code</span>
+            <span className="text-muted">Codigo</span>
             <input
               value={createForm.code}
               onChange={(event) => setCreateForm((prev) => ({ ...prev, code: event.target.value }))}
@@ -210,7 +209,7 @@ export function RoomsManagerClient({ tenantId, tenantSlug, rooms }: RoomsManager
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Capacity</span>
+            <span className="text-muted">Capacidad</span>
             <input
               type="number"
               min={1}
@@ -223,29 +222,29 @@ export function RoomsManagerClient({ tenantId, tenantSlug, rooms }: RoomsManager
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={() => setCreateOpen(false)}>
-              Cancel
+              Cancelar
             </Button>
             <Button type="button" isLoading={isPending} onClick={submitCreate}>
-              Create room
+              Crear sala
             </Button>
           </div>
         </div>
       </Modal>
 
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit room">
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Editar sala">
         <div className="space-y-3">
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Name</span>
+            <span className="text-muted">Nombre</span>
             <input
               value={editForm.name}
               onChange={(event) => setEditForm((prev) => ({ ...prev, name: event.target.value }))}
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
-              placeholder="Main Hall"
+              placeholder="Salon principal"
             />
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Code</span>
+            <span className="text-muted">Codigo</span>
             <input
               value={editForm.code}
               onChange={(event) => setEditForm((prev) => ({ ...prev, code: event.target.value }))}
@@ -255,7 +254,7 @@ export function RoomsManagerClient({ tenantId, tenantSlug, rooms }: RoomsManager
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Capacity</span>
+            <span className="text-muted">Capacidad</span>
             <input
               type="number"
               min={1}
@@ -268,10 +267,10 @@ export function RoomsManagerClient({ tenantId, tenantSlug, rooms }: RoomsManager
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={() => setEditOpen(false)}>
-              Cancel
+              Cancelar
             </Button>
             <Button type="button" isLoading={isPending} onClick={submitEdit}>
-              Save changes
+              Guardar cambios
             </Button>
           </div>
         </div>

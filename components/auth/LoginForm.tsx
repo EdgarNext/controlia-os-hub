@@ -1,10 +1,10 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
-import { toast } from "sonner";
+import { useActionState } from "react";
 import { signInAction, type SignInState } from "@/actions/auth/sign-in";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Field, Input } from "@/components/ui/input";
 
 const initialState: SignInState = {
   error: null,
@@ -12,42 +12,39 @@ const initialState: SignInState = {
 
 export function LoginForm() {
   const [state, formAction, isPending] = useActionState(signInAction, initialState);
-
-  useEffect(() => {
-    if (state.error) {
-      toast.error(state.error);
-    }
-  }, [state.error]);
+  const errorId = state.error ? "login-form-error" : undefined;
 
   return (
     <Card>
       <form action={formAction} className="space-y-4">
-        <label className="block space-y-1 text-sm">
-          <span className="text-muted">Email</span>
-          <input
+        <Field label="Email" htmlFor="email">
+          <Input
+            id="email"
             type="email"
             name="email"
             required
             autoComplete="email"
-            className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
-            placeholder="you@company.com"
+            invalid={Boolean(state.error)}
+            aria-describedby={errorId}
+            placeholder="usuario@empresa.com"
           />
-        </label>
+        </Field>
 
-        <label className="block space-y-1 text-sm">
-          <span className="text-muted">Password</span>
-          <input
+        <Field label="Contrasena" htmlFor="password">
+          <Input
+            id="password"
             type="password"
             name="password"
             required
             autoComplete="current-password"
-            className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
+            invalid={Boolean(state.error)}
+            aria-describedby={errorId}
             placeholder="********"
           />
-        </label>
+        </Field>
 
         {state.error ? (
-          <p className="rounded-[var(--radius-base)] border border-danger/30 bg-surface-2 px-3 py-2 text-sm text-danger">
+          <p id="login-form-error" className="rounded-[var(--radius-base)] border border-danger/30 bg-surface-2 px-3 py-2 text-sm text-danger">
             {state.error}
           </p>
         ) : null}

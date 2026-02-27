@@ -15,6 +15,7 @@ type SidebarItemProps = {
 export function SidebarItem({ item, collapsed, onNavigate }: SidebarItemProps) {
   const pathname = usePathname();
   const isActive = item.match === "exact" ? pathname === item.href : pathname.startsWith(item.href);
+  const hasChildren = (item.children?.length ?? 0) > 0;
   const Icon =
     item.iconKey === "tenants"
       ? Building2
@@ -29,25 +30,48 @@ export function SidebarItem({ item, collapsed, onNavigate }: SidebarItemProps) {
               : Store;
 
   return (
-    <Link
-      href={item.href}
-      title={collapsed ? item.label : undefined}
-      onClick={onNavigate}
-      className={cn(
-        "group relative flex min-h-10 items-center gap-3 rounded-[var(--radius-base)] px-3 py-2 text-sm transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-        isActive ? "bg-surface-2 text-foreground" : "text-muted hover:bg-surface-2 hover:text-foreground",
-      )}
-    >
-      <span
-        aria-hidden="true"
+    <div className="space-y-1">
+      <Link
+        href={item.href}
+        title={collapsed ? item.label : undefined}
+        onClick={onNavigate}
         className={cn(
-          "absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-primary transition-opacity duration-200",
-          isActive ? "opacity-100" : "opacity-0 group-hover:opacity-70",
+          "group relative flex min-h-10 items-center gap-3 rounded-[var(--radius-base)] px-3 py-2 text-sm transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+          isActive ? "bg-surface-2 text-foreground" : "text-muted hover:bg-surface-2 hover:text-foreground",
         )}
-      />
-      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span className={cn("truncate transition-opacity duration-200", collapsed ? "w-0 opacity-0" : "opacity-100")}>{item.label}</span>
-      {collapsed ? <span className="sr-only">{item.label}</span> : null}
-    </Link>
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-primary transition-opacity duration-200",
+            isActive ? "opacity-100" : "opacity-0 group-hover:opacity-70",
+          )}
+        />
+        <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className={cn("truncate transition-opacity duration-200", collapsed ? "w-0 opacity-0" : "opacity-100")}>{item.label}</span>
+        {collapsed ? <span className="sr-only">{item.label}</span> : null}
+      </Link>
+
+      {!collapsed && hasChildren ? (
+        <div className="ml-7 space-y-1 border-l border-border pl-3">
+          {item.children?.map((child) => {
+            const childActive = child.match === "exact" ? pathname === child.href : pathname.startsWith(child.href);
+            return (
+              <Link
+                key={child.href}
+                href={child.href}
+                onClick={onNavigate}
+                className={cn(
+                  "block rounded-[calc(var(--radius-base)-4px)] px-2 py-1.5 text-xs transition-colors duration-200",
+                  childActive ? "bg-surface-2 text-foreground" : "text-muted hover:bg-surface-2 hover:text-foreground",
+                )}
+              >
+                {child.label}
+              </Link>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }

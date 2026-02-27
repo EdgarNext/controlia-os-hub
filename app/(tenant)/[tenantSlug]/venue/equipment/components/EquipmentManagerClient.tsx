@@ -5,6 +5,7 @@ import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/button";
+import { StatePanel } from "@/components/ui/state-panel";
 import type { Equipment } from "@/types/venue";
 import { createEquipmentAction, deleteEquipmentAction, updateEquipmentAction } from "../../actions/venueActions";
 
@@ -132,12 +133,12 @@ export function EquipmentManagerClient({ tenantId, tenantSlug, equipmentCatalog 
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Equipment library</h2>
+          <h2 className="text-lg font-semibold">Biblioteca de equipo</h2>
           <p className="text-sm text-muted">Mantén el catálogo de equipos que podrás asignar a cada sala.</p>
         </div>
         <Button type="button" onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
-          Create equipment
+          Crear equipo
         </Button>
       </div>
 
@@ -152,13 +153,9 @@ export function EquipmentManagerClient({ tenantId, tenantSlug, equipmentCatalog 
       </label>
 
       {equipmentCatalog.length === 0 ? (
-        <div className="rounded-[var(--radius-base)] border border-border bg-surface p-5 text-sm text-muted">
-          Crea tu catálogo de equipo para asignarlo a cada sala.
-        </div>
+        <StatePanel kind="empty" title="Aun no hay equipo" message="Crea tu catalogo de equipo para asignarlo a cada sala." />
       ) : filteredEquipment.length === 0 ? (
-        <div className="rounded-[var(--radius-base)] border border-border bg-surface p-5 text-sm text-muted">
-          No hay resultados para tu búsqueda.
-        </div>
+        <StatePanel kind="empty" title="Sin resultados" message="No hay equipos que coincidan con la busqueda." />
       ) : (
         <ul className="space-y-3">
           {filteredEquipment.map((equipment) => (
@@ -166,17 +163,17 @@ export function EquipmentManagerClient({ tenantId, tenantSlug, equipmentCatalog 
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-base font-semibold">{equipment.name}</p>
-                  <p className="text-sm text-muted">Category: {equipment.equipment_type ?? "-"}</p>
+                  <p className="text-sm text-muted">Categoria: {equipment.equipment_type ?? "-"}</p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
                   <Button type="button" variant="secondary" onClick={() => openEdit(equipment)}>
                     <Pencil className="h-4 w-4" />
-                    Edit
+                    Editar
                   </Button>
                   <Button type="button" variant="danger" onClick={() => removeEquipment(equipment)} isLoading={isPending}>
                     <Trash2 className="h-4 w-4" />
-                    Delete
+                    Eliminar
                   </Button>
                 </div>
               </div>
@@ -185,20 +182,20 @@ export function EquipmentManagerClient({ tenantId, tenantSlug, equipmentCatalog 
         </ul>
       )}
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create equipment">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Crear equipo">
         <div className="space-y-3">
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Name</span>
+            <span className="text-muted">Nombre</span>
             <input
               value={createForm.name}
               onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
-              placeholder="Projector"
+              placeholder="Proyector"
             />
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Category</span>
+            <span className="text-muted">Categoria</span>
             <input
               value={createForm.category}
               onChange={(event) => setCreateForm((prev) => ({ ...prev, category: event.target.value }))}
@@ -209,29 +206,29 @@ export function EquipmentManagerClient({ tenantId, tenantSlug, equipmentCatalog 
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={() => setCreateOpen(false)}>
-              Cancel
+              Cancelar
             </Button>
             <Button type="button" isLoading={isPending} onClick={submitCreate}>
-              Create equipment
+              Crear equipo
             </Button>
           </div>
         </div>
       </Modal>
 
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit equipment">
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Editar equipo">
         <div className="space-y-3">
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Name</span>
+            <span className="text-muted">Nombre</span>
             <input
               value={editForm.name}
               onChange={(event) => setEditForm((prev) => ({ ...prev, name: event.target.value }))}
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
-              placeholder="Projector"
+              placeholder="Proyector"
             />
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Category</span>
+            <span className="text-muted">Categoria</span>
             <input
               value={editForm.category}
               onChange={(event) => setEditForm((prev) => ({ ...prev, category: event.target.value }))}
@@ -242,10 +239,10 @@ export function EquipmentManagerClient({ tenantId, tenantSlug, equipmentCatalog 
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={() => setEditOpen(false)}>
-              Cancel
+              Cancelar
             </Button>
             <Button type="button" isLoading={isPending} onClick={submitEdit}>
-              Save changes
+              Guardar cambios
             </Button>
           </div>
         </div>

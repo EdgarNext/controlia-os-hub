@@ -12,7 +12,17 @@ export function getTenantNav(tenantSlug: string): NavSection[] {
         { href: `/${tenantSlug}/users`, label: "Users", iconKey: "users", match: "prefix" },
         { href: `/${tenantSlug}/catalog`, label: "Catalog", iconKey: "catalog", match: "prefix" },
         { href: `/${tenantSlug}/reports`, label: "Reports", iconKey: "reports", match: "prefix" },
-        { href: `/${tenantSlug}/pos`, label: "POS", iconKey: "pos", match: "prefix" },
+        {
+          href: `/${tenantSlug}/pos`,
+          label: "POS",
+          iconKey: "pos",
+          match: "prefix",
+          children: [
+            { href: `/${tenantSlug}/pos/admin/kiosks`, label: "Kiosks", match: "prefix" },
+            { href: `/${tenantSlug}/pos/admin/catalog`, label: "Catalogo", match: "prefix" },
+            { href: `/${tenantSlug}/pos/admin/reports`, label: "Reportes", match: "prefix" },
+          ],
+        },
       ],
     },
   ];

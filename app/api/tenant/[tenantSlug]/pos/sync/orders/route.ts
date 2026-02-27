@@ -16,6 +16,10 @@ function unauthorized(message: string) {
   return NextResponse.json({ ok: false, error: message }, { status: 401 });
 }
 
+function matchesAuthenticatedKioskId(rawKioskId: unknown, expectedKioskId: string): boolean {
+  return typeof rawKioskId === "string" && rawKioskId.trim() === expectedKioskId;
+}
+
 export async function POST(request: Request, context: { params: Promise<RouteParams> }) {
   try {
     const { tenantSlug } = await context.params;
@@ -53,6 +57,12 @@ export async function POST(request: Request, context: { params: Promise<RoutePar
       if (body.mutations.length > 200) {
         return badRequest("mutations size cannot exceed 200 entries.");
       }
+      for (const mutation of body.mutations) {
+        const kioskId = mutation && typeof mutation === "object" ? (mutation as { kiosk_id?: unknown }).kiosk_id : null;
+        if (!matchesAuthenticatedKioskId(kioskId, device.kioskId)) {
+          return badRequest("mutation.kiosk_id must match the authenticated device kiosk.");
+        }
+      }
 
       const result = await syncMutationsBatch({
         tenantId: device.tenantId,
@@ -68,6 +78,12 @@ export async function POST(request: Request, context: { params: Promise<RoutePar
     }
     if (body.batch.length > 100) {
       return badRequest("batch size cannot exceed 100 entries.");
+    }
+    for (const entry of body.batch) {
+      const kioskId = entry?.order?.kiosk_id;
+      if (!matchesAuthenticatedKioskId(kioskId, device.kioskId)) {
+        return badRequest("order.kiosk_id must match the authenticated device kiosk.");
+      }
     }
 
     const result = await syncOrderBatch({

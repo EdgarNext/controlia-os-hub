@@ -5,6 +5,11 @@ export type NavItem = {
   label: string;
   iconKey: NavIconKey;
   match?: "exact" | "prefix";
+  children?: Array<{
+    href: string;
+    label: string;
+    match?: "exact" | "prefix";
+  }>;
 };
 
 export type NavSection = {

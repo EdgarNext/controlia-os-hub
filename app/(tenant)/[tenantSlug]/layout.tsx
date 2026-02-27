@@ -3,6 +3,9 @@ import { AppShell } from "@/components/layout/AppShell";
 import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { getTenantNav } from "@/lib/navigation/tenant-nav";
 
+// Depende de cookies/session; no cacheable.
+export const dynamic = "force-dynamic";
+
 type TenantSlugLayoutProps = {
   children: ReactNode;
   params: Promise<{ tenantSlug: string }>;

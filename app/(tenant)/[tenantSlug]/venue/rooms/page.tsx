@@ -36,7 +36,7 @@ export default async function VenueRoomsPage({ params }: VenueRoomsPageProps) {
   if (result.permissionDenied) {
     return (
       <StatePanel
-        kind="error"
+        kind="permission"
         title="Sin permisos para salas"
         message="No tienes permisos para gestionar salas de este tenant. Contacta al administrador."
       />

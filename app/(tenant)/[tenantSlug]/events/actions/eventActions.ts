@@ -82,7 +82,7 @@ function parseDateInput(raw: FormDataEntryValue | null, fieldName: string) {
 
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return { value: null, error: `${fieldName} has an invalid value.` };
+    return { value: null, error: `${fieldName} tiene un valor invalido.` };
   }
 
   return { value: parsed.toISOString(), error: null as string | null };
@@ -272,31 +272,31 @@ export async function createEventAction(formData: FormData): Promise<ActionResul
     const expectedAttendance = normalizeOptionalNumber(formData.get("expectedAttendance"));
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!name) {
-      return { ok: false, message: "Event name is required." };
+      return { ok: false, message: "El nombre del evento es obligatorio." };
     }
 
     if (!venueRoomId) {
-      return { ok: false, message: "Room is required." };
+      return { ok: false, message: "La sala es obligatoria." };
     }
 
     if (startsAtInput.error || endsAtInput.error) {
-      return { ok: false, message: startsAtInput.error ?? endsAtInput.error ?? "Invalid schedule." };
+      return { ok: false, message: startsAtInput.error ?? endsAtInput.error ?? "Horario invalido." };
     }
 
     if (!startsAtInput.value || !endsAtInput.value) {
-      return { ok: false, message: "Start and end date are required." };
+      return { ok: false, message: "Las fechas de inicio y fin son obligatorias." };
     }
 
     if (!isStrictlyAfter(startsAtInput.value, endsAtInput.value)) {
-      return { ok: false, message: "End date must be after start date." };
+      return { ok: false, message: "La fecha de fin debe ser posterior a la fecha de inicio." };
     }
 
     if (expectedAttendance !== null && expectedAttendance <= 0) {
-      return { ok: false, message: "Expected attendance must be greater than 0." };
+      return { ok: false, message: "La asistencia esperada debe ser mayor a 0." };
     }
 
     const publishReadiness = await evaluatePublishChecks(tenantId, {
@@ -331,7 +331,7 @@ export async function createEventAction(formData: FormData): Promise<ActionResul
       eventId: event.id,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to create event.";
+    const message = error instanceof Error ? error.message : "No se pudo crear el evento.";
     return { ok: false, message };
   }
 }
@@ -344,16 +344,16 @@ export async function publishEventAction(formData: FormData): Promise<ActionResu
     const eventId = String(formData.get("eventId") ?? "").trim();
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!eventId) {
-      return { ok: false, message: "Event id is required." };
+      return { ok: false, message: "El id del evento es obligatorio." };
     }
 
     const event = await getEventById(tenantId, eventId);
     if (!event) {
-      return { ok: false, message: "Event not found." };
+      return { ok: false, message: "Evento no encontrado." };
     }
 
     const { checks } = await evaluatePublishChecks(tenantId, event);
@@ -378,9 +378,9 @@ export async function publishEventAction(formData: FormData): Promise<ActionResu
       revalidatePath(path);
     }
 
-    return { ok: true, message: "Event published." };
+    return { ok: true, message: "Evento publicado." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to publish event.";
+    const message = error instanceof Error ? error.message : "No se pudo publicar el evento.";
     return { ok: false, message };
   }
 }
@@ -393,11 +393,11 @@ export async function closeEventAction(formData: FormData): Promise<ActionResult
     const eventId = String(formData.get("eventId") ?? "").trim();
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!eventId) {
-      return { ok: false, message: "Event id is required." };
+      return { ok: false, message: "El id del evento es obligatorio." };
     }
 
     await closeEvent(tenantId, eventId);
@@ -406,9 +406,9 @@ export async function closeEventAction(formData: FormData): Promise<ActionResult
       revalidatePath(path);
     }
 
-    return { ok: true, message: "Event closed." };
+    return { ok: true, message: "Evento cerrado." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to close event.";
+    const message = error instanceof Error ? error.message : "No se pudo cerrar el evento.";
     return { ok: false, message };
   }
 }

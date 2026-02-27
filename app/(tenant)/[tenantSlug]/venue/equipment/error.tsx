@@ -12,9 +12,9 @@ export default function VenueEquipmentError({ error, reset }: { error: Error; re
 
   return (
     <div className="space-y-4">
-      <StatePanel kind="error" title="Unable to load equipment" message={error.message} />
+      <StatePanel kind="error" title="No se pudo cargar el catalogo de equipo" message={error.message} />
       <Button type="button" onClick={() => reset()}>
-        Retry
+        Reintentar
       </Button>
     </div>
   );

@@ -29,10 +29,10 @@ type EventFormState = {
 };
 
 const STEP_LABELS: Record<WizardStep, string> = {
-  1: "Basics",
-  2: "Schedule",
-  3: "Venue & Capacity",
-  4: "Review & Create",
+  1: "Datos basicos",
+  2: "Horario",
+  3: "Venue y capacidad",
+  4: "Revision y creacion",
 };
 
 const INITIAL_STATE: EventFormState = {
@@ -200,7 +200,6 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
 
       if (!result.ok) {
         setActionError(result.message);
-        toast.error(result.message);
         return;
       }
 
@@ -223,7 +222,7 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
   return (
     <div className="space-y-4">
       <header className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h1 className="text-xl font-semibold">Create Event</h1>
+        <h1 className="text-xl font-semibold">Crear evento</h1>
         <p className="text-sm text-muted">Crea un borrador. Publica cuando todo este listo.</p>
 
         <ol className="mt-4 grid gap-2 sm:grid-cols-4">
@@ -259,12 +258,12 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
           <div className="space-y-3">
             <h2 className="text-base font-semibold">1) Basics</h2>
             <label className="space-y-1 text-sm">
-              <span className="text-muted">Event name</span>
+              <span className="text-muted">Nombre del evento</span>
               <input
                 value={form.name}
                 onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
                 className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
-                placeholder="Annual Partner Summit"
+                placeholder="Cumbre anual de socios"
               />
             </label>
             {!stepValid[1] ? (
@@ -275,10 +274,10 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
 
         {step === 2 ? (
           <div className="space-y-3">
-            <h2 className="text-base font-semibold">2) Schedule</h2>
+            <h2 className="text-base font-semibold">2) Horario</h2>
             <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-1 text-sm">
-                <span className="text-muted">Starts at</span>
+                <span className="text-muted">Inicio</span>
                 <input
                   type="datetime-local"
                   value={form.startsAt}
@@ -288,7 +287,7 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
               </label>
 
               <label className="space-y-1 text-sm">
-                <span className="text-muted">Ends at</span>
+                <span className="text-muted">Fin</span>
                 <input
                   type="datetime-local"
                   min={form.startsAt || undefined}
@@ -314,16 +313,16 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
 
         {step === 3 ? (
           <div className="space-y-3">
-            <h2 className="text-base font-semibold">3) Venue & Capacity</h2>
+            <h2 className="text-base font-semibold">3) Venue y capacidad</h2>
 
             <label className="space-y-1 text-sm">
-              <span className="text-muted">Room</span>
+              <span className="text-muted">Sala</span>
               <select
                 value={form.roomId}
                 onChange={(event) => setForm((prev) => ({ ...prev, roomId: event.target.value }))}
                 className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
               >
-                <option value="">Select room</option>
+                <option value="">Seleccionar sala</option>
                 {rooms.map((room) => (
                   <option key={room.id} value={room.id}>
                     {room.name} (cap. {room.default_capacity})
@@ -333,7 +332,7 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
             </label>
 
             <label className="space-y-1 text-sm">
-              <span className="text-muted">Expected attendance (optional)</span>
+              <span className="text-muted">Asistencia esperada (opcional)</span>
               <input
                 type="number"
                 min={1}
@@ -384,22 +383,22 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
 
         {step === 4 ? (
           <div className="space-y-3">
-            <h2 className="text-base font-semibold">4) Review & Create</h2>
+            <h2 className="text-base font-semibold">4) Revision y creacion</h2>
             <div className="grid gap-3 text-sm md:grid-cols-2">
               <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-                <p className="text-muted">Event</p>
+                <p className="text-muted">Evento</p>
                 <p className="font-medium">{form.name || "-"}</p>
               </div>
               <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-                <p className="text-muted">Room</p>
+                <p className="text-muted">Sala</p>
                 <p className="font-medium">{selectedRoom?.name ?? "-"}</p>
               </div>
               <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-                <p className="text-muted">Schedule</p>
+                <p className="text-muted">Horario</p>
                 <p className="font-medium">{form.startsAt && form.endsAt ? `${form.startsAt} -> ${form.endsAt}` : "-"}</p>
               </div>
               <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-                <p className="text-muted">Expected attendance</p>
+                <p className="text-muted">Asistencia esperada</p>
                 <p className="font-medium">{form.expectedAttendance || "-"}</p>
               </div>
             </div>
@@ -407,24 +406,24 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
             <div className="flex flex-wrap gap-2">
               <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium">
                 <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-                Draft permitido
+                Borrador permitido
               </span>
               {roomNeedsSetup ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-warning/50 bg-warning/10 px-2.5 py-1 text-xs font-medium">
                   <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-                  Room needs setup
+                  Sala pendiente de configuracion
                 </span>
               ) : null}
               {hasConflict ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-warning/50 bg-warning/10 px-2.5 py-1 text-xs font-medium">
                   <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-                  Schedule conflict
+                  Conflicto de horario
                 </span>
               ) : null}
               {capacityExceeded ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-warning/50 bg-warning/10 px-2.5 py-1 text-xs font-medium">
                   <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-                  Capacity exceeded
+                  Capacidad excedida
                 </span>
               ) : null}
             </div>
@@ -433,17 +432,17 @@ export function EventWizardForm({ tenantId, tenantSlug, rooms, roomIdsWithoutEqu
       </section>
 
       <footer className="flex items-center justify-between">
-        <Button type="button" variant="secondary" onClick={goBack} disabled={step === 1 || isPending}>
-          Back
+          <Button type="button" variant="secondary" onClick={goBack} disabled={step === 1 || isPending}>
+          Volver
         </Button>
 
         {step < 4 ? (
           <Button type="button" onClick={goNext} disabled={!canContinue || isPending}>
-            Continue
+            Continuar
           </Button>
         ) : (
           <Button type="button" onClick={createDraft} isLoading={isPending} disabled={!stepValid[4]}>
-            Create draft
+            Crear borrador
           </Button>
         )}
       </footer>

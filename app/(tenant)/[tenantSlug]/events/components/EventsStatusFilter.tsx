@@ -6,9 +6,9 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 type StatusFilter = "all" | "draft" | "published";
 
 const options: Array<{ value: StatusFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "draft", label: "Draft" },
-  { value: "published", label: "Published" },
+  { value: "all", label: "Todos" },
+  { value: "draft", label: "Borrador" },
+  { value: "published", label: "Publicado" },
 ];
 
 export function EventsStatusFilter({ selected }: { selected: StatusFilter }) {

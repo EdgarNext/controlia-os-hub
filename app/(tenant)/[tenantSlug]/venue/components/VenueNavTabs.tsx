@@ -8,16 +8,16 @@ type VenueNavTabsProps = {
 };
 
 const tabs = [
-  { key: "overview", label: "Overview", href: (tenantSlug: string) => `/${tenantSlug}/venue`, exact: true },
-  { key: "rooms", label: "Rooms", href: (tenantSlug: string) => `/${tenantSlug}/venue/rooms`, exact: false },
-  { key: "equipment", label: "Equipment", href: (tenantSlug: string) => `/${tenantSlug}/venue/equipment`, exact: false },
+  { key: "overview", label: "Resumen", href: (tenantSlug: string) => `/${tenantSlug}/venue`, exact: true },
+  { key: "rooms", label: "Salas", href: (tenantSlug: string) => `/${tenantSlug}/venue/rooms`, exact: false },
+  { key: "equipment", label: "Equipo", href: (tenantSlug: string) => `/${tenantSlug}/venue/equipment`, exact: false },
 ];
 
 export function VenueNavTabs({ tenantSlug }: VenueNavTabsProps) {
   const pathname = usePathname();
 
   return (
-    <nav className="flex flex-wrap items-center gap-2" aria-label="Venue sections">
+    <nav className="flex flex-wrap items-center gap-2" aria-label="Secciones de venue">
       {tabs.map((tab) => {
         const href = tab.href(tenantSlug);
         const isActive = tab.exact ? pathname === href : pathname.startsWith(href);

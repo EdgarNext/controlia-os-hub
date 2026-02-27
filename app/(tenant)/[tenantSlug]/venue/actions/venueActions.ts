@@ -73,7 +73,7 @@ function buildTenantPaths(tenantSlug: string, roomId?: string) {
 function parsePositiveInteger(rawValue: FormDataEntryValue | null, fieldLabel: string): number {
   const value = Number(rawValue ?? 0);
   if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${fieldLabel} must be greater than 0.`);
+    throw new Error(`${fieldLabel} debe ser mayor a 0.`);
   }
   return Math.floor(value);
 }
@@ -144,7 +144,7 @@ export async function getRoomSetupData(tenantId: string, roomId: string): Promis
   const normalizedRoomId = String(roomId ?? "").trim();
 
   if (!normalizedRoomId) {
-    throw new Error("Room id is required.");
+    throw new Error("El id de la sala es obligatorio.");
   }
 
   await assertTenantMember(normalizedTenantId);
@@ -187,14 +187,14 @@ export async function createRoomAction(formData: FormData): Promise<ActionResult
 
     const name = String(formData.get("name") ?? "").trim();
     const code = String(formData.get("code") ?? "").trim();
-    const defaultCapacity = parsePositiveInteger(formData.get("defaultCapacity"), "Capacity");
+    const defaultCapacity = parsePositiveInteger(formData.get("defaultCapacity"), "La capacidad");
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!name) {
-      return { ok: false, message: "Room name is required." };
+      return { ok: false, message: "El nombre de la sala es obligatorio." };
     }
 
     await createRoom(tenantId, {
@@ -210,7 +210,7 @@ export async function createRoomAction(formData: FormData): Promise<ActionResult
 
     return { ok: true, message: "Sala creada." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to create room.";
+    const message = error instanceof Error ? error.message : "No se pudo crear la sala.";
     return { ok: false, message };
   }
 }
@@ -224,18 +224,18 @@ export async function updateRoomAction(formData: FormData): Promise<ActionResult
 
     const name = String(formData.get("name") ?? "").trim();
     const code = String(formData.get("code") ?? "").trim();
-    const defaultCapacity = parsePositiveInteger(formData.get("defaultCapacity"), "Capacity");
+    const defaultCapacity = parsePositiveInteger(formData.get("defaultCapacity"), "La capacidad");
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!roomId) {
-      return { ok: false, message: "Room id is required." };
+      return { ok: false, message: "El id de la sala es obligatorio." };
     }
 
     if (!name) {
-      return { ok: false, message: "Room name is required." };
+      return { ok: false, message: "El nombre de la sala es obligatorio." };
     }
 
     await updateRoom(tenantId, roomId, {
@@ -251,7 +251,7 @@ export async function updateRoomAction(formData: FormData): Promise<ActionResult
 
     return { ok: true, message: "Sala actualizada." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to update room.";
+    const message = error instanceof Error ? error.message : "No se pudo actualizar la sala.";
     return { ok: false, message };
   }
 }
@@ -264,11 +264,11 @@ export async function deleteRoomAction(formData: FormData): Promise<ActionResult
     await assertTenantAdmin(tenantId);
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!roomId) {
-      return { ok: false, message: "Room id is required." };
+      return { ok: false, message: "El id de la sala es obligatorio." };
     }
 
     await deleteRoom(tenantId, roomId);
@@ -279,7 +279,7 @@ export async function deleteRoomAction(formData: FormData): Promise<ActionResult
 
     return { ok: true, message: "Sala eliminada." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to delete room.";
+    const message = error instanceof Error ? error.message : "No se pudo eliminar la sala.";
     return { ok: false, message };
   }
 }
@@ -294,11 +294,11 @@ export async function createEquipmentAction(formData: FormData): Promise<ActionR
     const equipmentType = String(formData.get("category") ?? formData.get("equipmentType") ?? "").trim();
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!name) {
-      return { ok: false, message: "Equipment name is required." };
+      return { ok: false, message: "El nombre del equipo es obligatorio." };
     }
 
     await createEquipment(tenantId, {
@@ -313,7 +313,7 @@ export async function createEquipmentAction(formData: FormData): Promise<ActionR
 
     return { ok: true, message: "Equipo creado." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to create equipment.";
+    const message = error instanceof Error ? error.message : "No se pudo crear el equipo.";
     return { ok: false, message };
   }
 }
@@ -329,15 +329,15 @@ export async function updateEquipmentAction(formData: FormData): Promise<ActionR
     const equipmentType = String(formData.get("category") ?? formData.get("equipmentType") ?? "").trim();
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!equipmentId) {
-      return { ok: false, message: "Equipment id is required." };
+      return { ok: false, message: "El id del equipo es obligatorio." };
     }
 
     if (!name) {
-      return { ok: false, message: "Equipment name is required." };
+      return { ok: false, message: "El nombre del equipo es obligatorio." };
     }
 
     await updateEquipment(tenantId, equipmentId, {
@@ -352,7 +352,7 @@ export async function updateEquipmentAction(formData: FormData): Promise<ActionR
 
     return { ok: true, message: "Equipo actualizado." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to update equipment.";
+    const message = error instanceof Error ? error.message : "No se pudo actualizar el equipo.";
     return { ok: false, message };
   }
 }
@@ -365,11 +365,11 @@ export async function deleteEquipmentAction(formData: FormData): Promise<ActionR
     await assertTenantAdmin(tenantId);
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!equipmentId) {
-      return { ok: false, message: "Equipment id is required." };
+      return { ok: false, message: "El id del equipo es obligatorio." };
     }
 
     await deleteEquipment(tenantId, equipmentId);
@@ -380,7 +380,7 @@ export async function deleteEquipmentAction(formData: FormData): Promise<ActionR
 
     return { ok: true, message: "Equipo eliminado." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to delete equipment.";
+    const message = error instanceof Error ? error.message : "No se pudo eliminar el equipo.";
     return { ok: false, message };
   }
 }
@@ -391,16 +391,16 @@ export async function assignRoomEquipmentAction(formData: FormData): Promise<Act
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
     const roomId = String(formData.get("roomId") ?? "").trim();
     const equipmentId = String(formData.get("equipmentId") ?? "").trim();
-    const quantity = parsePositiveInteger(formData.get("quantity"), "Quantity");
+    const quantity = parsePositiveInteger(formData.get("quantity"), "La cantidad");
 
     await assertTenantAdmin(tenantId);
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!roomId || !equipmentId) {
-      return { ok: false, message: "Room and equipment are required." };
+      return { ok: false, message: "La sala y el equipo son obligatorios." };
     }
 
     await upsertRoomEquipment(tenantId, roomId, equipmentId, quantity);
@@ -411,7 +411,7 @@ export async function assignRoomEquipmentAction(formData: FormData): Promise<Act
 
     return { ok: true, message: "Equipo asignado a la sala." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to assign equipment.";
+    const message = error instanceof Error ? error.message : "No se pudo asignar el equipo.";
     return { ok: false, message };
   }
 }
@@ -426,11 +426,11 @@ export async function unassignRoomEquipmentAction(formData: FormData): Promise<A
     await assertTenantAdmin(tenantId);
 
     if (!tenantSlug) {
-      return { ok: false, message: "Tenant slug is required." };
+      return { ok: false, message: "El slug del tenant es obligatorio." };
     }
 
     if (!roomId || !roomEquipmentId) {
-      return { ok: false, message: "Room and assigned equipment are required." };
+      return { ok: false, message: "La sala y el equipo asignado son obligatorios." };
     }
 
     await deleteRoomEquipment(tenantId, roomEquipmentId);
@@ -441,7 +441,7 @@ export async function unassignRoomEquipmentAction(formData: FormData): Promise<A
 
     return { ok: true, message: "Equipo removido de la sala." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to remove equipment.";
+    const message = error instanceof Error ? error.message : "No se pudo remover el equipo.";
     return { ok: false, message };
   }
 }

@@ -12,9 +12,9 @@ export default function VenueRoomsError({ error, reset }: { error: Error; reset:
 
   return (
     <div className="space-y-4">
-      <StatePanel kind="error" title="Unable to load rooms" message={error.message} />
+      <StatePanel kind="error" title="No se pudieron cargar las salas" message={error.message} />
       <Button type="button" onClick={() => reset()}>
-        Retry
+        Reintentar
       </Button>
     </div>
   );

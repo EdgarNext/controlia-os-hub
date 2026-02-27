@@ -1,4 +1,3 @@
-import { PageFrame } from "@/components/layout/PageFrame";
 import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { isTenantAccessDeniedError } from "../../../lib/access-errors";
 import { getEventCreateData } from "../actions/eventActions";
@@ -36,13 +35,11 @@ export default async function EventNewPage({ params }: EventNewPageProps) {
 
   if (result.permissionDenied) {
     return (
-      <PageFrame>
-        <StatePanel
-          kind="error"
-          title="Sin permisos para crear eventos"
-          message="No tienes permisos para crear eventos en este tenant. Contacta al administrador."
-        />
-      </PageFrame>
+      <StatePanel
+        kind="permission"
+        title="Sin permisos para crear eventos"
+        message="No tienes permisos para crear eventos en este tenant. Contacta al administrador."
+      />
     );
   }
 
@@ -50,25 +47,21 @@ export default async function EventNewPage({ params }: EventNewPageProps) {
 
   if (data.rooms.length === 0) {
     return (
-      <PageFrame>
-        <StatePanel
-          kind="empty"
-          title="No hay salas disponibles"
-          message="No tienes salas aun. Crea una sala para poder crear eventos."
-        />
-      </PageFrame>
+      <StatePanel
+        kind="empty"
+        title="No hay salas disponibles"
+        message="No tienes salas aun. Crea una sala para poder crear eventos."
+      />
     );
   }
 
   return (
-    <PageFrame>
-      <EventWizardForm
-        tenantId={data.tenantId}
-        tenantSlug={tenant.tenantSlug}
-        rooms={data.rooms}
-        roomIdsWithoutEquipment={data.roomIdsWithoutEquipment}
-        recentEvents={data.events}
-      />
-    </PageFrame>
+    <EventWizardForm
+      tenantId={data.tenantId}
+      tenantSlug={tenant.tenantSlug}
+      rooms={data.rooms}
+      roomIdsWithoutEquipment={data.roomIdsWithoutEquipment}
+      recentEvents={data.events}
+    />
   );
 }

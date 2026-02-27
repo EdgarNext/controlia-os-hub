@@ -12,9 +12,9 @@ export default function RoomSetupError({ error, reset }: { error: Error; reset: 
 
   return (
     <div className="space-y-4">
-      <StatePanel kind="error" title="Unable to load room setup" message={error.message} />
+      <StatePanel kind="error" title="No se pudo cargar la configuracion de sala" message={error.message} />
       <Button type="button" onClick={() => reset()}>
-        Retry
+        Reintentar
       </Button>
     </div>
   );
