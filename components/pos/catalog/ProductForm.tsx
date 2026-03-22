@@ -100,6 +100,18 @@ export function ProductForm({
         {state.fieldErrors.price ? <span className="text-xs text-danger">{state.fieldErrors.price}</span> : null}
       </label>
 
+      <label className="block space-y-1 text-sm">
+        <span className="text-muted">Tipo</span>
+        <select
+          name="class"
+          defaultValue={initialValues?.class ?? "food"}
+          className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
+        >
+          <option value="food">Alimento</option>
+          <option value="drink">Bebida</option>
+        </select>
+      </label>
+
       <label className="inline-flex items-center gap-2 text-sm text-foreground">
         <input
           type="checkbox"

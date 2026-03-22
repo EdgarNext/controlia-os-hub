@@ -10,12 +10,14 @@ import type {
 
 const ALLOWED_ORDER_STATUS = new Set(["OPEN", "PAID", "CANCELED"]);
 const ALLOWED_PRINT_STATUS = new Set(["QUEUED", "SENT", "CONFIRMED", "FAILED", "UNKNOWN"]);
+const ALLOWED_PAYMENT_METHODS = new Set(["cash", "card", "employee", "efectivo", "tarjeta"]);
 const ALLOWED_EVENT_TYPES = new Set([
   "PRINTED",
   "REPRINTED",
   "PRINT_ERROR",
   "CANCELED",
   "CUT_PRINTED",
+  "PAYMENT_CAPTURED",
   "TAB_OPENED",
   "TAB_ITEM_ADDED",
   "TAB_ITEM_UPDATED",
@@ -39,6 +41,29 @@ function parseOptionalIsoTimestamp(value: unknown, fieldName: string): string | 
   return parsed.toISOString();
 }
 
+function parseOptionalNonNegativeInt(value: unknown, fieldName: string): number | null {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${fieldName} must be a non-negative integer.`);
+  }
+  return parsed;
+}
+
+function normalizePaymentMethod(value: unknown, fieldName: string): "cash" | "card" | "employee" | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string.`);
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!ALLOWED_PAYMENT_METHODS.has(normalized)) {
+    throw new Error(`${fieldName} must be one of: cash, card, employee.`);
+  }
+  if (normalized === "efectivo") return "cash";
+  if (normalized === "tarjeta") return "card";
+  return normalized as "cash" | "card" | "employee";
+}
+
 function sanitizeOrder(order: PosOrderSyncOrder, tenantId: string) {
   if (!order?.id || !order?.kiosk_id) {
     throw new Error("order.id and order.kiosk_id are required.");
@@ -53,6 +78,18 @@ function sanitizeOrder(order: PosOrderSyncOrder, tenantId: string) {
   }
 
   const canceledAt = parseOptionalIsoTimestamp(order.canceled_at, "order.canceled_at");
+  const paymentReceivedCents = parseOptionalNonNegativeInt(
+    order.payment_received_cents ?? order.pago_recibido_cents,
+    "order.payment_received_cents",
+  );
+  const changeCents = parseOptionalNonNegativeInt(
+    order.change_cents ?? order.cambio_cents,
+    "order.change_cents",
+  );
+  const paymentMethod = normalizePaymentMethod(
+    order.payment_method ?? order.metodo_pago,
+    "order.payment_method",
+  );
   const cancelReason =
     typeof order.cancel_reason === "string" && order.cancel_reason.trim()
       ? order.cancel_reason.trim()
@@ -66,6 +103,9 @@ function sanitizeOrder(order: PosOrderSyncOrder, tenantId: string) {
     folio_text: order.folio_text,
     status: order.status,
     total_cents: order.total_cents,
+    payment_received_cents: paymentReceivedCents,
+    change_cents: changeCents,
+    payment_method: paymentMethod,
     canceled_at: canceledAt,
     cancel_reason: cancelReason,
     print_status: order.print_status,

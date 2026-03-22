@@ -5,26 +5,24 @@ import { useRouter } from "next/navigation";
 import { LogOut, Moon, Sun, User } from "lucide-react";
 import { signOutAction } from "@/actions/auth/sign-out";
 import { setThemeAction } from "@/actions/preferences/set-theme";
-import { DEFAULT_THEME, isAppTheme, type AppTheme } from "@/lib/theme/constants";
+import { type AppTheme } from "@/lib/theme/constants";
 
 type UserMenuProps = {
   userEmail?: string | null;
+  initialTheme: AppTheme;
 };
 
-export function UserMenu({ userEmail }: UserMenuProps) {
+export function UserMenu({ userEmail, initialTheme }: UserMenuProps) {
   const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [isThemePending, startThemeTransition] = useTransition();
   const [isSignOutPending, startSignOutTransition] = useTransition();
-  const [theme, setTheme] = useState<AppTheme>(() => {
-    if (typeof document === "undefined") {
-      return DEFAULT_THEME;
-    }
+  const [theme, setTheme] = useState<AppTheme>(initialTheme);
 
-    const current = document.documentElement.dataset.theme;
-    return isAppTheme(current) ? current : DEFAULT_THEME;
-  });
+  useEffect(() => {
+    setTheme(initialTheme);
+  }, [initialTheme]);
 
   const toggleTheme = () => {
     const nextTheme: AppTheme = theme === "dark" ? "light" : "dark";

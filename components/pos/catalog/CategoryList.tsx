@@ -1,6 +1,6 @@
 import Link from "next/link";
+import { StatePanel } from "@/components/ui/state-panel";
 import type { PosCatalogCategoryListItem } from "@/types/pos-catalog";
-import { CatalogEmptyState } from "./CatalogEmptyState";
 
 function formatDateTime(value?: string | null): string {
   if (!value) {
@@ -23,7 +23,13 @@ export function CategoryList({
   tenantSlug?: string;
 }) {
   if (categories.length === 0) {
-    return <CatalogEmptyState message="Aún no hay categorías." />;
+    return (
+      <StatePanel
+        kind="empty"
+        title="Sin categorías"
+        message="Aún no hay categorías para este tenant."
+      />
+    );
   }
 
   return (
@@ -41,7 +47,7 @@ export function CategoryList({
         <tbody>
           {categories.map((category) => {
             const editHref = tenantSlug
-              ? `/${tenantSlug}/pos/admin/catalog/categories/${category.id}/edit`
+              ? `/${tenantSlug}/pos/catalog/categories/${category.id}/edit`
               : null;
 
             return (

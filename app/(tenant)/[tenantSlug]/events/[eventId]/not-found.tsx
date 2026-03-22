@@ -10,7 +10,7 @@ export default function EventNotFound() {
         title="Evento no encontrado"
         message="No existe un evento con ese identificador en este tenant."
       />
-      <Link href=".." relative="path">
+      <Link href="..">
         <Button type="button" variant="secondary">
           Volver a eventos
         </Button>

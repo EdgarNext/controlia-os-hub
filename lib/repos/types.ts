@@ -46,3 +46,27 @@ export type TenantModuleRecord = {
     status: "active" | "deprecated" | "planned";
   } | null;
 };
+
+export type ModuleCatalogStatus = "active" | "deprecated" | "planned";
+
+export type ModuleCatalogRecord = {
+  module_key: string;
+  name: string;
+  description: string | null;
+  status: ModuleCatalogStatus;
+};
+
+export type TenantModuleAssignmentRecord = {
+  id: string;
+  tenant_id: string;
+  module_key: string;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  created_at: string;
+  tenant: {
+    id: string;
+    slug: string;
+    name: string;
+    status: TenantStatus;
+  } | null;
+};

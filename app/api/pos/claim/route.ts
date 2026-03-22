@@ -23,6 +23,7 @@ type ClaimDeviceRow = {
 type KioskRow = {
   id: string;
   number: number;
+  name: string | null;
 };
 
 function badRequest(message: string) {
@@ -148,7 +149,7 @@ export async function POST(request: Request) {
 
     const { data: kiosk, error: kioskError } = await supabase
       .from("kiosks")
-      .select("id, number")
+      .select("id, number, name")
       .eq("tenant_id", tenant.id)
       .eq("id", claimedDevice.kiosk_id)
       .limit(1)
@@ -167,12 +168,15 @@ export async function POST(request: Request) {
       );
     }
 
+    const kioskDisplayName = kiosk.name?.trim() ? kiosk.name.trim() : `Kiosco ${kiosk.number}`;
+
     return NextResponse.json({
       ok: true,
       deviceId: claimedDevice.device_id,
       deviceSecret: nextSecret.secret,
       kioskId: claimedDevice.kiosk_id,
       kioskNumber: kiosk.number,
+      kioskDisplayName,
       tenantId: claimedDevice.tenant_id,
     });
   } catch (error) {
@@ -180,4 +184,3 @@ export async function POST(request: Request) {
     return badRequest(message);
   }
 }
-

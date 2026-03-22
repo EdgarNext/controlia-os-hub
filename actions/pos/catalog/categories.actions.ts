@@ -2,8 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { assertTenantAdmin } from "@/app/(tenant)/lib/tenant-access";
-import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
+import { resolveSalesPosPageActor } from "@/lib/auth/module-page-access";
+import {
+  type CatalogCsvImportSummary,
+  importCategoriesFromCsv,
+} from "@/lib/pos/catalog/csv-transfer";
 import {
   createCatalogCategory,
   updateCatalogCategory,
@@ -18,9 +21,19 @@ export type CategoryActionState = {
   };
 };
 
+export type CategoryCsvImportActionState = {
+  error: string | null;
+  summary: CatalogCsvImportSummary | null;
+};
+
 const initialState: CategoryActionState = {
   error: null,
   fieldErrors: {},
+};
+
+const initialCategoryCsvImportState: CategoryCsvImportActionState = {
+  error: null,
+  summary: null,
 };
 
 function isRedirectErrorLike(error: unknown): boolean {
@@ -98,7 +111,7 @@ function validateCategoryInput(formData: FormData): {
 }
 
 function categoryListPath(tenantSlug: string): string {
-  return `/${tenantSlug}/pos/admin/catalog/categories`;
+  return `/${tenantSlug}/pos/catalog/categories`;
 }
 
 export async function createCategoryAction(
@@ -123,8 +136,7 @@ export async function createCategoryAction(
   }
 
   try {
-    const tenant = await resolveTenantContextBySlug(tenantSlug);
-    const user = await assertTenantAdmin(tenant.tenantId);
+    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "categories", "manage");
 
     await createCatalogCategory({
       tenantId: tenant.tenantId,
@@ -170,8 +182,7 @@ export async function updateCategoryAction(
   }
 
   try {
-    const tenant = await resolveTenantContextBySlug(tenantSlug);
-    const user = await assertTenantAdmin(tenant.tenantId);
+    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "categories", "manage");
 
     await updateCatalogCategory({
       tenantId: tenant.tenantId,
@@ -181,7 +192,7 @@ export async function updateCategoryAction(
     });
 
     revalidatePath(categoryListPath(tenant.tenantSlug));
-    revalidatePath(`/${tenant.tenantSlug}/pos/admin/catalog/categories/${categoryId}/edit`);
+    revalidatePath(`/${tenant.tenantSlug}/pos/catalog/categories/${categoryId}/edit`);
     redirect(categoryListPath(tenant.tenantSlug));
   } catch (error) {
     if (isRedirectErrorLike(error)) {
@@ -192,6 +203,42 @@ export async function updateCategoryAction(
     return {
       ...initialState,
       error: message,
+    };
+  }
+}
+
+export async function importCategoriesCsvAction(
+  _previousState: CategoryCsvImportActionState,
+  formData: FormData,
+): Promise<CategoryCsvImportActionState> {
+  const tenantSlug = toTrimmedString(formData.get("tenantSlug")).toLowerCase();
+  const file = formData.get("file");
+
+  if (!tenantSlug) {
+    return {
+      ...initialCategoryCsvImportState,
+      error: "Tenant inválido.",
+    };
+  }
+
+  try {
+    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "categories", "manage");
+    const summary = await importCategoriesFromCsv({
+      tenantId: tenant.tenantId,
+      actorUserId: user.id,
+      file: file instanceof File ? file : null,
+    });
+
+    revalidatePath(categoryListPath(tenant.tenantSlug));
+
+    return {
+      error: null,
+      summary,
+    };
+  } catch (error) {
+    return {
+      ...initialCategoryCsvImportState,
+      error: error instanceof Error ? error.message : "No se pudo importar el CSV de categorías.",
     };
   }
 }

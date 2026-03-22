@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/AppShell";
+import { getThemeFromCookies } from "@/actions/preferences/set-theme";
 import { requirePlatformOwner } from "@/lib/auth/require-platform-owner";
 import { platformNav } from "@/lib/navigation/platform-nav";
 
@@ -8,9 +9,10 @@ export const dynamic = "force-dynamic";
 
 export default async function PlatformLayout({ children }: { children: ReactNode }) {
   const { user } = await requirePlatformOwner();
+  const theme = await getThemeFromCookies();
 
   return (
-    <AppShell navSections={platformNav} userEmail={user.email}>
+    <AppShell navSections={platformNav} userEmail={user.email} theme={theme}>
       {children}
     </AppShell>
   );

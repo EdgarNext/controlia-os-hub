@@ -22,6 +22,8 @@ export type PosCatalogProductListItem = Pick<
   | "id"
   | "tenant_id"
   | "category_id"
+  | "type"
+  | "class"
   | "name"
   | "price_cents"
   | "is_active"
@@ -40,6 +42,7 @@ export type PosCatalogProductListItem = Pick<
 export type PosCatalogProductFormValues = {
   name: string;
   category_id: string | null;
+  class: "food" | "drink";
   price_cents: number;
   is_active: boolean;
 };

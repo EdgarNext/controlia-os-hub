@@ -109,10 +109,10 @@ export async function listCatalogProducts({
   const { data, error } = await supabase
     .from("catalog_items")
     .select(
-      "id, tenant_id, category_id, name, price_cents, is_active, is_sold_out, is_popular, image_path, created_at, created_by, updated_at, updated_by, deleted_at",
+      "id, tenant_id, category_id, type, class, name, price_cents, is_active, is_sold_out, is_popular, image_path, created_at, created_by, updated_at, updated_by, deleted_at",
     )
     .eq("tenant_id", tenantId)
-    .is("deleted_at", null)
+    .order("deleted_at", { ascending: true, nullsFirst: true })
     .order("name", { ascending: true });
 
   if (error) {
@@ -139,7 +139,7 @@ export async function getCatalogProductById({
   const { data, error } = await supabase
     .from("catalog_items")
     .select(
-      "id, tenant_id, category_id, name, price_cents, is_active, is_sold_out, is_popular, image_path, created_at, created_by, updated_at, updated_by, deleted_at",
+      "id, tenant_id, category_id, type, class, name, price_cents, is_active, is_sold_out, is_popular, image_path, created_at, created_by, updated_at, updated_by, deleted_at",
     )
     .eq("tenant_id", tenantId)
     .eq("id", id)

@@ -64,11 +64,52 @@ export async function POST(request: Request, context: { params: Promise<RoutePar
         }
       }
 
+      const cashShiftMutations = body.mutations.filter(
+        (mutation) =>
+          mutation.type === "OPEN_CASH_SHIFT" ||
+          mutation.type === "CLOSE_CASH_SHIFT",
+      );
+      if (cashShiftMutations.length > 0) {
+        console.info("pos.sync.cash_shift.route.received", {
+          tenantSlug,
+          deviceId: device.deviceId,
+          kioskId: device.kioskId,
+          count: cashShiftMutations.length,
+          mutations: cashShiftMutations.map((mutation) => ({
+            mutation_id: mutation.mutation_id,
+            type: mutation.type,
+            cash_shift_id:
+              "cash_shift_id" in mutation ? mutation.cash_shift_id : null,
+          })),
+        });
+      }
+
       const result = await syncMutationsBatch({
         tenantId: device.tenantId,
         tenantSlug: device.tenantSlug,
         mutations: body.mutations,
       });
+
+      if (cashShiftMutations.length > 0) {
+        console.info("pos.sync.cash_shift.route.resolved", {
+          tenantSlug,
+          deviceId: device.deviceId,
+          kioskId: device.kioskId,
+          ackCount: result.acks.length,
+          conflictCount: result.conflicts.length,
+          acks: result.acks.map((ack) => ({
+            mutation_id: ack.mutation_id,
+            status: ack.status,
+            order_id: ack.order_id ?? null,
+            message: ack.message ?? null,
+          })),
+          conflicts: result.conflicts.map((conflict) => ({
+            mutation_id: conflict.mutation_id,
+            order_id: conflict.order_id ?? null,
+            reason: conflict.reason,
+          })),
+        });
+      }
 
       return NextResponse.json(result, { status: result.conflicts.length > 0 ? 409 : 200 });
     }

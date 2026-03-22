@@ -1,3 +1,7 @@
+/**
+ * @deprecated Legacy catalog_items/catalog_variants sync bridge.
+ * Keep only for migration compatibility while the v2 admin and runtime are the canonical path.
+ */
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
   PosCatalogCategory,

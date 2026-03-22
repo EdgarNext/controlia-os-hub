@@ -9,12 +9,14 @@ import { Breadcrumbs } from "./Breadcrumbs";
 import { PlatformBadge } from "./PlatformBadge";
 import { TenantChip } from "./TenantChip";
 import { UserMenu } from "./UserMenu";
+import type { AppTheme } from "@/lib/theme/constants";
 
 type TopBarProps = {
   userEmail?: string | null;
+  theme: AppTheme;
 };
 
-export function TopBar({ userEmail }: TopBarProps) {
+export function TopBar({ userEmail, theme }: TopBarProps) {
   const pathname = usePathname();
   const tenantSlug = getTenantSlugFromPathname(pathname);
   const isPlatformArea = pathname.startsWith("/tenants") || pathname.startsWith("/lab");
@@ -59,7 +61,7 @@ export function TopBar({ userEmail }: TopBarProps) {
             <KbdHint keys="Ctrl K" />
           </button>
 
-          <UserMenu userEmail={userEmail} />
+          <UserMenu userEmail={userEmail} initialTheme={theme} />
         </div>
       </div>
     </header>

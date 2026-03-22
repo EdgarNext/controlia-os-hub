@@ -91,6 +91,13 @@ export type PosOrderSyncOrder = {
   folio_text: string;
   status: string;
   total_cents: number;
+  payment_received_cents?: number | null;
+  change_cents?: number | null;
+  payment_method?: "cash" | "card" | "employee" | "efectivo" | "tarjeta" | null;
+  // Backward compatibility for legacy edge payloads.
+  pago_recibido_cents?: number | null;
+  cambio_cents?: number | null;
+  metodo_pago?: string | null;
   canceled_at?: string | null;
   cancel_reason?: string | null;
   print_status: string;
@@ -113,6 +120,8 @@ export type PosSyncOrdersLegacyRequest = {
 };
 
 export type PosSyncMutationType =
+  | "OPEN_CASH_SHIFT"
+  | "CLOSE_CASH_SHIFT"
   | "OPEN_TAB"
   | "ADD_ITEM"
   | "UPDATE_ITEM_QTY"
@@ -127,13 +136,33 @@ export type PosSyncMutationType =
 type PosSyncMutationBase = {
   mutation_id: string;
   type: PosSyncMutationType;
-  order_id: string;
   kiosk_id: string;
   base_tab_version?: number | null;
   created_at?: string | null;
 };
 
-export type PosSyncMutationOpenTab = PosSyncMutationBase & {
+type PosSyncOrderMutationBase = PosSyncMutationBase & {
+  order_id: string;
+};
+
+export type PosSyncMutationOpenCashShift = PosSyncMutationBase & {
+  type: "OPEN_CASH_SHIFT";
+  cash_shift_id: string;
+  opened_by_pos_user_id: string;
+  opening_float_cents: number;
+  opened_at?: string | null;
+};
+
+export type PosSyncMutationCloseCashShift = PosSyncMutationBase & {
+  type: "CLOSE_CASH_SHIFT";
+  cash_shift_id: string;
+  closed_by_pos_user_id: string;
+  declared_cash_cents: number;
+  closed_at?: string | null;
+  status?: "closed" | "canceled";
+};
+
+export type PosSyncMutationOpenTab = PosSyncOrderMutationBase & {
   type: "OPEN_TAB";
   folio_number: number;
   folio_text: string;
@@ -144,7 +173,7 @@ export type PosSyncMutationOpenTab = PosSyncMutationBase & {
   meta?: Record<string, unknown> | null;
 };
 
-export type PosSyncMutationAddItem = PosSyncMutationBase & {
+export type PosSyncMutationAddItem = PosSyncOrderMutationBase & {
   type: "ADD_ITEM";
   line_id: string;
   product_id: string;
@@ -154,7 +183,7 @@ export type PosSyncMutationAddItem = PosSyncMutationBase & {
   meta?: Record<string, unknown> | null;
 };
 
-export type PosSyncMutationUpdateItemQty = PosSyncMutationBase & {
+export type PosSyncMutationUpdateItemQty = PosSyncOrderMutationBase & {
   type: "UPDATE_ITEM_QTY";
   line_id: string;
   qty: number;
@@ -162,14 +191,14 @@ export type PosSyncMutationUpdateItemQty = PosSyncMutationBase & {
   meta?: Record<string, unknown> | null;
 };
 
-export type PosSyncMutationRemoveItem = PosSyncMutationBase & {
+export type PosSyncMutationRemoveItem = PosSyncOrderMutationBase & {
   type: "REMOVE_ITEM";
   line_id: string;
   reason?: string | null;
   meta?: Record<string, unknown> | null;
 };
 
-export type PosSyncMutationKitchenPrint = PosSyncMutationBase & {
+export type PosSyncMutationKitchenPrint = PosSyncOrderMutationBase & {
   type: "KITCHEN_PRINT";
   printed_version: number;
   ok?: boolean;
@@ -177,29 +206,33 @@ export type PosSyncMutationKitchenPrint = PosSyncMutationBase & {
   meta?: Record<string, unknown> | null;
 };
 
-export type PosSyncMutationCloseTabPaid = PosSyncMutationBase & {
+export type PosSyncMutationCloseTabPaid = PosSyncOrderMutationBase & {
   type: "CLOSE_TAB_PAID";
   closed_at?: string | null;
   total_cents?: number;
   meta?: Record<string, unknown> | null;
 };
 
-export type PosSyncMutationCancelTab = PosSyncMutationBase & {
+export type PosSyncMutationCancelTab = PosSyncOrderMutationBase & {
   type: "CANCEL_TAB";
   canceled_at?: string | null;
   cancel_reason?: string | null;
   meta?: Record<string, unknown> | null;
 };
 
-export type PosSyncMutationSaleCreate = PosSyncMutationBase & {
+export type PosSyncMutationSaleCreate = PosSyncOrderMutationBase & {
   type: "SALE_CREATE";
   user_id: string;
   folio_number: number;
   folio_text: string;
   total_cents: number;
-  pago_recibido_cents: number;
-  cambio_cents: number;
-  metodo_pago?: string | null;
+  payment_received_cents?: number;
+  change_cents?: number;
+  payment_method?: "cash" | "card" | "employee" | "efectivo" | "tarjeta";
+  // Backward compatibility for legacy edge payloads.
+  pago_recibido_cents?: number;
+  cambio_cents?: number;
+  metodo_pago?: "cash" | "card" | "employee" | "efectivo" | "tarjeta";
   print_status?: "SENT" | "FAILED" | "UNKNOWN";
   print_attempt_count?: number;
   last_print_error?: string | null;
@@ -215,7 +248,7 @@ export type PosSyncMutationSaleCreate = PosSyncMutationBase & {
   meta?: Record<string, unknown> | null;
 };
 
-export type PosSyncMutationSaleReprint = PosSyncMutationBase & {
+export type PosSyncMutationSaleReprint = PosSyncOrderMutationBase & {
   type: "SALE_REPRINT";
   user_id: string;
   print_status?: "SENT" | "FAILED" | "UNKNOWN";
@@ -225,7 +258,7 @@ export type PosSyncMutationSaleReprint = PosSyncMutationBase & {
   meta?: Record<string, unknown> | null;
 };
 
-export type PosSyncMutationSaleCancel = PosSyncMutationBase & {
+export type PosSyncMutationSaleCancel = PosSyncOrderMutationBase & {
   type: "SALE_CANCEL";
   user_id: string;
   canceled_at?: string | null;
@@ -234,6 +267,8 @@ export type PosSyncMutationSaleCancel = PosSyncMutationBase & {
 };
 
 export type PosSyncMutationV2 =
+  | PosSyncMutationOpenCashShift
+  | PosSyncMutationCloseCashShift
   | PosSyncMutationOpenTab
   | PosSyncMutationAddItem
   | PosSyncMutationUpdateItemQty

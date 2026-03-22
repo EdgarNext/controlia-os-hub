@@ -15,6 +15,17 @@
   --color-muted: color-mix(in oklab, var(--color-foreground) 65%, var(--color-surface));
   --color-bg-veil: color-mix(in oklab, var(--color-foreground) 24%, transparent);
 
+  --sidebar-bg: color-mix(in oklab, var(--color-bg) 90%, var(--color-surface));
+  --sidebar-surface: color-mix(in oklab, var(--color-surface) 96%, var(--color-bg));
+  --sidebar-border: var(--color-border);
+  --nav-item-hover: color-mix(in oklab, var(--color-primary) 10%, var(--color-surface));
+  --nav-item-active: color-mix(in oklab, var(--color-primary) 12%, var(--color-surface));
+  --nav-item-active-text: var(--color-foreground);
+  --nav-accent-venue: oklch(58% 0.12 255);
+  --nav-accent-commercial: oklch(62% 0.11 40);
+  --nav-accent-cafe: oklch(66% 0.14 150);
+  --nav-accent-admin: oklch(52% 0.06 280);
+
   --radius-base: 14px;
   --shadow-soft: 0 10px 30px -16px oklch(20% 0.02 260 / 0.25);
   --shadow-raise: 0 16px 34px -18px oklch(20% 0.02 260 / 0.34);

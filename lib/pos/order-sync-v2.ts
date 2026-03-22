@@ -3,11 +3,15 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
   PosSyncMutationAck,
   PosSyncMutationConflict,
+  PosSyncMutationCloseCashShift,
+  PosSyncMutationOpenCashShift,
   PosSyncMutationsResponse,
   PosSyncMutationV2,
 } from "@/types/pos";
 
 const MUTATION_TYPES = new Set([
+  "OPEN_CASH_SHIFT",
+  "CLOSE_CASH_SHIFT",
   "OPEN_TAB",
   "ADD_ITEM",
   "UPDATE_ITEM_QTY",
@@ -21,6 +25,7 @@ const MUTATION_TYPES = new Set([
 ] as const);
 
 const PRINT_STATUSES = new Set(["QUEUED", "SENT", "CONFIRMED", "FAILED", "UNKNOWN"] as const);
+const ALLOWED_PAYMENT_METHODS = new Set(["cash", "card", "employee", "efectivo", "tarjeta"] as const);
 
 class MutationConflictError extends Error {
   constructor(
@@ -44,6 +49,32 @@ type OrderRow = {
   status: "OPEN" | "PAID" | "CANCELED";
   tab_version: number;
   is_tab?: boolean | null;
+};
+
+type CashShiftRow = {
+  id: string;
+  tenant_id: string;
+  kiosk_id: string;
+  opened_by_pos_user_id: string;
+  closed_by_pos_user_id: string | null;
+  status: "open" | "closed" | "canceled";
+  opening_float_cents: number;
+  declared_cash_cents: number | null;
+  opened_at: string;
+  closed_at: string | null;
+};
+
+type OrderScopedMutation = Extract<PosSyncMutationV2, { order_id: string }>;
+
+type CloseTabPaidMeta = {
+  paymentMethod: "cash" | "card" | "employee";
+  paymentReceivedCents: number;
+  changeCents: number;
+  printStatus: "QUEUED" | "SENT" | "CONFIRMED" | "FAILED";
+  printAttemptCount: number;
+  printError: string | null;
+  lastPrintAt: string;
+  printJobId: string | null;
 };
 
 function parseIsoOrNow(value: string | null | undefined, field: string): string {
@@ -76,6 +107,35 @@ function ensurePositiveInt(value: unknown, field: string): number {
     throw new Error(`${field} must be a positive integer.`);
   }
   return num;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+}
+
+function normalizeMutationTrackingId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  // Temporary compatibility shim for legacy mobile/tablet outbox entries that still
+  // use string ids like `mutation-...`. The canonical DB tracking columns are uuid,
+  // so we persist only UUID-shaped values and intentionally drop legacy ids instead
+  // of blocking the entire sync lane. This should be removable once the old outbox
+  // backlog is gone and every client emits UUID mutation ids.
+  return isUuid(value) ? value : null;
+}
+
+function normalizePaymentMethod(value: unknown): "cash" | "card" | "employee" {
+  if (typeof value !== "string") {
+    throw new Error("payment_method is required.");
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!ALLOWED_PAYMENT_METHODS.has(normalized as "cash" | "card" | "employee" | "efectivo" | "tarjeta")) {
+    throw new Error("payment_method must be one of: cash, card, employee.");
+  }
+  if (normalized === "efectivo") return "cash";
+  if (normalized === "tarjeta") return "card";
+  return normalized as "cash" | "card" | "employee";
 }
 
 async function assertKioskBelongsToTenant(kioskId: string, tenantId: string): Promise<void> {
@@ -150,8 +210,27 @@ async function findOrder(tenantId: string, orderId: string): Promise<OrderRow | 
   return data || null;
 }
 
+async function findCashShift(
+  tenantId: string,
+  cashShiftId: string,
+): Promise<CashShiftRow | null> {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("cash_shifts")
+    .select(
+      "id, tenant_id, kiosk_id, opened_by_pos_user_id, closed_by_pos_user_id, status, opening_float_cents, declared_cash_cents, opened_at, closed_at",
+    )
+    .eq("tenant_id", tenantId)
+    .eq("id", cashShiftId)
+    .limit(1)
+    .maybeSingle<CashShiftRow>();
+
+  if (error) throw new Error(`Unable to load cash shift: ${error.message}`);
+  return data || null;
+}
+
 function assertExpectedVersion(
-  mutation: PosSyncMutationV2,
+  mutation: OrderScopedMutation,
   current: number,
 ): void {
   if (mutation.base_tab_version == null) return;
@@ -169,7 +248,7 @@ function assertExpectedVersion(
   }
 }
 
-function assertOrderOpen(order: OrderRow, mutation: PosSyncMutationV2): void {
+function assertOrderOpen(order: OrderRow, mutation: OrderScopedMutation): void {
   if (order.status !== "OPEN") {
     throw new MutationConflictError("Order is not OPEN.", {
       mutation_id: mutation.mutation_id,
@@ -180,6 +259,14 @@ function assertOrderOpen(order: OrderRow, mutation: PosSyncMutationV2): void {
 }
 
 async function isMutationAlreadyApplied(tenantId: string, mutationId: string): Promise<boolean> {
+  // Some legacy tablet payloads still carry non-UUID mutation ids like
+  // `mutation-...`. The canonical DB columns are uuid, so querying PostgREST
+  // with those values raises a cast error and blocks the whole sync batch.
+  // Treat them as "not yet applied" and let the mutation be processed normally.
+  if (!isUuid(mutationId)) {
+    return false;
+  }
+
   const supabase = getSupabaseAdminClient();
   const [eventRes, lineRes] = await Promise.all([
     supabase
@@ -206,7 +293,7 @@ async function isMutationAlreadyApplied(tenantId: string, mutationId: string): P
 async function insertOrderEvent(input: {
   tenantId: string;
   orderId: string;
-  mutationId: string;
+  mutationId?: string | null;
   type: string;
   createdAt: string;
   meta?: Record<string, unknown> | null;
@@ -216,7 +303,7 @@ async function insertOrderEvent(input: {
     id: randomUUID(),
     tenant_id: input.tenantId,
     order_id: input.orderId,
-    mutation_id: input.mutationId,
+    mutation_id: normalizeMutationTrackingId(input.mutationId),
     type: input.type,
     meta: input.meta ?? null,
     created_at: input.createdAt,
@@ -262,7 +349,7 @@ async function applyOpenTab(tenantId: string, mutation: PosSyncMutationV2): Prom
     pos_table_label: posTableLabel,
     opened_at: createdAt,
     tab_version: 1,
-    last_mutation_id: mutation.mutation_id,
+    last_mutation_id: normalizeMutationTrackingId(mutation.mutation_id),
     created_at: createdAt,
     updated_at: createdAt,
   });
@@ -285,6 +372,81 @@ async function applyOpenTab(tenantId: string, mutation: PosSyncMutationV2): Prom
   return 1;
 }
 
+async function applyOpenCashShift(
+  tenantId: string,
+  mutation: PosSyncMutationOpenCashShift,
+): Promise<null> {
+  const supabase = getSupabaseAdminClient();
+  const createdAt = parseIsoOrNow(mutation.created_at ?? mutation.opened_at, "created_at");
+  const openedAt = parseIsoOrNow(mutation.opened_at ?? mutation.created_at, "opened_at");
+  const openingFloatCents = ensureNonNegativeInt(
+    mutation.opening_float_cents,
+    "opening_float_cents",
+  );
+
+  await assertPosUserBelongsToTenant(mutation.opened_by_pos_user_id, tenantId);
+
+  const existing = await findCashShift(tenantId, mutation.cash_shift_id);
+  if (existing) {
+    const sameOpenState =
+      existing.kiosk_id === mutation.kiosk_id &&
+      existing.opened_by_pos_user_id === mutation.opened_by_pos_user_id &&
+      existing.opening_float_cents === openingFloatCents &&
+      existing.opened_at === openedAt &&
+      existing.status === "open";
+
+    if (sameOpenState) {
+      console.info("pos.sync.cash_shift.open.noop", {
+        tenantId,
+        mutationId: mutation.mutation_id,
+        cashShiftId: mutation.cash_shift_id,
+        kioskId: mutation.kiosk_id,
+      });
+      return null;
+    }
+
+    console.warn("pos.sync.cash_shift.open.conflict", {
+      tenantId,
+      mutationId: mutation.mutation_id,
+      cashShiftId: mutation.cash_shift_id,
+      kioskId: mutation.kiosk_id,
+    });
+    throw new MutationConflictError("Cash shift already exists with a different state.", {
+      mutation_id: mutation.mutation_id,
+    });
+  }
+
+  const { error } = await supabase.from("cash_shifts").insert({
+    id: mutation.cash_shift_id,
+    tenant_id: tenantId,
+    kiosk_id: mutation.kiosk_id,
+    opened_by_pos_user_id: mutation.opened_by_pos_user_id,
+    closed_by_pos_user_id: null,
+    status: "open",
+    opening_float_cents: openingFloatCents,
+    declared_cash_cents: null,
+    opened_at: openedAt,
+    closed_at: null,
+    created_at: createdAt,
+    updated_at: createdAt,
+    created_by: null,
+    updated_by: null,
+  });
+
+  if (error) {
+    throw new Error(`cash_shifts insert failed: ${error.message}`);
+  }
+
+  console.info("pos.sync.cash_shift.open.applied", {
+    tenantId,
+    mutationId: mutation.mutation_id,
+    cashShiftId: mutation.cash_shift_id,
+    kioskId: mutation.kiosk_id,
+  });
+
+  return null;
+}
+
 async function bumpTabVersion(input: {
   tenantId: string;
   orderId: string;
@@ -298,7 +460,7 @@ async function bumpTabVersion(input: {
     .from("orders")
     .update({
       tab_version: next,
-      last_mutation_id: input.mutationId,
+      last_mutation_id: normalizeMutationTrackingId(input.mutationId),
       updated_at: new Date().toISOString(),
       ...(input.extra || {}),
     })
@@ -334,7 +496,7 @@ async function applyAddItem(tenantId: string, mutation: PosSyncMutationV2): Prom
 
   const { error: lineError } = await supabase.from("order_lines").insert({
     id: mutation.line_id,
-    mutation_id: mutation.mutation_id,
+    mutation_id: normalizeMutationTrackingId(mutation.mutation_id),
     tenant_id: tenantId,
     order_id: mutation.order_id,
     product_id: mutation.product_id,
@@ -520,7 +682,7 @@ async function applyKitchenPrint(tenantId: string, mutation: PosSyncMutationV2):
     .update({
       kitchen_last_printed_version: printedVersion,
       kitchen_last_print_at: createdAt,
-      last_mutation_id: mutation.mutation_id,
+      last_mutation_id: normalizeMutationTrackingId(mutation.mutation_id),
       updated_at: createdAt,
     })
     .eq("tenant_id", tenantId)
@@ -549,9 +711,13 @@ async function applyCloseTabPaid(tenantId: string, mutation: PosSyncMutationV2):
   if (mutation.type !== "CLOSE_TAB_PAID") throw new Error("Invalid mutation type.");
   const closedAt = parseIsoOrNow(mutation.closed_at ?? mutation.created_at, "closed_at");
   const supabase = getSupabaseAdminClient();
+  const closeMeta = parseCloseTabPaidMeta(mutation, closedAt);
 
   const order = await findOrder(tenantId, mutation.order_id);
   if (!order) throw new Error("Order does not exist.");
+  if (!order.is_tab) {
+    throw new Error("CLOSE_TAB_PAID can only be applied to tab orders.");
+  }
   assertOrderOpen(order, mutation);
   assertExpectedVersion(mutation, order.tab_version);
 
@@ -562,8 +728,15 @@ async function applyCloseTabPaid(tenantId: string, mutation: PosSyncMutationV2):
       status: "PAID",
       closed_at: closedAt,
       tab_version: nextVersion,
-      last_mutation_id: mutation.mutation_id,
+      last_mutation_id: normalizeMutationTrackingId(mutation.mutation_id),
       updated_at: closedAt,
+      payment_method: closeMeta.paymentMethod,
+      payment_received_cents: closeMeta.paymentReceivedCents,
+      change_cents: closeMeta.changeCents,
+      print_status: closeMeta.printStatus,
+      print_attempt_count: closeMeta.printAttemptCount,
+      last_print_error: closeMeta.printError,
+      last_print_at: closeMeta.lastPrintAt,
       ...(mutation.total_cents != null ? { total_cents: ensureNonNegativeInt(mutation.total_cents, "total_cents") } : {}),
     })
     .eq("tenant_id", tenantId)
@@ -589,6 +762,14 @@ async function applyCloseTabPaid(tenantId: string, mutation: PosSyncMutationV2):
     createdAt: closedAt,
     meta: {
       status: "PAID",
+      payment_method: closeMeta.paymentMethod,
+      payment_received_cents: closeMeta.paymentReceivedCents,
+      change_cents: closeMeta.changeCents,
+      print_status: closeMeta.printStatus,
+      print_attempt_count: closeMeta.printAttemptCount,
+      print_error: closeMeta.printError,
+      print_job_id: closeMeta.printJobId,
+      last_print_at: closeMeta.lastPrintAt,
       ...(mutation.meta || {}),
     },
   });
@@ -613,7 +794,7 @@ async function applyCancelTab(tenantId: string, mutation: PosSyncMutationV2): Pr
       canceled_at: canceledAt,
       cancel_reason: mutation.cancel_reason ?? null,
       tab_version: nextVersion,
-      last_mutation_id: mutation.mutation_id,
+      last_mutation_id: normalizeMutationTrackingId(mutation.mutation_id),
       updated_at: canceledAt,
     })
     .eq("tenant_id", tenantId)
@@ -655,6 +836,51 @@ function normalizePrintStatus(value: unknown): "QUEUED" | "SENT" | "CONFIRMED" |
   return normalized as "QUEUED" | "SENT" | "CONFIRMED" | "FAILED" | "UNKNOWN";
 }
 
+function parseCloseTabPaidMeta(mutation: PosSyncMutationV2, closedAt: string): CloseTabPaidMeta {
+  if (mutation.type !== "CLOSE_TAB_PAID") {
+    throw new Error("Invalid mutation type.");
+  }
+  if (!mutation.meta || typeof mutation.meta !== "object") {
+    throw new Error("CLOSE_TAB_PAID requires meta with payment and print fields.");
+  }
+  const meta = mutation.meta as Record<string, unknown>;
+
+  const paymentMethod = normalizePaymentMethod(meta.metodo_pago ?? meta.payment_method);
+  const paymentReceivedCents = ensureNonNegativeInt(
+    meta.pago_recibido_cents ?? meta.payment_received_cents,
+    "meta.pago_recibido_cents",
+  );
+  const changeCents = ensureNonNegativeInt(
+    meta.cambio_cents ?? meta.change_cents,
+    "meta.cambio_cents",
+  );
+  const printStatus = normalizePrintStatus(meta.print_status);
+  if (printStatus === "UNKNOWN") {
+    throw new Error("meta.print_status must be one of: QUEUED, SENT, CONFIRMED, FAILED.");
+  }
+  const printAttemptCount = ensureNonNegativeInt(meta.print_attempt_count ?? 1, "meta.print_attempt_count");
+  if (printAttemptCount < 1) {
+    throw new Error("meta.print_attempt_count must be >= 1.");
+  }
+  const printError = typeof meta.print_error === "string" ? meta.print_error : null;
+  const lastPrintAt = parseIsoOrNow(
+    (typeof meta.last_print_at === "string" ? meta.last_print_at : null) ?? closedAt,
+    "meta.last_print_at",
+  );
+  const printJobId = typeof meta.print_job_id === "string" && meta.print_job_id.trim() ? meta.print_job_id.trim() : null;
+
+  return {
+    paymentMethod,
+    paymentReceivedCents,
+    changeCents,
+    printStatus,
+    printAttemptCount,
+    printError,
+    lastPrintAt,
+    printJobId,
+  };
+}
+
 async function applySaleCreate(tenantId: string, mutation: PosSyncMutationV2): Promise<number> {
   if (mutation.type !== "SALE_CREATE") throw new Error("Invalid mutation type.");
   const supabase = getSupabaseAdminClient();
@@ -662,6 +888,15 @@ async function applySaleCreate(tenantId: string, mutation: PosSyncMutationV2): P
   const folioNumber = ensureNonNegativeInt(mutation.folio_number, "folio_number");
   const folioText = ensureNonEmptyString(mutation.folio_text, "folio_text");
   const totalCents = ensureNonNegativeInt(mutation.total_cents, "total_cents");
+  const paymentReceivedCents = ensureNonNegativeInt(
+    mutation.payment_received_cents ?? mutation.pago_recibido_cents,
+    "payment_received_cents",
+  );
+  const changeCents = ensureNonNegativeInt(
+    mutation.change_cents ?? mutation.cambio_cents,
+    "change_cents",
+  );
+  const paymentMethod = normalizePaymentMethod(mutation.payment_method ?? mutation.metodo_pago);
   const userId = ensureNonEmptyString(mutation.user_id, "user_id");
   const lines = Array.isArray(mutation.lines) ? mutation.lines : [];
 
@@ -684,6 +919,9 @@ async function applySaleCreate(tenantId: string, mutation: PosSyncMutationV2): P
     folio_text: folioText,
     status: "PAID",
     total_cents: totalCents,
+    payment_received_cents: paymentReceivedCents,
+    change_cents: changeCents,
+    payment_method: paymentMethod,
     print_status: normalizePrintStatus(mutation.print_status),
     print_attempt_count: ensureNonNegativeInt(mutation.print_attempt_count ?? 1, "print_attempt_count"),
     last_print_error: typeof mutation.last_print_error === "string" ? mutation.last_print_error : null,
@@ -719,6 +957,22 @@ async function applySaleCreate(tenantId: string, mutation: PosSyncMutationV2): P
     const { error: itemsError } = await supabase.from("order_items").upsert(saleLines, { onConflict: "id" });
     if (itemsError) throw new Error(`order_items upsert failed: ${itemsError.message}`);
   }
+
+  await insertOrderEvent({
+    tenantId,
+    orderId: mutation.order_id,
+    mutationId: null,
+    type: "PAYMENT_CAPTURED",
+    createdAt,
+    meta: {
+      total_cents: totalCents,
+      payment_received_cents: paymentReceivedCents,
+      change_cents: changeCents,
+      payment_method: paymentMethod,
+      source: "quick_sale",
+      user_id: userId,
+    },
+  });
 
   await insertOrderEvent({
     tenantId,
@@ -814,6 +1068,110 @@ async function applySaleCancel(tenantId: string, mutation: PosSyncMutationV2): P
   return order.tab_version;
 }
 
+function normalizeCashShiftTerminalStatus(
+  value: unknown,
+): "closed" | "canceled" {
+  if (value === "canceled") return "canceled";
+  return "closed";
+}
+
+async function applyCloseCashShift(
+  tenantId: string,
+  mutation: PosSyncMutationCloseCashShift,
+): Promise<null> {
+  const supabase = getSupabaseAdminClient();
+  const closedAt = parseIsoOrNow(mutation.closed_at ?? mutation.created_at, "closed_at");
+  const declaredCashCents = ensureNonNegativeInt(
+    mutation.declared_cash_cents,
+    "declared_cash_cents",
+  );
+  const status = normalizeCashShiftTerminalStatus(mutation.status);
+
+  await assertPosUserBelongsToTenant(mutation.closed_by_pos_user_id, tenantId);
+
+  const existing = await findCashShift(tenantId, mutation.cash_shift_id);
+  if (!existing) {
+    console.warn("pos.sync.cash_shift.close.missing", {
+      tenantId,
+      mutationId: mutation.mutation_id,
+      cashShiftId: mutation.cash_shift_id,
+      kioskId: mutation.kiosk_id,
+    });
+    throw new Error("cash_shift_id does not exist.");
+  }
+  if (existing.kiosk_id !== mutation.kiosk_id) {
+    console.warn("pos.sync.cash_shift.close.kiosk_conflict", {
+      tenantId,
+      mutationId: mutation.mutation_id,
+      cashShiftId: mutation.cash_shift_id,
+      kioskId: mutation.kiosk_id,
+      existingKioskId: existing.kiosk_id,
+    });
+    throw new MutationConflictError("Cash shift does not belong to kiosk.", {
+      mutation_id: mutation.mutation_id,
+    });
+  }
+
+  if (existing.status !== "open") {
+    const sameTerminalState =
+      existing.status === status &&
+      existing.closed_by_pos_user_id === mutation.closed_by_pos_user_id &&
+      existing.declared_cash_cents === declaredCashCents &&
+      existing.closed_at === closedAt;
+
+    if (sameTerminalState) {
+      console.info("pos.sync.cash_shift.close.noop", {
+        tenantId,
+        mutationId: mutation.mutation_id,
+        cashShiftId: mutation.cash_shift_id,
+        kioskId: mutation.kiosk_id,
+        status,
+      });
+      return null;
+    }
+
+    console.warn("pos.sync.cash_shift.close.conflict", {
+      tenantId,
+      mutationId: mutation.mutation_id,
+      cashShiftId: mutation.cash_shift_id,
+      kioskId: mutation.kiosk_id,
+      currentStatus: existing.status,
+      requestedStatus: status,
+    });
+    throw new MutationConflictError("Cash shift is already closed with a different state.", {
+      mutation_id: mutation.mutation_id,
+    });
+  }
+
+  const { error } = await supabase
+    .from("cash_shifts")
+    .update({
+      status,
+      closed_by_pos_user_id: mutation.closed_by_pos_user_id,
+      declared_cash_cents: declaredCashCents,
+      closed_at: closedAt,
+      updated_at: closedAt,
+      updated_by: null,
+    })
+    .eq("tenant_id", tenantId)
+    .eq("id", mutation.cash_shift_id)
+    .eq("status", "open");
+
+  if (error) {
+    throw new Error(`cash_shifts update failed: ${error.message}`);
+  }
+
+  console.info("pos.sync.cash_shift.close.applied", {
+    tenantId,
+    mutationId: mutation.mutation_id,
+    cashShiftId: mutation.cash_shift_id,
+    kioskId: mutation.kiosk_id,
+    status,
+  });
+
+  return null;
+}
+
 function validateMutationShape(input: unknown): PosSyncMutationV2 {
   if (!input || typeof input !== "object") {
     throw new Error("Mutation must be an object.");
@@ -821,13 +1179,29 @@ function validateMutationShape(input: unknown): PosSyncMutationV2 {
 
   const mutation = input as Record<string, unknown>;
   const mutationId = ensureNonEmptyString(mutation.mutation_id, "mutation_id");
-  const orderId = ensureNonEmptyString(mutation.order_id, "order_id");
   const kioskId = ensureNonEmptyString(mutation.kiosk_id, "kiosk_id");
   const type = ensureNonEmptyString(mutation.type, "type");
 
   if (!MUTATION_TYPES.has(type as PosSyncMutationV2["type"])) {
     throw new Error(`Unsupported mutation type: ${type}`);
   }
+
+  if (type === "OPEN_CASH_SHIFT" || type === "CLOSE_CASH_SHIFT") {
+    const cashShiftId = ensureNonEmptyString(
+      mutation.cash_shift_id,
+      "cash_shift_id",
+    );
+
+    return {
+      ...mutation,
+      mutation_id: mutationId,
+      cash_shift_id: cashShiftId,
+      kiosk_id: kioskId,
+      type: type as PosSyncMutationV2["type"],
+    } as PosSyncMutationV2;
+  }
+
+  const orderId = ensureNonEmptyString(mutation.order_id, "order_id");
 
   return {
     ...mutation,
@@ -838,8 +1212,15 @@ function validateMutationShape(input: unknown): PosSyncMutationV2 {
   } as PosSyncMutationV2;
 }
 
-async function applyMutation(tenantId: string, mutation: PosSyncMutationV2): Promise<number> {
+async function applyMutation(
+  tenantId: string,
+  mutation: PosSyncMutationV2,
+): Promise<number | null> {
   switch (mutation.type) {
+    case "OPEN_CASH_SHIFT":
+      return applyOpenCashShift(tenantId, mutation);
+    case "CLOSE_CASH_SHIFT":
+      return applyCloseCashShift(tenantId, mutation);
     case "OPEN_TAB":
       return applyOpenTab(tenantId, mutation);
     case "ADD_ITEM":
@@ -882,7 +1263,7 @@ export async function syncMutationsBatch(input: {
         acks.push({
           mutation_id: mutation.mutation_id,
           status: "DUPLICATE",
-          order_id: mutation.order_id,
+          order_id: "order_id" in mutation ? mutation.order_id : undefined,
           message: "Mutation already applied.",
         });
         continue;
@@ -893,8 +1274,8 @@ export async function syncMutationsBatch(input: {
       acks.push({
         mutation_id: mutation.mutation_id,
         status: "APPLIED",
-        order_id: mutation.order_id,
-        tab_version: tabVersion,
+        order_id: "order_id" in mutation ? mutation.order_id : undefined,
+        tab_version: tabVersion ?? undefined,
       });
     } catch (error) {
       if (error instanceof MutationConflictError) {
@@ -914,17 +1295,54 @@ export async function syncMutationsBatch(input: {
         continue;
       }
 
+      const rawMutationRecord =
+        rawMutation && typeof rawMutation === "object"
+          ? (rawMutation as Record<string, unknown>)
+          : null;
+      console.error("pos.sync.mutation.unexpected_error", {
+        tenantId: input.tenantId,
+        tenantSlug: input.tenantSlug,
+        mutationId:
+          mutation?.mutation_id ||
+          (typeof rawMutationRecord?.mutation_id === "string"
+            ? rawMutationRecord.mutation_id
+            : null),
+        mutationType:
+          mutation?.type ||
+          (typeof rawMutationRecord?.type === "string"
+            ? rawMutationRecord.type
+            : null),
+        aggregateId:
+          mutation && "cash_shift_id" in mutation
+            ? mutation.cash_shift_id
+            : mutation && "order_id" in mutation
+              ? mutation.order_id
+              : typeof rawMutationRecord?.cash_shift_id === "string"
+                ? rawMutationRecord.cash_shift_id
+                : typeof rawMutationRecord?.order_id === "string"
+                  ? rawMutationRecord.order_id
+                  : null,
+        kioskId:
+          mutation?.kiosk_id ||
+          (typeof rawMutationRecord?.kiosk_id === "string"
+            ? rawMutationRecord.kiosk_id
+            : null),
+        message:
+          error instanceof Error ? error.message : "Unexpected mutation error.",
+      });
+
       const fallbackMutationId =
         mutation?.mutation_id ||
         (rawMutation && typeof rawMutation === "object" && "mutation_id" in rawMutation
           ? String((rawMutation as { mutation_id?: unknown }).mutation_id || "")
           : "");
-      acks.push({
-        mutation_id: fallbackMutationId || randomUUID(),
-        status: "ERROR",
-        order_id: mutation?.order_id,
-        message: error instanceof Error ? error.message : "Unexpected mutation error.",
-      });
+        acks.push({
+          mutation_id: fallbackMutationId || randomUUID(),
+          status: "ERROR",
+          order_id:
+            mutation && "order_id" in mutation ? mutation.order_id : undefined,
+          message: error instanceof Error ? error.message : "Unexpected mutation error.",
+        });
     }
   }
 

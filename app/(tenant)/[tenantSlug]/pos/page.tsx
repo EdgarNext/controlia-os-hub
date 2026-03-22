@@ -1,6 +1,11 @@
 import Link from "next/link";
-import { EmptyState } from "./components/EmptyState";
-import { SectionHeader } from "./components/SectionHeader";
+import { CatalogSectionHeader } from "@/components/pos/catalog/CatalogSectionHeader";
+import { StatePanel } from "@/components/ui/state-panel";
+import {
+  getCurrentTenantModulePageAccessMap,
+  hasModulePageAccess,
+} from "@/lib/auth/module-page-access";
+import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 
 type PosPageProps = {
   params: Promise<{ tenantSlug: string }>;
@@ -8,19 +13,57 @@ type PosPageProps = {
 
 export default async function PosPage({ params }: PosPageProps) {
   const { tenantSlug } = await params;
+  const tenant = await resolveTenantContextBySlug(tenantSlug);
+  const accessMap = await getCurrentTenantModulePageAccessMap(tenant.tenantId, "sales_pos");
+
+  const links = [
+    {
+      href: `/${tenant.tenantSlug}/pos/devices`,
+      title: "Dispositivos",
+      description: "Gestiona kioscos y activación de equipos POS.",
+      visible: hasModulePageAccess(accessMap.devices ?? "none", "read"),
+    },
+    {
+      href: `/${tenant.tenantSlug}/pos/catalog`,
+      title: "Catálogo POS v2",
+      description: "Administra productos, variantes y modifiers canónicos del POS.",
+      visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
+    },
+    {
+      href: `/${tenant.tenantSlug}/pos/reports`,
+      title: "Reportes",
+      description: "Consulta ventas y estado de sincronización POS.",
+      visible: hasModulePageAccess(accessMap.reports ?? "none", "read"),
+    },
+  ].filter((link) => link.visible);
 
   return (
     <div className="space-y-4">
-      <SectionHeader title="POS" description="Tenant POS module scaffold." />
-      <div className="flex flex-wrap gap-2">
-        <Link
-          href={`/${tenantSlug}/pos/admin`}
-          className="rounded-[var(--radius-base)] border border-border bg-surface px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-2"
-        >
-          Open POS Admin
-        </Link>
-      </div>
-      <EmptyState message="POS module is scaffolded and ready for implementation." />
+      <CatalogSectionHeader
+        title="POS"
+        description="Operaciones Edge para dispositivos, catálogo y reportes de punto de venta."
+      />
+
+      {links.length > 0 ? (
+        <div className="grid gap-3 md:grid-cols-3">
+          {links.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="rounded-[var(--radius-base)] border border-border bg-surface p-4 transition-colors hover:bg-surface-2"
+            >
+              <p className="text-sm font-semibold text-foreground">{link.title}</p>
+              <p className="mt-2 text-sm text-muted">{link.description}</p>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <StatePanel
+          kind="permission"
+          title="Sin acceso a POS"
+          message="No tienes ninguna página habilitada dentro del módulo POS para este tenant."
+        />
+      )}
     </div>
   );
 }
