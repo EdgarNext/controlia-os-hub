@@ -15,6 +15,7 @@ type AssignmentV2FormProps = {
   action: (previousState: CatalogV2ActionState, formData: FormData) => Promise<CatalogV2ActionState>;
   tenantSlug: string;
   cancelHref: string;
+  returnHref?: string;
   products: PosCatalogV2ProductSelectItem[];
   modifierGroups: PosCatalogV2ModifierGroupSelectItem[];
   assignmentId?: string;
@@ -35,6 +36,7 @@ export function AssignmentV2Form({
   action,
   tenantSlug,
   cancelHref,
+  returnHref,
   products,
   modifierGroups,
   assignmentId,
@@ -47,6 +49,7 @@ export function AssignmentV2Form({
     <Card className="space-y-4">
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="tenantSlug" value={tenantSlug} />
+        {returnHref ? <input type="hidden" name="returnPath" value={returnHref} /> : null}
         {assignmentId ? <input type="hidden" name="assignmentId" value={assignmentId} /> : null}
 
         <div className="grid gap-4 md:grid-cols-2">

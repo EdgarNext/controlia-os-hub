@@ -87,7 +87,7 @@ export function ProductForm({
       </label>
 
       <label className="block space-y-1 text-sm">
-        <span className="text-muted">Precio (MXN)</span>
+        <span className="text-muted">Precio (pesos MXN)</span>
         <input
           type="number"
           name="price"
@@ -98,6 +98,7 @@ export function ProductForm({
           className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
         />
         {state.fieldErrors.price ? <span className="text-xs text-danger">{state.fieldErrors.price}</span> : null}
+        <p className="text-xs text-muted">Ingresa el valor en pesos; el sistema lo guarda en centavos.</p>
       </label>
 
       <label className="block space-y-1 text-sm">

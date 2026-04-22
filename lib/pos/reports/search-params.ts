@@ -73,7 +73,7 @@ function normalizePaymentMethodFilter(
   value: string | undefined,
   fallback: PosReportsFilters["payment_method"],
 ): PosReportsFilters["payment_method"] {
-  if (value === "cash" || value === "card" || value === "employee" || value === "all") {
+  if (value === "cash" || value === "card" || value === "transfer" || value === "all") {
     return value;
   }
 

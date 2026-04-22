@@ -30,6 +30,8 @@ export function getSegmentLabel(segment: string) {
   if (segment === "lab") return "Lab";
   if (segment === "reports") return "Reports";
   if (segment === "catalog") return "Catalog";
+  if (segment === "catalog-v2") return "Catálogo V2";
+  if (segment === "modifiers") return "Modificadores";
   if (segment === "pos") return "POS";
   if (segment === "auth") return "Auth";
 

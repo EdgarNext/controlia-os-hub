@@ -17,8 +17,13 @@ import {
   saveCatalogV2ModifierGroup,
   saveCatalogV2ModifierOption,
   saveCatalogV2Product,
+  saveCatalogV2ProductImage,
   saveCatalogV2Variant,
 } from "@/lib/pos/catalog-v2/commands";
+import {
+  getCatalogV2ProductDetailPath,
+  getCatalogV2ProductsPath,
+} from "@/lib/pos/catalog-v2/paths";
 import type {
   PosCatalogV2ModifierGroupFormValues,
   PosCatalogV2ModifierOptionFormValues,
@@ -40,6 +45,11 @@ const initialState: CatalogV2ActionState = {
   fieldErrors: {},
 };
 
+export type CatalogV2InlineActionResult = {
+  ok: boolean;
+  error: string | null;
+};
+
 function isRedirectErrorLike(error: unknown): boolean {
   if (typeof error !== "object" || error === null || !("digest" in error)) {
     return false;
@@ -54,6 +64,23 @@ function toTrimmedString(input: FormDataEntryValue | null): string {
 
 function toBoolean(input: FormDataEntryValue | null): boolean {
   return String(input ?? "") === "on";
+}
+
+function getImageFile(formData: FormData): File | null {
+  const file = formData.get("image");
+  if (!file || typeof file !== "object") {
+    return null;
+  }
+
+  if (!(file instanceof File)) {
+    return null;
+  }
+
+  if (typeof file.size !== "number" || file.size <= 0) {
+    return null;
+  }
+
+  return file;
 }
 
 function parseNullableInteger(input: FormDataEntryValue | null): number | null {
@@ -117,10 +144,6 @@ function parseDisplayScope(value: FormDataEntryValue | null): PosCatalogV2Modifi
   }
 
   return "cashier";
-}
-
-function catalogV2Path(tenantSlug: string): string {
-  return `/${tenantSlug}/pos/catalog`;
 }
 
 function validateProductInput(formData: FormData): {
@@ -535,6 +558,23 @@ function resolveTenantSlug(formData: FormData): string {
   return toTrimmedString(formData.get("tenantSlug")).toLowerCase();
 }
 
+function resolveRedirectPath(formData: FormData, fallbackPath: string): string {
+  const returnPath = toTrimmedString(formData.get("returnPath"));
+  if (returnPath.startsWith("/")) {
+    return returnPath;
+  }
+
+  return fallbackPath;
+}
+
+function legacyCatalogPath(tenantSlug: string): string {
+  return `/${tenantSlug}/pos/catalog`;
+}
+
+function toRevalidatePath(path: string): string {
+  return path.split(/[?#]/, 1)[0] || path;
+}
+
 export async function saveProductV2Action(
   _previousState: CatalogV2ActionState,
   formData: FormData,
@@ -561,8 +601,9 @@ export async function saveProductV2Action(
       form: validation.input,
     });
 
-    revalidatePath(catalogV2Path(tenant.tenantSlug));
-    redirect(catalogV2Path(tenant.tenantSlug));
+    const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+    revalidatePath(toRevalidatePath(redirectPath));
+    redirect(redirectPath);
   } catch (error) {
     if (isRedirectErrorLike(error)) {
       throw error;
@@ -584,8 +625,9 @@ export async function archiveProductV2Action(formData: FormData): Promise<void> 
 
   const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
   await archiveCatalogV2Product({ tenantId: tenant.tenantId, actorUserId: user.id, id: productId });
-  revalidatePath(catalogV2Path(tenant.tenantSlug));
-  redirect(catalogV2Path(tenant.tenantSlug));
+  const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+  revalidatePath(toRevalidatePath(redirectPath));
+  redirect(redirectPath);
 }
 
 export async function saveVariantV2Action(
@@ -613,8 +655,9 @@ export async function saveVariantV2Action(
       form: validation.input,
     });
 
-    revalidatePath(catalogV2Path(tenant.tenantSlug));
-    redirect(catalogV2Path(tenant.tenantSlug));
+    const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+    revalidatePath(toRevalidatePath(redirectPath));
+    redirect(redirectPath);
   } catch (error) {
     if (isRedirectErrorLike(error)) {
       throw error;
@@ -636,8 +679,9 @@ export async function archiveVariantV2Action(formData: FormData): Promise<void> 
 
   const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
   await archiveCatalogV2Variant({ tenantId: tenant.tenantId, actorUserId: user.id, id: variantId });
-  revalidatePath(catalogV2Path(tenant.tenantSlug));
-  redirect(catalogV2Path(tenant.tenantSlug));
+  const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+  revalidatePath(toRevalidatePath(redirectPath));
+  redirect(redirectPath);
 }
 
 export async function saveModifierGroupV2Action(
@@ -665,8 +709,9 @@ export async function saveModifierGroupV2Action(
       form: validation.input,
     });
 
-    revalidatePath(catalogV2Path(tenant.tenantSlug));
-    redirect(catalogV2Path(tenant.tenantSlug));
+    const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+    revalidatePath(toRevalidatePath(redirectPath));
+    redirect(redirectPath);
   } catch (error) {
     if (isRedirectErrorLike(error)) {
       throw error;
@@ -692,8 +737,9 @@ export async function archiveModifierGroupV2Action(formData: FormData): Promise<
     actorUserId: user.id,
     id: groupId,
   });
-  revalidatePath(catalogV2Path(tenant.tenantSlug));
-  redirect(catalogV2Path(tenant.tenantSlug));
+  const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+  revalidatePath(toRevalidatePath(redirectPath));
+  redirect(redirectPath);
 }
 
 export async function saveModifierOptionV2Action(
@@ -721,8 +767,9 @@ export async function saveModifierOptionV2Action(
       form: validation.input,
     });
 
-    revalidatePath(catalogV2Path(tenant.tenantSlug));
-    redirect(catalogV2Path(tenant.tenantSlug));
+    const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+    revalidatePath(toRevalidatePath(redirectPath));
+    redirect(redirectPath);
   } catch (error) {
     if (isRedirectErrorLike(error)) {
       throw error;
@@ -748,8 +795,9 @@ export async function archiveModifierOptionV2Action(formData: FormData): Promise
     actorUserId: user.id,
     id: optionId,
   });
-  revalidatePath(catalogV2Path(tenant.tenantSlug));
-  redirect(catalogV2Path(tenant.tenantSlug));
+  const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+  revalidatePath(toRevalidatePath(redirectPath));
+  redirect(redirectPath);
 }
 
 export async function saveAssignmentV2Action(
@@ -777,8 +825,9 @@ export async function saveAssignmentV2Action(
       form: validation.input,
     });
 
-    revalidatePath(catalogV2Path(tenant.tenantSlug));
-    redirect(catalogV2Path(tenant.tenantSlug));
+    const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+    revalidatePath(toRevalidatePath(redirectPath));
+    redirect(redirectPath);
   } catch (error) {
     if (isRedirectErrorLike(error)) {
       throw error;
@@ -804,8 +853,9 @@ export async function archiveAssignmentV2Action(formData: FormData): Promise<voi
     actorUserId: user.id,
     id: assignmentId,
   });
-  revalidatePath(catalogV2Path(tenant.tenantSlug));
-  redirect(catalogV2Path(tenant.tenantSlug));
+  const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+  revalidatePath(toRevalidatePath(redirectPath));
+  redirect(redirectPath);
 }
 
 export async function saveComboSlotV2Action(
@@ -833,8 +883,9 @@ export async function saveComboSlotV2Action(
       form: validation.input,
     });
 
-    revalidatePath(catalogV2Path(tenant.tenantSlug));
-    redirect(catalogV2Path(tenant.tenantSlug));
+    const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+    revalidatePath(toRevalidatePath(redirectPath));
+    redirect(redirectPath);
   } catch (error) {
     if (isRedirectErrorLike(error)) {
       throw error;
@@ -860,8 +911,9 @@ export async function archiveComboSlotV2Action(formData: FormData): Promise<void
     actorUserId: user.id,
     id: comboSlotId,
   });
-  revalidatePath(catalogV2Path(tenant.tenantSlug));
-  redirect(catalogV2Path(tenant.tenantSlug));
+  const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+  revalidatePath(toRevalidatePath(redirectPath));
+  redirect(redirectPath);
 }
 
 export async function saveComboSlotOptionV2Action(
@@ -889,8 +941,9 @@ export async function saveComboSlotOptionV2Action(
       form: validation.input,
     });
 
-    revalidatePath(catalogV2Path(tenant.tenantSlug));
-    redirect(catalogV2Path(tenant.tenantSlug));
+    const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+    revalidatePath(redirectPath);
+    redirect(redirectPath);
   } catch (error) {
     if (isRedirectErrorLike(error)) {
       throw error;
@@ -916,6 +969,48 @@ export async function archiveComboSlotOptionV2Action(formData: FormData): Promis
     actorUserId: user.id,
     id: comboSlotOptionId,
   });
-  revalidatePath(catalogV2Path(tenant.tenantSlug));
-  redirect(catalogV2Path(tenant.tenantSlug));
+  const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
+  revalidatePath(redirectPath);
+  redirect(redirectPath);
+}
+
+export async function saveCatalogV2ProductImageAction(formData: FormData): Promise<CatalogV2InlineActionResult> {
+  const tenantSlug = resolveTenantSlug(formData);
+  const productId = toTrimmedString(formData.get("productId"));
+  const imageFile = getImageFile(formData);
+
+  if (!tenantSlug || !productId) {
+    return { ok: false, error: "Solicitud inválida." };
+  }
+
+  if (!imageFile) {
+    return { ok: false, error: "Selecciona una imagen válida." };
+  }
+
+  try {
+    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+
+    await saveCatalogV2ProductImage({
+      tenantId: tenant.tenantId,
+      actorUserId: user.id,
+      productId,
+      imageFile,
+    });
+
+    revalidatePath(getCatalogV2ProductsPath(tenant.tenantSlug));
+    revalidatePath(getCatalogV2ProductDetailPath(tenant.tenantSlug, productId));
+    revalidatePath(`/${tenant.tenantSlug}/pos/catalog/products`);
+    revalidatePath(`/${tenant.tenantSlug}/pos/catalog/products/${productId}/edit`);
+
+    return { ok: true, error: null };
+  } catch (error) {
+    if (isRedirectErrorLike(error)) {
+      throw error;
+    }
+
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "No se pudo guardar la imagen del producto.",
+    };
+  }
 }

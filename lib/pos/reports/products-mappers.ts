@@ -35,6 +35,9 @@ type ProductLineSourceRow = {
   qty: IntegerLike;
   unit_price_cents: IntegerLike;
   gross_cents: IntegerLike;
+  product_name_snapshot?: string | null;
+  category_name_snapshot?: string | null;
+  line_kind?: string | null;
   source: "quick-sale" | "tabs";
 };
 
@@ -86,7 +89,7 @@ function parseIntegerLike(value: IntegerLike, fieldName: string): number {
 }
 
 function normalizePaymentMethod(value: string | null): PosReportsFilters["payment_method"] {
-  if (value === "cash" || value === "card" || value === "employee") {
+  if (value === "cash" || value === "card" || value === "transfer") {
     return value;
   }
 
@@ -196,6 +199,10 @@ export function buildPosProductsReportData(input: {
       current.is_active = catalogProduct.is_active;
       current.is_sold_out = catalogProduct.is_sold_out;
       current.is_popular = catalogProduct.is_popular;
+    } else {
+      current.product_name = line.product_name_snapshot || current.product_name;
+      current.category_name = line.category_name_snapshot || current.category_name;
+      current.product_type = line.line_kind || current.product_type;
     }
 
     current.units_sold += qty;

@@ -8,6 +8,8 @@ import {
   getSalesAccountById,
   listOpenSalesAccounts,
   openSalesAccount,
+  reserveNextSalesAccountFolio,
+  syncSalesAccountMutation,
   voidSalesAccountLine,
 } from "@/lib/pos/accounts/runtime";
 
@@ -80,6 +82,14 @@ export async function POST(request: Request, context: { params: Promise<RoutePar
         tenantId: device.tenantId,
       });
       return NextResponse.json({ ok: true, ...payload });
+    }
+
+    if (action === "reserveNextFolio") {
+      const folio = await reserveNextSalesAccountFolio({
+        tenantId: device.tenantId,
+        kioskId: device.kioskId,
+      });
+      return NextResponse.json({ ok: true, ...folio });
     }
 
     if (action === "openAccount") {
@@ -240,6 +250,76 @@ export async function POST(request: Request, context: { params: Promise<RoutePar
         tenantId: device.tenantId,
         salesAccountId,
         closedByPosUserId,
+      });
+      return NextResponse.json({ ok: true, detail });
+    }
+
+    if (action === "syncMutation") {
+      const mutationId = asTrimmedString((body as Record<string, unknown>).mutationId);
+      const mutationType = asTrimmedString((body as Record<string, unknown>).mutationType);
+      const actorPosUserId = asTrimmedString((body as Record<string, unknown>).actorPosUserId);
+      const account = ((body as Record<string, unknown>).account || null) as Record<
+        string,
+        unknown
+      > | null;
+
+      if (!mutationId || !mutationType || !actorPosUserId || !account) {
+        return badRequest(
+          "mutationId, mutationType, actorPosUserId and account are required.",
+        );
+      }
+
+      const allowedMutationTypes = new Set([
+        "sales_account.opened",
+        "sales_account.assignment_set",
+        "sales_account.line_added",
+        "sales_account.line_updated",
+        "sales_account.line_voided",
+        "sales_account.kitchen_batch_requested",
+        "sales_account.payment_captured",
+        "sales_account.closed",
+        "sales_account.canceled",
+      ]);
+      if (!allowedMutationTypes.has(mutationType)) {
+        return badRequest("mutationType is invalid.");
+      }
+
+      const detail = await syncSalesAccountMutation({
+        tenantId: device.tenantId,
+        tenantSlug: device.tenantSlug,
+        kioskId: device.kioskId,
+        mutationId,
+        mutationType: mutationType as Parameters<typeof syncSalesAccountMutation>[0]["mutationType"],
+        actorPosUserId,
+        payload: (body as Record<string, unknown>).payload,
+        account,
+        assignment: (((body as Record<string, unknown>).assignment || null) as Record<
+          string,
+          unknown
+        > | null) || null,
+        line: (((body as Record<string, unknown>).line || null) as Record<
+          string,
+          unknown
+        > | null) || null,
+        lineEvent: (((body as Record<string, unknown>).lineEvent || null) as Record<
+          string,
+          unknown
+        > | null) || null,
+        payment: (((body as Record<string, unknown>).payment || null) as Record<
+          string,
+          unknown
+        > | null) || null,
+        kitchenBatch: (((body as Record<string, unknown>).kitchenBatch || null) as Record<
+          string,
+          unknown
+        > | null) || null,
+        kitchenLines: (Array.isArray((body as Record<string, unknown>).kitchenLines)
+          ? (body as Record<string, unknown>).kitchenLines
+          : []) as Array<Record<string, unknown>>,
+        accountEvent: (((body as Record<string, unknown>).accountEvent || null) as Record<
+          string,
+          unknown
+        > | null) || null,
       });
       return NextResponse.json({ ok: true, detail });
     }

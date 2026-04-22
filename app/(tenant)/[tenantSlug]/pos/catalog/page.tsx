@@ -307,7 +307,7 @@ export default async function PosCatalogPage({ params, searchParams }: PosCatalo
     <div className="space-y-6">
       <CatalogSectionHeader
         title="POS · Mi catálogo v2"
-        description="Administración canónica de categorías, productos simples, configurables, modifiers y combos del POS."
+        description="Administración canónica de productos POS. Las categorías son master data compartido y los productos viven en la nueva ruta v2."
       />
 
       <Card className="space-y-4 border-border/80 bg-surface">
@@ -316,8 +316,8 @@ export default async function PosCatalogPage({ params, searchParams }: PosCatalo
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Resumen del catálogo</p>
             <h2 className="text-lg font-semibold text-foreground">Accede a cada bloque sin perder contexto</h2>
             <p className="max-w-2xl text-sm text-muted">
-              Este tablero reúne la configuración canónica de POS para este tenant y te lleva directo a cada
-              sección de trabajo.
+              Este tablero reúne la configuración canónica de POS para este tenant. El flujo nuevo arranca en
+              productos v2; categorías sigue siendo una pieza compartida de referencia.
             </p>
           </div>
 
@@ -326,24 +326,24 @@ export default async function PosCatalogPage({ params, searchParams }: PosCatalo
               href={`/${slug}/pos/catalog/categories`}
               className="inline-flex items-center justify-center rounded-[var(--radius-base)] border border-border bg-surface-2 px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface"
             >
-              Abrir categorías
+              Gestionar categorías
             </Link>
             <Link
               href={`/${slug}/pos/catalog/products`}
               className="inline-flex items-center justify-center rounded-[var(--radius-base)] border border-border bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
-              Abrir productos
+              Abrir productos v2
             </Link>
           </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-8">
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-            <p className="text-xs uppercase tracking-[0.08em] text-muted">Categorías</p>
+            <p className="text-xs uppercase tracking-[0.08em] text-muted">Categorías compartidas</p>
             <p className="mt-1 text-lg font-semibold text-foreground">{activeCategoriesCount}</p>
           </div>
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-            <p className="text-xs uppercase tracking-[0.08em] text-muted">Productos</p>
+            <p className="text-xs uppercase tracking-[0.08em] text-muted">Productos v2</p>
             <p className="mt-1 text-lg font-semibold text-foreground">{activeProductsCount}</p>
           </div>
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">

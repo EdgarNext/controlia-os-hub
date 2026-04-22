@@ -114,6 +114,15 @@ function categoryListPath(tenantSlug: string): string {
   return `/${tenantSlug}/pos/catalog/categories`;
 }
 
+function resolveRedirectPath(formData: FormData, fallbackPath: string): string {
+  const returnPath = toTrimmedString(formData.get("returnPath"));
+  if (returnPath.startsWith("/")) {
+    return returnPath;
+  }
+
+  return fallbackPath;
+}
+
 export async function createCategoryAction(
   _previousState: CategoryActionState,
   formData: FormData,
@@ -144,8 +153,9 @@ export async function createCategoryAction(
       input: validation.input,
     });
 
-    revalidatePath(categoryListPath(tenant.tenantSlug));
-    redirect(categoryListPath(tenant.tenantSlug));
+    const redirectPath = resolveRedirectPath(formData, categoryListPath(tenant.tenantSlug));
+    revalidatePath(redirectPath);
+    redirect(redirectPath);
   } catch (error) {
     if (isRedirectErrorLike(error)) {
       throw error;
@@ -191,9 +201,9 @@ export async function updateCategoryAction(
       input: validation.input,
     });
 
-    revalidatePath(categoryListPath(tenant.tenantSlug));
-    revalidatePath(`/${tenant.tenantSlug}/pos/catalog/categories/${categoryId}/edit`);
-    redirect(categoryListPath(tenant.tenantSlug));
+    const redirectPath = resolveRedirectPath(formData, categoryListPath(tenant.tenantSlug));
+    revalidatePath(redirectPath);
+    redirect(redirectPath);
   } catch (error) {
     if (isRedirectErrorLike(error)) {
       throw error;

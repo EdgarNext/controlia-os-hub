@@ -14,6 +14,7 @@ type VariantV2FormProps = {
   action: (previousState: CatalogV2ActionState, formData: FormData) => Promise<CatalogV2ActionState>;
   tenantSlug: string;
   cancelHref: string;
+  returnHref?: string;
   products: PosCatalogV2ProductSelectItem[];
   variantId?: string;
   initialValues?: PosCatalogV2SellableVariantFormValues;
@@ -41,6 +42,7 @@ export function VariantV2Form({
   action,
   tenantSlug,
   cancelHref,
+  returnHref,
   products,
   variantId,
   initialValues,
@@ -52,6 +54,7 @@ export function VariantV2Form({
     <Card className="space-y-4">
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="tenantSlug" value={tenantSlug} />
+        {returnHref ? <input type="hidden" name="returnPath" value={returnHref} /> : null}
         {variantId ? <input type="hidden" name="variantId" value={variantId} /> : null}
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -86,7 +89,7 @@ export function VariantV2Form({
           </label>
 
           <label className="block space-y-1 text-sm">
-            <span className="text-muted">Precio</span>
+            <span className="text-muted">Precio (pesos MXN)</span>
             <input
               type="number"
               name="price_cents"
@@ -97,6 +100,7 @@ export function VariantV2Form({
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
             />
             {renderError(state, "price_cents")}
+            <p className="text-xs text-muted">Ingresa el valor en pesos; el sistema lo guarda en centavos.</p>
           </label>
 
           <label className="block space-y-1 text-sm">

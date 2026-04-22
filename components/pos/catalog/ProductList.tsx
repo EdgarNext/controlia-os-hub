@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -317,11 +318,11 @@ export function ProductList({ products, categories, tenantSlug }: ProductListPro
       <Card className="space-y-4 p-4">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-semibold text-foreground">Productos</p>
-            <p className="text-xs text-muted">{filteredProducts.length} resultados</p>
+            <p className="text-sm font-semibold text-foreground">Productos clásicos</p>
+            <p className="text-xs text-muted">{filteredProducts.length} resultados · compatibilidad</p>
           </div>
           <Button type="button" variant="secondary" onClick={openCreateMode}>
-            Agregar
+            Crear clásico
           </Button>
         </div>
 
@@ -479,10 +480,10 @@ export function ProductList({ products, categories, tenantSlug }: ProductListPro
                 <>
                   <div>
                     <p className="text-lg font-semibold text-foreground">
-                      {mode === "create" ? "Nuevo producto" : "Editar producto"}
+                      {mode === "create" ? "Nuevo producto clásico" : "Editar producto clásico"}
                     </p>
                     <p className="text-sm text-muted">
-                      Define nombre, categoría, precio y estado para catálogo POS.
+                      Define nombre, categoría, precio y estado para el catálogo POS legado.
                     </p>
                   </div>
 
@@ -606,10 +607,16 @@ export function ProductList({ products, categories, tenantSlug }: ProductListPro
                   </div>
 
                   <div className="space-y-3">
-                    <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      href={`/${tenantSlug}/pos/catalog/products/${selectedProduct.id}`}
+                        className="inline-flex items-center justify-center rounded-[var(--radius-base)] border border-border bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                      >
+                        Gestionar
+                      </Link>
                       <Button type="button" onClick={openEditMode} disabled={isPending}>
                         <Pencil className="h-4 w-4" aria-hidden="true" />
-                        Editar
+                        Editar clásico
                       </Button>
                     </div>
 

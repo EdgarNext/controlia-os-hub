@@ -30,6 +30,12 @@ export default async function PosPage({ params }: PosPageProps) {
       visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
     },
     {
+      href: `/${tenant.tenantSlug}/pos/users`,
+      title: "Usuarios POS",
+      description: "Crea y sincroniza cajeros y supervisores para login offline.",
+      visible: tenant.isPlatformOwner || hasModulePageAccess(accessMap.users ?? "none", "read"),
+    },
+    {
       href: `/${tenant.tenantSlug}/pos/reports`,
       title: "Reportes",
       description: "Consulta ventas y estado de sincronización POS.",

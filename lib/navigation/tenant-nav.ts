@@ -77,6 +77,22 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
         pageKey: "products",
       },
       {
+        href: (tenantSlug) => `/${tenantSlug}/pos/catalog-v2`,
+        label: "Catálogo V2",
+        iconKey: "products",
+        match: "prefix",
+        moduleKeys: ["sales_pos"],
+        pageKey: "products",
+      },
+      {
+        href: (tenantSlug) => `/${tenantSlug}/pos/users`,
+        label: "Usuarios POS",
+        iconKey: "users",
+        match: "prefix",
+        moduleKeys: ["sales_pos"],
+        pageKey: "users",
+      },
+      {
         href: (tenantSlug) => `/${tenantSlug}/pos/reports`,
         label: "Reportes POS",
         iconKey: "reports",
@@ -157,6 +173,7 @@ async function buildItem(
   tenantId: string,
   role: TenantRole,
   enabledModules: Set<string>,
+  isPlatformOwner: boolean,
   accentToken: string,
   item: TenantNavItemConfig,
 ): Promise<NavItem | null> {
@@ -169,6 +186,21 @@ async function buildItem(
   }
 
   if (item.pageKey) {
+    if (isPlatformOwner && item.pageKey === "users") {
+      return {
+        href: item.href(tenantSlug),
+        label: item.label,
+        iconKey: item.iconKey,
+        match: item.match ?? "prefix",
+        accentToken,
+        children: item.children?.map((child) => ({
+          href: child.href(tenantSlug),
+          label: child.label,
+          match: child.match ?? "prefix",
+        })),
+      };
+    }
+
     const accessMap = await getCurrentTenantModulePageAccessMap(tenantId, item.moduleKeys[0]);
     const currentLevel = accessMap[item.pageKey] ?? "none";
 
@@ -196,6 +228,7 @@ const getTenantNavCached = cache(
     tenantId: string,
     tenantSlug: string,
     role: TenantRole,
+    isPlatformOwner: boolean,
     enabledModuleKeysSignature: string,
   ): Promise<NavSection[]> => {
     const enabledModules = getTenantEnabledDomainsModules(
@@ -209,7 +242,15 @@ const getTenantNavCached = cache(
           const items = (
             await Promise.all(
               domain.items.map((item) =>
-                buildItem(tenantSlug, tenantId, role, enabledModules, domain.accentToken, item),
+                buildItem(
+                  tenantSlug,
+                  tenantId,
+                  role,
+                  enabledModules,
+                  isPlatformOwner,
+                  domain.accentToken,
+                  item,
+                ),
               ),
             )
           ).filter((item): item is NavItem => item !== null);
@@ -236,13 +277,17 @@ const getTenantNavCached = cache(
 );
 
 export async function getTenantNav(
-  context: Pick<TenantContext, "tenantId" | "tenantSlug" | "tenantRole" | "enabledModuleKeys">,
+  context: Pick<
+    TenantContext,
+    "tenantId" | "tenantSlug" | "tenantRole" | "enabledModuleKeys" | "isPlatformOwner"
+  >,
 ): Promise<NavSection[]> {
   const enabledModuleKeysSignature = [...context.enabledModuleKeys].sort().join(",");
   return getTenantNavCached(
     context.tenantId,
     context.tenantSlug,
     context.tenantRole,
+    context.isPlatformOwner,
     enabledModuleKeysSignature,
   );
 }

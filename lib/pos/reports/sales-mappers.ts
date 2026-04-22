@@ -68,7 +68,7 @@ function buildChannelDistribution(daily: PosReportsDailyAggregateRow[]): PosSale
 
   for (const row of daily) {
     const key = row.is_tab ? "tabs" : "quick-sale";
-    const label = row.is_tab ? "Mesas" : "Venta rapida";
+    const label = row.is_tab ? "Mesas" : "Mostrador / WhatsApp";
     const current = grouped.get(key) ?? { key, label, gross_cents: 0, orders_count: 0 };
     current.gross_cents += row.gross_cents;
     current.orders_count += row.orders_count;
@@ -105,9 +105,9 @@ function buildPaymentDistribution(
         totalGross > 0 ? Math.round((overview.totals.card_cents / totalGross) * ordersCount) : 0,
     },
     {
-      key: "employee",
-      label: "Empleado",
-      gross_cents: overview.totals.employee_cents,
+      key: "transfer",
+      label: "Transferencia",
+      gross_cents: overview.totals.transfer_cents,
       orders_count:
         totalGross > 0
           ? Math.max(
@@ -120,10 +120,9 @@ function buildPaymentDistribution(
     },
   ].filter((row) => row.gross_cents > 0);
 
-  // TODO: mismatch with specs
-  // `report_sales_daily` confirms gross by payment method, but not order counts per payment method.
-  // The UI labels these counts as estimated participation derived from revenue share until a source with
-  // canonical order_count by payment method exists.
+  // TODO: split-bill follow-up
+  // `sales_account_payments` confirms captured gross by payment method, but order counts per payment method
+  // are still estimated from revenue share when one ticket can eventually have multiple payments.
   if (trend.length === 0) {
     return [];
   }

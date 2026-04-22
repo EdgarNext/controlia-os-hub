@@ -14,7 +14,7 @@ type PosReportsOverviewFiltersProps = {
 
 const saleChannelOptions: Array<{ value: PosReportSaleChannel; label: string }> = [
   { value: "all", label: "Todos" },
-  { value: "quick-sale", label: "Venta rapida" },
+  { value: "quick-sale", label: "Mostrador y WhatsApp" },
   { value: "tabs", label: "Mesas" },
 ];
 
@@ -22,7 +22,7 @@ const paymentMethodOptions: Array<{ value: PosReportsFilters["payment_method"]; 
   { value: "all", label: "Todos los pagos" },
   { value: "cash", label: "Efectivo" },
   { value: "card", label: "Tarjeta" },
-  { value: "employee", label: "Empleado" },
+  { value: "transfer", label: "Transferencia" },
 ];
 
 export function PosReportsOverviewFilters({

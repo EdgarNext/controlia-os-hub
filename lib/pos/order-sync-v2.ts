@@ -229,6 +229,27 @@ async function findCashShift(
   return data || null;
 }
 
+async function findOpenCashShiftForKiosk(
+  tenantId: string,
+  kioskId: string,
+): Promise<CashShiftRow | null> {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("cash_shifts")
+    .select(
+      "id, tenant_id, kiosk_id, opened_by_pos_user_id, closed_by_pos_user_id, status, opening_float_cents, declared_cash_cents, opened_at, closed_at",
+    )
+    .eq("tenant_id", tenantId)
+    .eq("kiosk_id", kioskId)
+    .eq("status", "open")
+    .order("opened_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<CashShiftRow>();
+
+  if (error) throw new Error(`Unable to load open cash shift for kiosk: ${error.message}`);
+  return data || null;
+}
+
 function assertExpectedVersion(
   mutation: OrderScopedMutation,
   current: number,
@@ -416,6 +437,23 @@ async function applyOpenCashShift(
     });
   }
 
+  const existingOpenShiftForKiosk = await findOpenCashShiftForKiosk(
+    tenantId,
+    mutation.kiosk_id,
+  );
+  if (existingOpenShiftForKiosk) {
+    console.warn("pos.sync.cash_shift.open.kiosk_conflict", {
+      tenantId,
+      mutationId: mutation.mutation_id,
+      cashShiftId: mutation.cash_shift_id,
+      kioskId: mutation.kiosk_id,
+      existingCashShiftId: existingOpenShiftForKiosk.id,
+    });
+    throw new MutationConflictError("There is already an open cash shift for this kiosk.", {
+      mutation_id: mutation.mutation_id,
+    });
+  }
+
   const { error } = await supabase.from("cash_shifts").insert({
     id: mutation.cash_shift_id,
     tenant_id: tenantId,
@@ -434,6 +472,41 @@ async function applyOpenCashShift(
   });
 
   if (error) {
+    if (error.message.includes("cash_shifts_one_open_per_kiosk_uidx")) {
+      const openShiftAfterInsertRace = await findOpenCashShiftForKiosk(
+        tenantId,
+        mutation.kiosk_id,
+      );
+
+      if (openShiftAfterInsertRace?.id === mutation.cash_shift_id) {
+        const sameOpenState =
+          openShiftAfterInsertRace.opened_by_pos_user_id === mutation.opened_by_pos_user_id &&
+          openShiftAfterInsertRace.opening_float_cents === openingFloatCents &&
+          openShiftAfterInsertRace.opened_at === openedAt &&
+          openShiftAfterInsertRace.status === "open";
+
+        if (sameOpenState) {
+          console.info("pos.sync.cash_shift.open.noop_after_race", {
+            tenantId,
+            mutationId: mutation.mutation_id,
+            cashShiftId: mutation.cash_shift_id,
+            kioskId: mutation.kiosk_id,
+          });
+          return null;
+        }
+      }
+
+      console.warn("pos.sync.cash_shift.open.conflict_after_race", {
+        tenantId,
+        mutationId: mutation.mutation_id,
+        cashShiftId: mutation.cash_shift_id,
+        kioskId: mutation.kiosk_id,
+        existingCashShiftId: openShiftAfterInsertRace?.id || null,
+      });
+      throw new MutationConflictError("There is already an open cash shift for this kiosk.", {
+        mutation_id: mutation.mutation_id,
+      });
+    }
     throw new Error(`cash_shifts insert failed: ${error.message}`);
   }
 

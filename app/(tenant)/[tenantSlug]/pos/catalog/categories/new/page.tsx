@@ -2,6 +2,7 @@ import { isTenantAccessDeniedError } from "@/app/(tenant)/lib/access-errors";
 import { createCategoryAction } from "@/actions/pos/catalog/categories.actions";
 import { CategoryForm } from "@/components/pos/catalog/CategoryForm";
 import { CatalogSectionHeader } from "@/components/pos/catalog/CatalogSectionHeader";
+import { Card } from "@/components/ui/card";
 import { StatePanel } from "@/components/ui/state-panel";
 import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
 
@@ -67,8 +68,17 @@ export default async function CategoryNewPage({ params }: CategoryNewPageProps) 
     <div className="space-y-4">
       <CatalogSectionHeader
         title="POS · Nueva categoría"
-        description={`Organizacion: ${result.tenantName}`}
+        description={`Master data compartido para el POS. Organizacion: ${result.tenantName}`}
       />
+      <Card className="space-y-2 border-border/80 bg-surface">
+        <div className="space-y-1">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Contexto</p>
+          <p className="text-sm text-muted">
+            Crear categorías sigue siendo un flujo compartido, no una variante v2. Después de crearla, vuelve a
+            productos para continuar con el modelo centrado en producto.
+          </p>
+        </div>
+      </Card>
       <CategoryForm
         action={createCategoryAction}
         tenantSlug={result.tenantSlug}

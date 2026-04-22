@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { isTenantAccessDeniedError } from "@/app/(tenant)/lib/access-errors";
-import {
-  importCategoriesCsvAction,
-} from "@/actions/pos/catalog/categories.actions";
+import { importCategoriesCsvAction } from "@/actions/pos/catalog/categories.actions";
 import { CatalogCsvImportCard } from "@/components/pos/catalog/CatalogCsvImportCard";
 import { CatalogSectionHeader } from "@/components/pos/catalog/CatalogSectionHeader";
+import { Card } from "@/components/ui/card";
 import { StatePanel } from "@/components/ui/state-panel";
 import { CategoryList } from "@/components/pos/catalog/CategoryList";
 import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
@@ -73,10 +72,27 @@ export default async function CatalogCategoriesPage({ params }: CategoriesPagePr
     <div className="space-y-4">
       <CatalogSectionHeader
         title="POS · Categorías"
-        description="Gestiona las categorías del catálogo de alimentos y bebidas del POS."
+        description="Master data compartido para el catálogo POS. Esta tabla alimenta tanto el flujo clásico como el nuevo flujo v2."
       />
       {result.ok ? (
         <>
+          <Card className="space-y-2 border-border/80 bg-surface">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Contexto de la vista</p>
+              <p className="text-sm text-muted">
+                Las categorías no tienen una ruta v2 separada. Se mantienen como referencia compartida para productos,
+                por eso esta pantalla conserva el CRUD clásico y se integra con ambos flujos.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href={`/${result.tenantSlug}/pos/catalog/products`}
+                className="inline-flex items-center justify-center rounded-[var(--radius-base)] border border-border bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity duration-200 hover:opacity-90"
+              >
+                Ir a productos v2
+              </Link>
+            </div>
+          </Card>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <a
               href={`/${result.tenantSlug}/pos/catalog/categories/template.csv`}

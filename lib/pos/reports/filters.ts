@@ -8,7 +8,12 @@ export type NormalizedPosReportsFilters = PosReportsFilters & {
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const SALE_CHANNEL_VALUES = new Set<PosReportSaleChannel>(["all", "quick-sale", "tabs"]);
-const PAYMENT_METHOD_VALUES = new Set<PosReportsFilters["payment_method"]>(["all", "cash", "card", "employee"]);
+const PAYMENT_METHOD_VALUES = new Set<PosReportsFilters["payment_method"]>([
+  "all",
+  "cash",
+  "card",
+  "transfer",
+]);
 
 function normalizeDateOnly(value: string, fieldName: "date_from" | "date_to"): string {
   const normalized = value.trim();
@@ -47,7 +52,7 @@ function normalizePaymentMethod(
   value: PosReportsFilters["payment_method"],
 ): PosReportsFilters["payment_method"] {
   if (!PAYMENT_METHOD_VALUES.has(value)) {
-    throw new Error("payment_method must be one of: all, cash, card, employee.");
+    throw new Error("payment_method must be one of: all, cash, card, transfer.");
   }
 
   return value;

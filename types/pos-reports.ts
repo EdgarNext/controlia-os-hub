@@ -1,4 +1,4 @@
-export type PosReportPaymentMethod = "cash" | "card" | "employee";
+export type PosReportPaymentMethod = "cash" | "card" | "transfer";
 
 export type PosReportSaleChannel = "all" | "quick-sale" | "tabs";
 
@@ -16,7 +16,7 @@ export type PosReportsDailyAggregateRow = {
   gross_cents: number;
   cash_cents: number;
   card_cents: number;
-  employee_cents: number;
+  transfer_cents: number;
   updated_at: string;
 };
 
@@ -27,7 +27,7 @@ export type PosReportsOverviewViewModel = {
     gross_cents: number;
     cash_cents: number;
     card_cents: number;
-    employee_cents: number;
+    transfer_cents: number;
     average_ticket_cents: number;
   };
   daily: PosReportsDailyAggregateRow[];

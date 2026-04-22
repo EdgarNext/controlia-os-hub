@@ -12,6 +12,7 @@ type ModifierOptionV2FormProps = {
   action: (previousState: CatalogV2ActionState, formData: FormData) => Promise<CatalogV2ActionState>;
   tenantSlug: string;
   cancelHref: string;
+  returnHref?: string;
   modifierGroups: PosCatalogV2ModifierGroupSelectItem[];
   modifierOptionId?: string;
   initialValues?: PosCatalogV2ModifierOptionFormValues;
@@ -39,6 +40,7 @@ export function ModifierOptionV2Form({
   action,
   tenantSlug,
   cancelHref,
+  returnHref,
   modifierGroups,
   modifierOptionId,
   initialValues,
@@ -50,6 +52,7 @@ export function ModifierOptionV2Form({
     <Card className="space-y-4">
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="tenantSlug" value={tenantSlug} />
+        {returnHref ? <input type="hidden" name="returnPath" value={returnHref} /> : null}
         {modifierOptionId ? <input type="hidden" name="modifierOptionId" value={modifierOptionId} /> : null}
 
         <div className="grid gap-4 md:grid-cols-2">

@@ -10,6 +10,7 @@ type CategoryFormProps = {
   action: (previousState: CategoryActionState, formData: FormData) => Promise<CategoryActionState>;
   tenantSlug: string;
   cancelHref: string;
+  returnHref?: string;
   categoryId?: string;
   initialValues?: PosCatalogCategoryFormValues;
   submitLabel: string;
@@ -24,6 +25,7 @@ export function CategoryForm({
   action,
   tenantSlug,
   cancelHref,
+  returnHref,
   categoryId,
   initialValues,
   submitLabel,
@@ -33,6 +35,7 @@ export function CategoryForm({
   return (
     <form action={formAction} className="space-y-4 rounded-[var(--radius-base)] border border-border bg-surface p-4">
       <input type="hidden" name="tenantSlug" value={tenantSlug} />
+      {returnHref ? <input type="hidden" name="returnPath" value={returnHref} /> : null}
       {categoryId ? <input type="hidden" name="categoryId" value={categoryId} /> : null}
 
       <label className="block space-y-1 text-sm">

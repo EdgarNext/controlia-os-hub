@@ -12,6 +12,7 @@ type ComboSlotV2FormProps = {
   action: (previousState: CatalogV2ActionState, formData: FormData) => Promise<CatalogV2ActionState>;
   tenantSlug: string;
   cancelHref: string;
+  returnHref?: string;
   comboProducts: PosCatalogV2ProductSelectItem[];
   comboSlotId?: string;
   initialValues?: PosCatalogV2ComboSlotFormValues;
@@ -31,6 +32,7 @@ export function ComboSlotV2Form({
   action,
   tenantSlug,
   cancelHref,
+  returnHref,
   comboProducts,
   comboSlotId,
   initialValues,
@@ -42,6 +44,7 @@ export function ComboSlotV2Form({
     <Card className="space-y-4">
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="tenantSlug" value={tenantSlug} />
+        {returnHref ? <input type="hidden" name="returnPath" value={returnHref} /> : null}
         {comboSlotId ? <input type="hidden" name="comboSlotId" value={comboSlotId} /> : null}
 
         <div className="grid gap-4 md:grid-cols-2">

@@ -90,7 +90,7 @@ function buildSummaryRows(daily: PosReportsDailyAggregateRow[]) {
 
   for (const row of daily) {
     const key = row.is_tab ? "tabs" : "quick-sale";
-    const label = row.is_tab ? "Mesas" : "Venta rapida";
+    const label = row.is_tab ? "Mesas" : "Mostrador / WhatsApp";
     const current = totalsByChannel.get(key) ?? { label, orders_count: 0, gross_cents: 0 };
 
     current.orders_count += row.orders_count;
@@ -115,7 +115,7 @@ function buildDominantPaymentLabel(overview: Awaited<ReturnType<typeof getPosRep
   const options = [
     { label: "Efectivo", cents: overview.totals.cash_cents },
     { label: "Tarjeta", cents: overview.totals.card_cents },
-    { label: "Empleado", cents: overview.totals.employee_cents },
+    { label: "Transferencia", cents: overview.totals.transfer_cents },
   ];
   const dominant = [...options].sort((left, right) => right.cents - left.cents)[0];
 

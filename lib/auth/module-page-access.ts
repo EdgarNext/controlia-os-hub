@@ -4,7 +4,7 @@ import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export type ModulePageAccessLevel = "none" | "read" | "manage";
-export type SalesPosPageKey = "devices" | "categories" | "products" | "reports";
+export type SalesPosPageKey = "devices" | "categories" | "products" | "reports" | "users";
 
 type ModulePageAccessRow = {
   page_key: string;

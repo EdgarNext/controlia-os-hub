@@ -11,6 +11,7 @@ type ModifierGroupV2FormProps = {
   action: (previousState: CatalogV2ActionState, formData: FormData) => Promise<CatalogV2ActionState>;
   tenantSlug: string;
   cancelHref: string;
+  returnHref?: string;
   modifierGroupId?: string;
   initialValues?: PosCatalogV2ModifierGroupFormValues;
   submitLabel: string;
@@ -29,6 +30,7 @@ export function ModifierGroupV2Form({
   action,
   tenantSlug,
   cancelHref,
+  returnHref,
   modifierGroupId,
   initialValues,
   submitLabel,
@@ -39,6 +41,7 @@ export function ModifierGroupV2Form({
     <Card className="space-y-4">
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="tenantSlug" value={tenantSlug} />
+        {returnHref ? <input type="hidden" name="returnPath" value={returnHref} /> : null}
         {modifierGroupId ? <input type="hidden" name="modifierGroupId" value={modifierGroupId} /> : null}
 
         <div className="grid gap-4 md:grid-cols-2">

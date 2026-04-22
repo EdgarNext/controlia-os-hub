@@ -17,6 +17,7 @@ type ProductV2FormProps = {
   action: (previousState: CatalogV2ActionState, formData: FormData) => Promise<CatalogV2ActionState>;
   tenantSlug: string;
   cancelHref: string;
+  returnHref?: string;
   categories: PosCatalogCategorySelectItem[];
   defaultVariantOptions: PosCatalogV2VariantSelectItem[];
   productId?: string;
@@ -45,6 +46,7 @@ export function ProductV2Form({
   action,
   tenantSlug,
   cancelHref,
+  returnHref,
   categories,
   defaultVariantOptions,
   productId,
@@ -72,6 +74,7 @@ export function ProductV2Form({
     <Card className="space-y-4">
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="tenantSlug" value={tenantSlug} />
+        {returnHref ? <input type="hidden" name="returnPath" value={returnHref} /> : null}
         {productId ? <input type="hidden" name="productId" value={productId} /> : null}
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -139,7 +142,7 @@ export function ProductV2Form({
           </label>
 
           <label className="block space-y-1 text-sm">
-            <span className="text-muted">Precio base (MXN)</span>
+            <span className="text-muted">Precio base (pesos MXN)</span>
             <input
               type="number"
               name="base_price_cents"
@@ -151,7 +154,7 @@ export function ProductV2Form({
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
             />
             {renderError(state, "base_price_cents")}
-            <p className="text-xs text-muted">{priceHelp}</p>
+            <p className="text-xs text-muted">{priceHelp} El valor se ingresa en pesos y se guarda en centavos.</p>
           </label>
 
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground">

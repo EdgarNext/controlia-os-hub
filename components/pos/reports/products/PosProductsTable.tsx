@@ -28,7 +28,7 @@ function formatMixLabel(row: PosProductPerformanceRow) {
     return "Mesas";
   }
 
-  return "Venta rapida";
+  return "Mostrador / WhatsApp";
 }
 
 export function PosProductsTable({ rows }: PosProductsTableProps) {

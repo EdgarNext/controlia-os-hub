@@ -1,4 +1,5 @@
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabaseAdminClient as getSupabaseServerClient } from "@/lib/supabase/admin";
+import { CATALOG_IMAGES_BUCKET, getCatalogImagePath } from "@/lib/pos/catalog/images";
 import type {
   PosCatalogV2ComboSlotListItem,
   PosCatalogV2ComboSlotOptionListItem,
@@ -73,6 +74,31 @@ async function assertProductBelongsToTenant(tenantId: string, productId: string)
   if (!data) {
     throw new Error("El producto no pertenece al tenant activo.");
   }
+}
+
+async function uploadCatalogV2ProductImage(input: {
+  tenantId: string;
+  productId: string;
+  imageFile: File;
+}): Promise<string> {
+  const imagePath = getCatalogImagePath({
+    tenantId: input.tenantId,
+    kind: "items",
+    id: input.productId,
+    file: input.imageFile,
+  });
+
+  const supabase = await getSupabaseServerClient();
+  const { error } = await supabase.storage.from(CATALOG_IMAGES_BUCKET).upload(imagePath, input.imageFile, {
+    upsert: true,
+    contentType: input.imageFile.type || undefined,
+  });
+
+  if (error) {
+    throw new Error(`Unable to upload product image: ${error.message}`);
+  }
+
+  return imagePath;
 }
 
 async function loadProductById(
@@ -353,6 +379,40 @@ export async function archiveCatalogV2Product(input: TenantScopedInput & { id: s
   if (error) {
     throw new Error(`Unable to archive POS product: ${error.message}`);
   }
+}
+
+export async function saveCatalogV2ProductImage(input: {
+  tenantId: string;
+  actorUserId: string;
+  productId: string;
+  imageFile: File;
+}): Promise<{ imagePath: string }> {
+  const supabase = await getSupabaseServerClient();
+  const now = nowIso();
+
+  await assertProductBelongsToTenant(input.tenantId, input.productId);
+
+  const imagePath = await uploadCatalogV2ProductImage({
+    tenantId: input.tenantId,
+    productId: input.productId,
+    imageFile: input.imageFile,
+  });
+
+  const { error } = await supabase
+    .from("products")
+    .update({
+      image_path: imagePath,
+      updated_by: input.actorUserId,
+      updated_at: now,
+    })
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.productId);
+
+  if (error) {
+    throw new Error(`Unable to save POS product image: ${error.message}`);
+  }
+
+  return { imagePath };
 }
 
 export async function saveCatalogV2Variant(input: {

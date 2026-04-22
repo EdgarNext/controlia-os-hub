@@ -18,6 +18,7 @@ type ComboSlotOptionV2FormProps = {
   action: (previousState: CatalogV2ActionState, formData: FormData) => Promise<CatalogV2ActionState>;
   tenantSlug: string;
   cancelHref: string;
+  returnHref?: string;
   comboSlots: PosCatalogV2ComboSlotListItem[];
   productTargets: PosCatalogV2ProductSelectItem[];
   variantTargets: PosCatalogV2SellableVariantListItem[];
@@ -47,6 +48,7 @@ export function ComboSlotOptionV2Form({
   action,
   tenantSlug,
   cancelHref,
+  returnHref,
   comboSlots,
   productTargets,
   variantTargets,
@@ -58,16 +60,26 @@ export function ComboSlotOptionV2Form({
   const initialTargetMode = initialValues?.linked_sellable_variant_id ? "variant" : "product";
   const [targetMode, setTargetMode] = useState<"product" | "variant">(initialTargetMode);
   const productNameById = new Map(productTargets.map((product) => [product.id, product.name]));
+  const variantNameById = new Map(variantTargets.map((variant) => [variant.id, variant.name]));
+  const [linkedProductId, setLinkedProductId] = useState(initialValues?.linked_product_id ?? "");
+  const [linkedVariantId, setLinkedVariantId] = useState(initialValues?.linked_sellable_variant_id ?? "");
+
+  const derivedName =
+    targetMode === "product"
+      ? productNameById.get(linkedProductId) ?? ""
+      : variantNameById.get(linkedVariantId) ?? "";
 
   return (
     <Card className="space-y-4">
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="tenantSlug" value={tenantSlug} />
+        {returnHref ? <input type="hidden" name="returnPath" value={returnHref} /> : null}
         {comboSlotOptionId ? <input type="hidden" name="comboSlotOptionId" value={comboSlotOptionId} /> : null}
+        <input type="hidden" name="name" value={derivedName} />
 
         <div className="grid gap-4 md:grid-cols-2">
           <label className="block space-y-1 text-sm md:col-span-2">
-            <span className="text-muted">Combo slot</span>
+            <span className="text-muted">Slot del combo</span>
             <select
               name="combo_slot_id"
               defaultValue={initialValues?.combo_slot_id ?? ""}
@@ -83,21 +95,17 @@ export function ComboSlotOptionV2Form({
             {renderError(state, "combo_slot_id")}
           </label>
 
-          <label className="block space-y-1 text-sm">
+          <div className="block space-y-1 text-sm">
             <span className="text-muted">Nombre</span>
-            <input
-              type="text"
-              name="name"
-              required
-              defaultValue={initialValues?.name ?? ""}
-              className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
-              placeholder="Lonche de jamón"
-            />
+            <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2">
+              <p className="text-sm font-medium text-foreground">{derivedName || "Selecciona un destino"}</p>
+              <p className="text-xs text-muted">El nombre se hereda automáticamente del destino seleccionado.</p>
+            </div>
             {renderError(state, "name")}
-          </label>
+          </div>
 
           <label className="block space-y-1 text-sm">
-            <span className="text-muted">Precio delta (MXN)</span>
+            <span className="text-muted">Precio delta (pesos MXN)</span>
             <input
               type="number"
               name="price_delta_cents"
@@ -107,14 +115,23 @@ export function ComboSlotOptionV2Form({
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
             />
             {renderError(state, "price_delta_cents")}
+            <p className="text-xs text-muted">Ingresa el delta en pesos; el sistema lo guarda en centavos.</p>
           </label>
 
           <label className="block space-y-1 text-sm">
-            <span className="text-muted">Target mode</span>
+            <span className="text-muted">Modo de destino</span>
             <select
               name="target_mode"
               value={targetMode}
-              onChange={(event) => setTargetMode(event.target.value as "product" | "variant")}
+              onChange={(event) => {
+                const nextMode = event.target.value as "product" | "variant";
+                setTargetMode(nextMode);
+                if (nextMode === "product") {
+                  setLinkedVariantId("");
+                } else {
+                  setLinkedProductId("");
+                }
+              }}
               className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
             >
               <option value="product">Producto simple</option>
@@ -129,7 +146,8 @@ export function ComboSlotOptionV2Form({
               <span className="text-muted">Producto simple destino</span>
               <select
                 name="linked_product_id"
-                defaultValue={initialValues?.linked_product_id ?? ""}
+                value={linkedProductId}
+                onChange={(event) => setLinkedProductId(event.target.value)}
                 className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
               >
                 <option value="">Selecciona un producto simple</option>
@@ -146,7 +164,8 @@ export function ComboSlotOptionV2Form({
               <span className="text-muted">Variante destino</span>
               <select
                 name="linked_sellable_variant_id"
-                defaultValue={initialValues?.linked_sellable_variant_id ?? ""}
+                value={linkedVariantId}
+                onChange={(event) => setLinkedVariantId(event.target.value)}
                 className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2"
               >
                 <option value="">Selecciona una variante vendible</option>

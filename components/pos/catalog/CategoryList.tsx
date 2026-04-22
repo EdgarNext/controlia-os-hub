@@ -18,9 +18,11 @@ function formatDateTime(value?: string | null): string {
 export function CategoryList({
   categories,
   tenantSlug,
+  editHrefBuilder,
 }: {
   categories: PosCatalogCategoryListItem[];
   tenantSlug?: string;
+  editHrefBuilder?: (tenantSlug: string, categoryId: string) => string;
 }) {
   if (categories.length === 0) {
     return (
@@ -47,7 +49,7 @@ export function CategoryList({
         <tbody>
           {categories.map((category) => {
             const editHref = tenantSlug
-              ? `/${tenantSlug}/pos/catalog/categories/${category.id}/edit`
+              ? editHrefBuilder?.(tenantSlug, category.id) ?? `/${tenantSlug}/pos/catalog/categories/${category.id}/edit`
               : null;
 
             return (

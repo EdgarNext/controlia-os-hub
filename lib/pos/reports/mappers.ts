@@ -1,5 +1,4 @@
 import type {
-  PosReportOrderListItem,
   PosReportPaymentMethod,
   PosReportsDailyAggregateRow,
   PosReportsOverviewViewModel,
@@ -8,43 +7,18 @@ import type { NormalizedPosReportsFilters } from "./filters";
 
 type IntegerLike = number | string | null | undefined;
 
-type ReportSalesDailyRow = {
-  business_date_mx: string;
-  is_tab: boolean;
-  orders_count: IntegerLike;
-  gross_cents: IntegerLike;
-  cash_cents: IntegerLike;
-  card_cents: IntegerLike;
-  employee_cents: IntegerLike;
-  updated_at: string;
-};
-
-type OrdersOverviewSourceRow = {
+type SalesAccountOverviewSourceRow = {
+  id: string;
   total_cents: IntegerLike;
-  payment_method: string | null;
+  service_context: string;
   created_at: string;
   closed_at: string | null;
-  is_tab: boolean | null;
 };
 
-type OrderListSourceRow = {
-  id: string;
-  tenant_id: string;
-  kiosk_id: string;
-  folio_number: IntegerLike;
-  folio_text: string;
-  status: string;
-  total_cents: IntegerLike;
-  payment_received_cents: IntegerLike;
-  change_cents: IntegerLike;
+type SalesAccountPaymentSourceRow = {
+  sales_account_id: string;
   payment_method: string | null;
-  print_status: string;
-  print_attempt_count: IntegerLike;
-  last_print_error: string | null;
-  last_print_at: string | null;
-  created_at: string;
-  closed_at?: string | null;
-  is_tab?: boolean | null;
+  amount_paid_cents: IntegerLike;
 };
 
 const MX_BUSINESS_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
@@ -59,6 +33,7 @@ function parseIntegerLike(value: IntegerLike, fieldName: string): number {
     if (!Number.isFinite(value)) {
       throw new Error(`${fieldName} must be a finite number.`);
     }
+
     return value;
   }
 
@@ -67,26 +42,19 @@ function parseIntegerLike(value: IntegerLike, fieldName: string): number {
     if (!Number.isFinite(parsed)) {
       throw new Error(`${fieldName} must be numeric.`);
     }
+
     return parsed;
   }
 
   throw new Error(`${fieldName} is required.`);
 }
 
-function parseNullableIntegerLike(value: IntegerLike, fieldName: string): number | null {
+function normalizePaymentMethod(value: string | null): PosReportPaymentMethod | null {
   if (value == null) {
     return null;
   }
 
-  return parseIntegerLike(value, fieldName);
-}
-
-function normalizeOrderPaymentMethod(value: string | null): PosReportPaymentMethod | null {
-  if (value == null) {
-    return null;
-  }
-
-  if (value === "cash" || value === "card" || value === "employee") {
+  if (value === "cash" || value === "card" || value === "transfer") {
     return value;
   }
 
@@ -97,7 +65,7 @@ function toMxBusinessDate(isoTimestamp: string): string {
   const date = new Date(isoTimestamp);
 
   if (Number.isNaN(date.getTime())) {
-    throw new Error("Order timestamp must be a valid ISO date.");
+    throw new Error("Sales account timestamp must be a valid ISO date.");
   }
 
   const parts = MX_BUSINESS_DATE_FORMATTER.formatToParts(date);
@@ -112,78 +80,72 @@ function toMxBusinessDate(isoTimestamp: string): string {
   return `${year}-${month}-${day}`;
 }
 
-export function mapReportSalesDailyRow(row: ReportSalesDailyRow): PosReportsDailyAggregateRow {
-  return {
-    business_date_mx: row.business_date_mx,
-    is_tab: row.is_tab,
-    orders_count: parseIntegerLike(row.orders_count, "report_sales_daily.orders_count"),
-    gross_cents: parseIntegerLike(row.gross_cents, "report_sales_daily.gross_cents"),
-    cash_cents: parseIntegerLike(row.cash_cents, "report_sales_daily.cash_cents"),
-    card_cents: parseIntegerLike(row.card_cents, "report_sales_daily.card_cents"),
-    employee_cents: parseIntegerLike(row.employee_cents, "report_sales_daily.employee_cents"),
-    updated_at: row.updated_at,
-  };
-}
-
-export function mapOrderRowToListItem(row: OrderListSourceRow): PosReportOrderListItem {
-  return {
-    id: row.id,
-    tenant_id: row.tenant_id,
-    kiosk_id: row.kiosk_id,
-    folio_number: parseIntegerLike(row.folio_number, "orders.folio_number"),
-    folio_text: row.folio_text,
-    status: row.status,
-    total_cents: parseIntegerLike(row.total_cents, "orders.total_cents"),
-    payment_received_cents: parseNullableIntegerLike(
-      row.payment_received_cents,
-      "orders.payment_received_cents",
-    ),
-    change_cents: parseNullableIntegerLike(row.change_cents, "orders.change_cents"),
-    payment_method: normalizeOrderPaymentMethod(row.payment_method),
-    print_status: row.print_status,
-    print_attempt_count: parseIntegerLike(
-      row.print_attempt_count,
-      "orders.print_attempt_count",
-    ),
-    last_print_error: row.last_print_error,
-    last_print_at: row.last_print_at,
-    created_at: row.created_at,
-    closed_at: row.closed_at ?? null,
-    is_tab: row.is_tab ?? false,
-  };
-}
-
-export function mapOrdersToOverviewDailyRows(
-  rows: OrdersOverviewSourceRow[],
+export function mapSalesAccountsToOverviewDailyRows(
+  rows: SalesAccountOverviewSourceRow[],
+  payments: SalesAccountPaymentSourceRow[],
   filters: NormalizedPosReportsFilters,
 ): PosReportsDailyAggregateRow[] {
+  const paymentTotalsByAccountId = payments.reduce<
+    Map<string, { cash: number; card: number; transfer: number }>
+  >((accumulator, row) => {
+    const paymentMethod = normalizePaymentMethod(row.payment_method);
+    if (!paymentMethod) {
+      return accumulator;
+    }
+
+    const current = accumulator.get(row.sales_account_id) ?? {
+      cash: 0,
+      card: 0,
+      transfer: 0,
+    };
+    current[paymentMethod] += parseIntegerLike(
+      row.amount_paid_cents,
+      "sales_account_payments.amount_paid_cents",
+    );
+    accumulator.set(row.sales_account_id, current);
+    return accumulator;
+  }, new Map());
+
   const grouped = new Map<string, PosReportsDailyAggregateRow>();
 
   for (const row of rows) {
-    const paymentMethod = normalizeOrderPaymentMethod(row.payment_method);
     const timestamp = row.closed_at ?? row.created_at;
     const businessDate = toMxBusinessDate(timestamp);
+    const totalCents = parseIntegerLike(row.total_cents, "sales_accounts.total_cents");
 
     if (businessDate < filters.date_from || businessDate > filters.date_to) {
       continue;
     }
 
-    const isTab = Boolean(row.is_tab);
-
+    const isTab = row.service_context === "table_service";
     if (!filters.include_tabs && isTab) {
       continue;
     }
-
     if (!filters.include_quick_sale && !isTab) {
       continue;
     }
 
-    if (filters.payment_method !== "all" && paymentMethod !== filters.payment_method) {
+    const paymentTotals = paymentTotalsByAccountId.get(row.id) ?? {
+      cash: 0,
+      card: 0,
+      transfer: 0,
+    };
+    const capturedTotal =
+      paymentTotals.cash + paymentTotals.card + paymentTotals.transfer;
+    if (capturedTotal !== totalCents) {
+      continue;
+    }
+    const selectedPaymentAmount =
+      filters.payment_method === "all" ? 0 : paymentTotals[filters.payment_method];
+
+    if (filters.payment_method !== "all" && selectedPaymentAmount <= 0) {
       continue;
     }
 
+    const grossCents =
+      filters.payment_method === "all" ? totalCents : selectedPaymentAmount;
+
     const groupKey = `${businessDate}:${isTab ? "tab" : "quick-sale"}`;
-    const totalCents = parseIntegerLike(row.total_cents, "orders.total_cents");
     const current = grouped.get(groupKey) ?? {
       business_date_mx: businessDate,
       is_tab: isTab,
@@ -191,25 +153,29 @@ export function mapOrdersToOverviewDailyRows(
       gross_cents: 0,
       cash_cents: 0,
       card_cents: 0,
-      employee_cents: 0,
-      updated_at: row.closed_at ?? row.created_at,
+      transfer_cents: 0,
+      updated_at: timestamp,
     };
 
     current.orders_count += 1;
-    current.gross_cents += totalCents;
+    current.gross_cents += grossCents;
 
-    if (paymentMethod === "cash") {
-      current.cash_cents += totalCents;
-    } else if (paymentMethod === "card") {
-      current.card_cents += totalCents;
-    } else if (paymentMethod === "employee") {
-      current.employee_cents += totalCents;
+    if (filters.payment_method === "all") {
+      current.cash_cents += paymentTotals.cash;
+      current.card_cents += paymentTotals.card;
+      current.transfer_cents += paymentTotals.transfer;
+    } else if (filters.payment_method === "cash") {
+      current.cash_cents += selectedPaymentAmount;
+    } else if (filters.payment_method === "card") {
+      current.card_cents += selectedPaymentAmount;
+    } else {
+      current.transfer_cents += selectedPaymentAmount;
     }
 
     const currentUpdatedAt = new Date(current.updated_at).getTime();
-    const rowUpdatedAt = new Date(row.closed_at ?? row.created_at).getTime();
+    const rowUpdatedAt = new Date(timestamp).getTime();
     if (Number.isFinite(rowUpdatedAt) && rowUpdatedAt > currentUpdatedAt) {
-      current.updated_at = row.closed_at ?? row.created_at;
+      current.updated_at = timestamp;
     }
 
     grouped.set(groupKey, current);
@@ -234,7 +200,7 @@ export function buildPosReportsOverviewViewModel(
       accumulator.gross_cents += row.gross_cents;
       accumulator.cash_cents += row.cash_cents;
       accumulator.card_cents += row.card_cents;
-      accumulator.employee_cents += row.employee_cents;
+      accumulator.transfer_cents += row.transfer_cents;
       return accumulator;
     },
     {
@@ -242,7 +208,7 @@ export function buildPosReportsOverviewViewModel(
       gross_cents: 0,
       cash_cents: 0,
       card_cents: 0,
-      employee_cents: 0,
+      transfer_cents: 0,
       average_ticket_cents: 0,
     },
   );
