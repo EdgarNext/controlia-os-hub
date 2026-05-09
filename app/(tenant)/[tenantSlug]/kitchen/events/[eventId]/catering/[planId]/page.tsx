@@ -279,7 +279,9 @@ async function PlanRequirementsSection({
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Requerimientos y faltantes</h2>
-          <p className="text-xs text-muted">No descuenta inventario. Solo calcula disponibilidad y faltante.</p>
+          <p className="text-xs text-muted">
+            No descuenta inventario. El stock reservado para otros eventos no se considera disponible para este plan.
+          </p>
         </div>
         {canManageRequirements ? (
           <form action={recalculateCateringRequirementsAction}>
@@ -303,7 +305,10 @@ async function PlanRequirementsSection({
                 <th className="px-2 py-1">Insumo</th>
                 <th className="px-2 py-1">Unidad</th>
                 <th className="px-2 py-1">Requerido</th>
-                <th className="px-2 py-1">Disponible</th>
+                <th className="px-2 py-1">Stock físico</th>
+                <th className="px-2 py-1">Reservado otros eventos</th>
+                <th className="px-2 py-1">Reservado este plan</th>
+                <th className="px-2 py-1">Disponible real</th>
                 <th className="px-2 py-1">Faltante</th>
                 <th className="px-2 py-1">Costo unitario</th>
                 <th className="px-2 py-1">Costo total</th>
@@ -312,15 +317,34 @@ async function PlanRequirementsSection({
             <tbody>
               {requirements.map((row) => (
                 <tr key={row.id} className="border-t border-border transition-colors hover:bg-surface-2/50">
+                  {(() => {
+                    const availability = ((row.source_payload as { availability_breakdown?: {
+                      physical_balance?: number;
+                      reserved_other_plans?: number;
+                      reserved_this_plan?: number;
+                      available_for_plan?: number;
+                    } }).availability_breakdown) ?? {};
+                    const physical = Number(availability.physical_balance ?? row.available_quantity ?? 0);
+                    const reservedOthers = Number(availability.reserved_other_plans ?? 0);
+                    const reservedThisPlan = Number(availability.reserved_this_plan ?? 0);
+                    const availableForPlan = Number(availability.available_for_plan ?? row.available_quantity ?? 0);
+                    return (
+                      <>
                   <td className="px-2 py-1 text-foreground">{row.kitchen_inventory_items?.name ?? row.item_id.slice(0, 8)}</td>
                   <td className="px-2 py-1 text-muted">{row.kitchen_inventory_units?.code ?? "ud"}</td>
                   <td className="px-2 py-1 text-foreground">{Number(row.required_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
-                  <td className="px-2 py-1 text-foreground">{Number(row.available_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                  <td className="px-2 py-1 text-foreground">{physical.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                  <td className="px-2 py-1 text-foreground">{reservedOthers.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                  <td className="px-2 py-1 text-foreground">{reservedThisPlan.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                  <td className="px-2 py-1 text-foreground">{availableForPlan.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
                   <td className={`px-2 py-1 ${Number(row.shortage_quantity) > 0 ? "text-amber-600" : "text-foreground"}`}>
                     {Number(row.shortage_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                   </td>
                   <td className="px-2 py-1 text-foreground">${Number(row.estimated_unit_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
                   <td className="px-2 py-1 text-foreground">${Number(row.estimated_total_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </>
+                    );
+                  })()}
                 </tr>
               ))}
             </tbody>

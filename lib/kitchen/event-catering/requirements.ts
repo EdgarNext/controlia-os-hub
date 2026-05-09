@@ -73,6 +73,15 @@ function convertQuantity(quantity: number, fromUnitId: string, toUnitId: string,
   return null;
 }
 
+function isAllocationsTableMissing(errorMessage: string): boolean {
+  return (
+    errorMessage.includes("event_catering_inventory_allocations") &&
+    (errorMessage.includes("schema cache") ||
+      errorMessage.includes("does not exist") ||
+      errorMessage.includes("Could not find the table"))
+  );
+}
+
 async function loadConversionMap(tenantId: string): Promise<ConversionMap> {
   const supabase = await getSupabaseServerClient();
   const { data, error } = await supabase
@@ -90,7 +99,7 @@ async function loadConversionMap(tenantId: string): Promise<ConversionMap> {
 
 export async function calculateCateringRequirements(tenantId: string, planId: string): Promise<CateringRequirementsResult> {
   const supabase = await getSupabaseServerClient();
-  const [planRecipesRes, versionsRes, balancesRes, conversions] = await Promise.all([
+  const [planRecipesRes, versionsRes, conversions] = await Promise.all([
     supabase
       .from("event_catering_plan_recipes")
       .select("id,recipe_id,recipe_version_id,planned_servings")
@@ -100,16 +109,11 @@ export async function calculateCateringRequirements(tenantId: string, planId: st
       .from("kitchen_recipe_versions")
       .select("id,recipe_id,servings,yield_quantity")
       .eq("tenant_id", tenantId),
-    supabase
-      .from("kitchen_inventory_balances")
-      .select("item_id,quantity")
-      .eq("tenant_id", tenantId),
     loadConversionMap(tenantId),
   ]);
 
   if (planRecipesRes.error) throw new Error(`No fue posible cargar recetas del plan: ${planRecipesRes.error.message}`);
   if (versionsRes.error) throw new Error(`No fue posible cargar versiones de receta: ${versionsRes.error.message}`);
-  if (balancesRes.error) throw new Error(`No fue posible cargar balances de inventario: ${balancesRes.error.message}`);
 
   const planRecipes = (planRecipesRes.data ?? []) as PlanRecipeLite[];
   const versions = (versionsRes.data ?? []) as RecipeVersionLite[];
@@ -273,18 +277,11 @@ export async function calculateCateringRequirements(tenantId: string, planId: st
     explodeVersion(planRecipe, planRecipe.recipe_version_id, multiplier, [planRecipe.recipe_version_id]);
   }
 
-  const availableByItem = new Map<string, number>();
-  for (const bal of balancesRes.data ?? []) {
-    const itemId = String(bal.item_id);
-    availableByItem.set(itemId, (availableByItem.get(itemId) ?? 0) + Number(bal.quantity ?? 0));
-  }
-
   const consolidated = new Map<string, CateringRequirementRowInput>();
   for (const row of exploded) {
     const key = `${row.itemId}:${row.defaultUnitId}`;
     const prev = consolidated.get(key);
     if (!prev) {
-      const available = availableByItem.get(row.itemId) ?? 0;
       const required = Number(row.requiredQuantityInDefaultUnit.toFixed(4));
       const estUnitCost = Number(row.estimatedUnitCost ?? 0);
       const estTotal = Number((required * estUnitCost).toFixed(4));
@@ -292,8 +289,8 @@ export async function calculateCateringRequirements(tenantId: string, planId: st
         item_id: row.itemId,
         unit_id: row.defaultUnitId,
         required_quantity: required,
-        available_quantity: available,
-        shortage_quantity: Math.max(Number((required - available).toFixed(4)), 0),
+        available_quantity: 0,
+        shortage_quantity: 0,
         estimated_unit_cost: estUnitCost,
         estimated_total_cost: estTotal,
         source_payload: {
@@ -310,6 +307,67 @@ export async function calculateCateringRequirements(tenantId: string, planId: st
     const lines = Array.isArray(prev.source_payload.lines) ? prev.source_payload.lines : [];
     prev.source_payload.lines = [...lines, row.source];
     consolidated.set(key, prev);
+  }
+
+  const itemIds = [...new Set(exploded.map((row) => row.itemId))];
+  const [balancesRes, allocationsRes] = await Promise.all([
+    supabase
+      .from("kitchen_inventory_balances")
+      .select("item_id,quantity")
+      .eq("tenant_id", tenantId)
+      .in("item_id", itemIds),
+    supabase
+      .from("event_catering_inventory_allocations")
+      .select("item_id,plan_id,allocated_quantity,consumed_quantity,released_quantity,status")
+      .eq("tenant_id", tenantId)
+      .in("item_id", itemIds)
+      .in("status", ["reserved", "consumed"]),
+  ]);
+  if (balancesRes.error) throw new Error(`No fue posible cargar balances de inventario: ${balancesRes.error.message}`);
+  if (allocationsRes.error && !isAllocationsTableMissing(allocationsRes.error.message)) {
+    throw new Error(`No fue posible cargar reservas de inventario por evento: ${allocationsRes.error.message}`);
+  }
+
+  const physicalByItem = new Map<string, number>();
+  for (const bal of balancesRes.data ?? []) {
+    const itemId = String(bal.item_id);
+    physicalByItem.set(itemId, (physicalByItem.get(itemId) ?? 0) + Number(bal.quantity ?? 0));
+  }
+
+  const reservedThisPlanByItem = new Map<string, number>();
+  const reservedOtherPlansByItem = new Map<string, number>();
+  for (const allocation of allocationsRes.error ? [] : (allocationsRes.data ?? [])) {
+    const remaining = Math.max(
+      Number(allocation.allocated_quantity ?? 0) -
+        Number(allocation.consumed_quantity ?? 0) -
+        Number(allocation.released_quantity ?? 0),
+      0,
+    );
+    if (remaining <= 0) continue;
+    const itemId = String(allocation.item_id);
+    if (String(allocation.plan_id) === planId) {
+      reservedThisPlanByItem.set(itemId, (reservedThisPlanByItem.get(itemId) ?? 0) + remaining);
+    } else {
+      reservedOtherPlansByItem.set(itemId, (reservedOtherPlansByItem.get(itemId) ?? 0) + remaining);
+    }
+  }
+
+  for (const row of consolidated.values()) {
+    const physical = Number((physicalByItem.get(row.item_id) ?? 0).toFixed(4));
+    const reservedByThisPlan = Number((reservedThisPlanByItem.get(row.item_id) ?? 0).toFixed(4));
+    const reservedByOthers = Number((reservedOtherPlansByItem.get(row.item_id) ?? 0).toFixed(4));
+    const availableForPlan = Number((physical - reservedByOthers + reservedByThisPlan).toFixed(4));
+    row.available_quantity = Math.max(availableForPlan, 0);
+    row.shortage_quantity = Math.max(Number((row.required_quantity - row.available_quantity).toFixed(4)), 0);
+    row.source_payload = {
+      ...row.source_payload,
+      availability_breakdown: {
+        physical_balance: physical,
+        reserved_other_plans: reservedByOthers,
+        reserved_this_plan: reservedByThisPlan,
+        available_for_plan: row.available_quantity,
+      },
+    };
   }
 
   const rows = [...consolidated.values()];
@@ -331,4 +389,3 @@ export async function calculateCateringRequirements(tenantId: string, planId: st
   const shortageCount = rows.filter((row) => Number(row.shortage_quantity) > 0).length;
   return { rows, warnings, estimatedTotalCost, shortageCount };
 }
-

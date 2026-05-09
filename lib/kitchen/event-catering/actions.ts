@@ -62,6 +62,15 @@ function resolveEmbeddedEventId(value: unknown): string | undefined {
   return undefined;
 }
 
+function isAllocationsTableMissing(errorMessage: string): boolean {
+  return (
+    errorMessage.includes("event_catering_inventory_allocations") &&
+    (errorMessage.includes("schema cache") ||
+      errorMessage.includes("does not exist") ||
+      errorMessage.includes("Could not find the table"))
+  );
+}
+
 async function recalculateRequisitionTotal(
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
   tenantId: string,
@@ -88,6 +97,220 @@ function revalidateCateringPaths(tenantSlug: string, eventId?: string, planId?: 
   if (eventId) {
     revalidatePath(`/${tenantSlug}/kitchen/events/${eventId}/catering`);
     if (planId) revalidatePath(`/${tenantSlug}/kitchen/events/${eventId}/catering/${planId}`);
+  }
+}
+
+async function upsertReservedAllocationFromReceiptLine(
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
+  input: {
+    tenantId: string;
+    userId: string;
+    eventId: string;
+    planId: string;
+    requisitionId: string;
+    receiptId: string;
+    receiptLineId: string;
+    requisitionLineId: string | null;
+    itemId: string;
+    locationId: string | null;
+    unitId: string;
+    quantity: number;
+  },
+) {
+  const { data: existing, error: existingError } = await supabase
+    .from("event_catering_inventory_allocations")
+    .select("id")
+    .eq("tenant_id", input.tenantId)
+    .eq("receipt_line_id", input.receiptLineId)
+    .limit(1)
+    .maybeSingle();
+  if (existingError) {
+    if (isAllocationsTableMissing(existingError.message)) return;
+    throw new Error(`No se pudo validar reserva previa por recepción: ${existingError.message}`);
+  }
+  if (existing?.id) return;
+
+  const { error: insertError } = await supabase.from("event_catering_inventory_allocations").insert({
+    tenant_id: input.tenantId,
+    event_id: input.eventId,
+    plan_id: input.planId,
+    requirement_id: null,
+    requisition_id: input.requisitionId,
+    receipt_id: input.receiptId,
+    receipt_line_id: input.receiptLineId,
+    consumption_record_id: null,
+    consumption_line_id: null,
+    item_id: input.itemId,
+    location_id: input.locationId,
+    unit_id: input.unitId,
+    allocated_quantity: round4(input.quantity),
+    consumed_quantity: 0,
+    released_quantity: 0,
+    status: "reserved",
+    source_type: "receipt",
+    source_id: input.receiptLineId,
+    notes: input.requisitionLineId ? `source_requisition_line:${input.requisitionLineId}` : "source_reception",
+    created_by: input.userId,
+  });
+  if (insertError) {
+    if (isAllocationsTableMissing(insertError.message)) return;
+    throw new Error(`No se pudo crear reserva de inventario para recepción: ${insertError.message}`);
+  }
+}
+
+async function consumePlanAllocationsForItem(
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
+  input: {
+    tenantId: string;
+    planId: string;
+    itemId: string;
+    quantityToConsume: number;
+    userId: string;
+    consumptionRecordId: string;
+    consumptionLineId: string;
+  },
+) {
+  let pending = round4(Math.max(input.quantityToConsume, 0));
+  if (pending <= 0) return;
+
+  const { data: allocations, error: allocationsError } = await supabase
+    .from("event_catering_inventory_allocations")
+    .select("id,allocated_quantity,consumed_quantity,released_quantity")
+    .eq("tenant_id", input.tenantId)
+    .eq("plan_id", input.planId)
+    .eq("item_id", input.itemId)
+    .eq("status", "reserved")
+    .order("created_at", { ascending: true });
+  if (allocationsError) {
+    if (isAllocationsTableMissing(allocationsError.message)) return;
+    throw new Error(`No se pudieron cargar reservas para consumo: ${allocationsError.message}`);
+  }
+
+  for (const allocation of allocations ?? []) {
+    if (pending <= 0) break;
+    const available = Math.max(
+      Number(allocation.allocated_quantity ?? 0) -
+        Number(allocation.consumed_quantity ?? 0) -
+        Number(allocation.released_quantity ?? 0),
+      0,
+    );
+    if (available <= 0) continue;
+    const consumeNow = Math.min(available, pending);
+    const nextConsumed = round4(Number(allocation.consumed_quantity ?? 0) + consumeNow);
+    const remaining = Math.max(
+      Number(allocation.allocated_quantity ?? 0) - nextConsumed - Number(allocation.released_quantity ?? 0),
+      0,
+    );
+    const nextStatus = remaining <= 0 ? "consumed" : "reserved";
+
+    const { error: updateError } = await supabase
+      .from("event_catering_inventory_allocations")
+      .update({
+        consumed_quantity: nextConsumed,
+        status: nextStatus,
+        consumption_record_id: input.consumptionRecordId,
+        consumption_line_id: input.consumptionLineId,
+      })
+      .eq("tenant_id", input.tenantId)
+      .eq("id", allocation.id);
+    if (updateError) {
+      if (isAllocationsTableMissing(updateError.message)) return;
+      throw new Error(`No se pudo consumir reserva de inventario: ${updateError.message}`);
+    }
+
+    pending = round4(pending - consumeNow);
+  }
+}
+
+async function releasePlanAllocations(
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
+  input: {
+    tenantId: string;
+    planId: string;
+    userId: string;
+    reason: string;
+  },
+) {
+  const { data: allocations, error: allocationsError } = await supabase
+    .from("event_catering_inventory_allocations")
+    .select("id,allocated_quantity,consumed_quantity,released_quantity")
+    .eq("tenant_id", input.tenantId)
+    .eq("plan_id", input.planId)
+    .eq("status", "reserved");
+  if (allocationsError) {
+    if (isAllocationsTableMissing(allocationsError.message)) return;
+    throw new Error(`No se pudieron cargar reservas para liberar: ${allocationsError.message}`);
+  }
+
+  for (const allocation of allocations ?? []) {
+    const remaining = Math.max(
+      Number(allocation.allocated_quantity ?? 0) -
+        Number(allocation.consumed_quantity ?? 0) -
+        Number(allocation.released_quantity ?? 0),
+      0,
+    );
+    if (remaining <= 0) continue;
+    const { error: releaseError } = await supabase
+      .from("event_catering_inventory_allocations")
+      .update({
+        released_quantity: round4(Number(allocation.released_quantity ?? 0) + remaining),
+        status: "released",
+        released_at: new Date().toISOString(),
+        released_by: input.userId,
+        notes: input.reason,
+      })
+      .eq("tenant_id", input.tenantId)
+      .eq("id", allocation.id);
+    if (releaseError) {
+      if (isAllocationsTableMissing(releaseError.message)) return;
+      throw new Error(`No se pudo liberar reserva de inventario: ${releaseError.message}`);
+    }
+  }
+}
+
+async function releaseRequisitionAllocations(
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
+  input: {
+    tenantId: string;
+    requisitionId: string;
+    userId: string;
+    reason: string;
+  },
+) {
+  const { data: allocations, error: allocationsError } = await supabase
+    .from("event_catering_inventory_allocations")
+    .select("id,allocated_quantity,consumed_quantity,released_quantity")
+    .eq("tenant_id", input.tenantId)
+    .eq("requisition_id", input.requisitionId)
+    .eq("status", "reserved");
+  if (allocationsError) {
+    if (isAllocationsTableMissing(allocationsError.message)) return;
+    throw new Error(`No se pudieron cargar reservas de requisición para liberar: ${allocationsError.message}`);
+  }
+
+  for (const allocation of allocations ?? []) {
+    const remaining = Math.max(
+      Number(allocation.allocated_quantity ?? 0) -
+        Number(allocation.consumed_quantity ?? 0) -
+        Number(allocation.released_quantity ?? 0),
+      0,
+    );
+    if (remaining <= 0) continue;
+    const { error: releaseError } = await supabase
+      .from("event_catering_inventory_allocations")
+      .update({
+        released_quantity: round4(Number(allocation.released_quantity ?? 0) + remaining),
+        status: "released",
+        released_at: new Date().toISOString(),
+        released_by: input.userId,
+        notes: input.reason,
+      })
+      .eq("tenant_id", input.tenantId)
+      .eq("id", allocation.id);
+    if (releaseError) {
+      if (isAllocationsTableMissing(releaseError.message)) return;
+      throw new Error(`No se pudo liberar reserva de requisición: ${releaseError.message}`);
+    }
   }
 }
 
@@ -145,7 +368,7 @@ export async function updateCateringPlanAction(formData: FormData): Promise<void
   const notes = toText(formData.get("notes"));
   if (!tenantSlug || !planId) throw new Error("Tenant y plan son obligatorios.");
 
-  const { tenant } = await resolveTenantModulePageActor(tenantSlug, "event_catering", "plans", "manage");
+  const { tenant, user } = await resolveTenantModulePageActor(tenantSlug, "event_catering", "plans", "manage");
   const supabase = await getSupabaseServerClient();
 
   const patch: Record<string, unknown> = {};
@@ -162,6 +385,15 @@ export async function updateCateringPlanAction(formData: FormData): Promise<void
     .select("id,event_id")
     .single();
   if (updateError || !updated) throw new Error(`No se pudo actualizar plan: ${updateError?.message ?? "error"}`);
+
+  if (status === "canceled") {
+    await releasePlanAllocations(supabase, {
+      tenantId: tenant.tenantId,
+      planId: updated.id,
+      userId: user.id,
+      reason: `Plan cancelado ${new Date().toISOString()}`,
+    });
+  }
 
   revalidateCateringPaths(tenant.tenantSlug, updated.event_id, updated.id);
 }
@@ -1319,7 +1551,7 @@ export async function markPurchaseReceiptReceivedAction(formData: FormData): Pro
 
   const { data: lines, error: linesError } = await supabase
     .from("event_catering_purchase_receipt_lines")
-    .select("id,item_id,location_id,unit_id,received_quantity,received_unit_cost,inventory_movement_id,received_total_cost")
+    .select("id,requisition_line_id,item_id,location_id,unit_id,received_quantity,received_unit_cost,inventory_movement_id,received_total_cost")
     .eq("tenant_id", tenant.tenantId)
     .eq("receipt_id", receipt.id)
     .order("created_at", { ascending: true });
@@ -1386,8 +1618,28 @@ export async function markPurchaseReceiptReceivedAction(formData: FormData): Pro
     .eq("status", "draft");
   if (updateReceiptError) throw new Error(`No se pudo confirmar recepción: ${updateReceiptError.message}`);
 
-  const eventId = resolveEmbeddedEventId(requisition.event_catering_plans);
-  revalidateCateringPaths(tenant.tenantSlug, eventId, requisition.plan_id);
+  const eventId = resolveEmbeddedEventId(requisition.event_catering_plans) ?? null;
+  if (eventId) {
+    for (const line of lines) {
+      await upsertReservedAllocationFromReceiptLine(supabase, {
+        tenantId: tenant.tenantId,
+        userId: user.id,
+        eventId,
+        planId: requisition.plan_id,
+        requisitionId: requisition.id,
+        receiptId: receipt.id,
+        receiptLineId: line.id,
+        requisitionLineId: line.requisition_line_id ?? null,
+        itemId: line.item_id,
+        locationId: line.location_id,
+        unitId: line.unit_id,
+        quantity: Number(line.received_quantity ?? 0),
+      });
+    }
+  }
+
+  const eventIdForRevalidate = resolveEmbeddedEventId(requisition.event_catering_plans);
+  revalidateCateringPaths(tenant.tenantSlug, eventIdForRevalidate, requisition.plan_id);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/requisitions`);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/requisitions/${requisition.id}`);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/requisitions/${requisition.id}/receipts/${receipt.id}`);
@@ -1634,7 +1886,7 @@ export async function confirmConsumptionRecordAction(formData: FormData): Promis
   const consumptionId = toText(formData.get("consumptionId"));
   if (!tenantSlug || !consumptionId) throw new Error("Tenant y consumo son obligatorios.");
 
-  const { tenant } = await resolveTenantModulePageActor(tenantSlug, "event_catering", "consumption", "manage");
+  const { tenant, user } = await resolveTenantModulePageActor(tenantSlug, "event_catering", "consumption", "manage");
   const supabase = await getSupabaseServerClient();
   const { data: record, error: recordError } = await supabase
     .from("event_catering_consumption_records")
@@ -1648,6 +1900,26 @@ export async function confirmConsumptionRecordAction(formData: FormData): Promis
     p_consumption_record_id: record.id,
   });
   if (rpcError) throw new Error(`No se pudo confirmar consumo: ${rpcError.message}`);
+
+  const { data: consumedLines, error: consumedLinesError } = await supabase
+    .from("event_catering_consumption_lines")
+    .select("id,item_id,consumed_quantity,waste_quantity")
+    .eq("tenant_id", tenant.tenantId)
+    .eq("consumption_record_id", record.id);
+  if (consumedLinesError) throw new Error(`No se pudo cargar líneas consumidas para reservas: ${consumedLinesError.message}`);
+  for (const line of consumedLines ?? []) {
+    const outQty = Number(line.consumed_quantity ?? 0) + Number(line.waste_quantity ?? 0);
+    if (outQty <= 0) continue;
+    await consumePlanAllocationsForItem(supabase, {
+      tenantId: tenant.tenantId,
+      planId: record.plan_id,
+      itemId: line.item_id,
+      quantityToConsume: outQty,
+      userId: user.id,
+      consumptionRecordId: record.id,
+      consumptionLineId: line.id,
+    });
+  }
 
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/consumption`);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${record.event_id}/catering/${record.plan_id}/consumption`);
@@ -1936,7 +2208,7 @@ export async function cancelCateringRequisitionAction(formData: FormData): Promi
   const requisitionId = toText(formData.get("requisitionId"));
   if (!tenantSlug || !requisitionId) throw new Error("Tenant y requisición son obligatorios.");
 
-  const { tenant } = await resolveTenantModulePageActor(tenantSlug, "event_catering", "requisitions", "manage");
+  const { tenant, user } = await resolveTenantModulePageActor(tenantSlug, "event_catering", "requisitions", "manage");
   const supabase = await getSupabaseServerClient();
 
   const { data: requisition, error: reqError } = await supabase
@@ -1959,6 +2231,13 @@ export async function cancelCateringRequisitionAction(formData: FormData): Promi
     .eq("tenant_id", tenant.tenantId)
     .eq("id", requisition.id);
   if (updateError) throw new Error(`No se pudo cancelar requisición: ${updateError.message}`);
+
+  await releaseRequisitionAllocations(supabase, {
+    tenantId: tenant.tenantId,
+    requisitionId: requisition.id,
+    userId: user.id,
+    reason: `Requisición cancelada ${new Date().toISOString()}`,
+  });
 
   revalidateCateringPaths(tenant.tenantSlug);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/requisitions`);
