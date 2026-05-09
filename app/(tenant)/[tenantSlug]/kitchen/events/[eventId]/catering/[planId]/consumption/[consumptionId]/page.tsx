@@ -1,7 +1,14 @@
 import { StatePanel } from "@/components/ui/state-panel";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
-import { cancelConsumptionDraftAction, confirmConsumptionRecordAction } from "@/lib/kitchen/event-catering/actions";
+import {
+  applyPlannedQuantitiesToConsumptionAction,
+  autoAssignConsumptionLocationsAction,
+  bulkAssignConsumptionLocationAction,
+  cancelConsumptionDraftAction,
+  confirmConsumptionRecordAction,
+} from "@/lib/kitchen/event-catering/actions";
 import { getConsumptionDraftReadiness, getConsumptionLineAvailability, getConsumptionRecord, listConsumptionLines } from "@/lib/kitchen/event-catering/queries";
+import { listKitchenInventoryLocations } from "@/lib/kitchen/inventory/queries";
 import { ConsumptionLineEditor } from "../_components/consumption-line-editor";
 import { resolveKitchenPage } from "../../../../../../_lib/page-access";
 import { KitchenSubmitButton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-submit-button";
@@ -17,11 +24,12 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
     return <StatePanel kind="permission" title="Sin permisos" message="No tienes acceso al detalle de consumo." />;
   }
 
-  const [record, lines, availabilityRows, accessMap] = await Promise.all([
+  const [record, lines, availabilityRows, accessMap, locations] = await Promise.all([
     getConsumptionRecord(result.tenant.tenantSlug, consumptionId),
     listConsumptionLines(result.tenant.tenantSlug, consumptionId),
     getConsumptionLineAvailability(result.tenant.tenantSlug, consumptionId),
     getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "event_catering"),
+    listKitchenInventoryLocations(result.tenant.tenantId),
   ]);
   const canManage = hasModulePageAccess(accessMap.consumption ?? "none", "manage");
 
@@ -30,6 +38,7 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
   }
 
   const isDraft = record.status === "draft";
+  const statusLabel = record.status === "draft" ? "Borrador" : record.status === "confirmed" ? "Confirmado" : "Cancelado";
   const availabilityByLine = new Map(availabilityRows.map((row) => [row.line_id, row]));
   const readiness = getConsumptionDraftReadiness(record.status, availabilityRows);
   const readinessText =
@@ -44,15 +53,35 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
             : "Sin consumo capturado";
   const consumedTotal = lines.reduce((acc, line) => acc + Number(line.consumed_quantity ?? 0), 0);
   const wasteTotal = lines.reduce((acc, line) => acc + Number(line.waste_quantity ?? 0), 0);
+  const plannedTotal = lines.reduce((acc, line) => acc + Number(line.planned_quantity ?? 0), 0);
+  const leftoverTotal = lines.reduce((acc, line) => acc + Number(line.leftover_quantity ?? 0), 0);
 
   return (
     <div className="space-y-4">
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
         <h1 className="text-lg font-semibold text-foreground">Consumo {record.id.slice(0, 8)}</h1>
-        <p className="mt-1 text-xs text-muted">status={record.status}</p>
+        <p className="mt-1 text-xs text-muted">Estado: {statusLabel}</p>
         <p className="mt-1 text-xs text-warning">
-          Al confirmar consumo se descontará inventario y se crearán movimientos de salida.
+          El consumo en borrador no descuenta inventario. Al confirmar salida de inventario se crearán movimientos manual_out y waste.
         </p>
+        <div className="mt-3 grid gap-2 text-xs md:grid-cols-4">
+          <div className="rounded border border-border bg-muted/20 p-2">
+            <p className="text-muted">Total planificado</p>
+            <p className="mt-1 font-semibold text-foreground">{plannedTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</p>
+          </div>
+          <div className="rounded border border-border bg-muted/20 p-2">
+            <p className="text-muted">Total consumido</p>
+            <p className="mt-1 font-semibold text-foreground">{consumedTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</p>
+          </div>
+          <div className="rounded border border-border bg-muted/20 p-2">
+            <p className="text-muted">Total merma</p>
+            <p className="mt-1 font-semibold text-foreground">{wasteTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</p>
+          </div>
+          <div className="rounded border border-border bg-muted/20 p-2">
+            <p className="text-muted">Total sobrante</p>
+            <p className="mt-1 font-semibold text-foreground">{leftoverTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</p>
+          </div>
+        </div>
         {record.status === "confirmed" ? (
           <p className="mt-1 text-xs text-emerald-600">
             Consumo confirmado: inventario impactado. consumido={consumedTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ·
@@ -66,32 +95,60 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
             {readiness.insufficient_stock_count}
           </p>
           {canManage && isDraft ? (
-            <form action={confirmConsumptionRecordAction} className="mt-2">
-              <input type="hidden" name="tenantSlug" value={tenantSlug} />
-              <input type="hidden" name="consumptionId" value={record.id} />
-              <KitchenSubmitButton
-                pendingLabel="Confirmando..."
-                disabled={!readiness.ready_to_confirm}
-                variant="secondary"
-                className="px-2 py-1 text-xs"
-              >
-                {readiness.ready_to_confirm ? "Confirmar consumo" : "Confirmar consumo (bloqueado)"}
-              </KitchenSubmitButton>
-            </form>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <form action={applyPlannedQuantitiesToConsumptionAction}>
+                <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                <input type="hidden" name="consumptionId" value={record.id} />
+                <KitchenSubmitButton pendingLabel="Aplicando..." variant="secondary" className="px-2 py-1 text-xs">
+                  Usar cantidades planeadas
+                </KitchenSubmitButton>
+              </form>
+              <form action={autoAssignConsumptionLocationsAction}>
+                <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                <input type="hidden" name="consumptionId" value={record.id} />
+                <KitchenSubmitButton pendingLabel="Auto-asignando..." variant="secondary" className="px-2 py-1 text-xs">
+                  Auto-asignar ubicaciones
+                </KitchenSubmitButton>
+              </form>
+              <form action={confirmConsumptionRecordAction}>
+                <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                <input type="hidden" name="consumptionId" value={record.id} />
+                <KitchenSubmitButton
+                  pendingLabel="Confirmando..."
+                  disabled={!readiness.ready_to_confirm}
+                  variant="secondary"
+                  className="px-2 py-1 text-xs"
+                >
+                  {readiness.ready_to_confirm ? "Confirmar salida de inventario" : "Confirmar salida (bloqueado)"}
+                </KitchenSubmitButton>
+              </form>
+            </div>
           ) : null}
         </div>
         {canManage && isDraft ? (
-          <form action={cancelConsumptionDraftAction} className="mt-3">
-            <input type="hidden" name="tenantSlug" value={tenantSlug} />
-            <input type="hidden" name="consumptionId" value={record.id} />
-            <KitchenSubmitButton
-              pendingLabel="Cancelando..."
-              variant="secondary"
-              className="px-3 py-1 text-xs"
-            >
-              Cancelar consumo
-            </KitchenSubmitButton>
-          </form>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <form action={bulkAssignConsumptionLocationAction} className="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="tenantSlug" value={tenantSlug} />
+              <input type="hidden" name="consumptionId" value={record.id} />
+              <input type="hidden" name="applyTo" value="missing_location" />
+              <select name="locationId" defaultValue="" className="h-8 rounded border border-border bg-surface px-2 text-xs">
+                <option value="" disabled>Ubicación para pendientes</option>
+                {locations.map((location) => (
+                  <option key={location.id} value={location.id}>{location.name}</option>
+                ))}
+              </select>
+              <KitchenSubmitButton pendingLabel="Asignando..." variant="secondary" className="px-3 py-1 text-xs">
+                Asignar a líneas pendientes
+              </KitchenSubmitButton>
+            </form>
+            <form action={cancelConsumptionDraftAction}>
+              <input type="hidden" name="tenantSlug" value={tenantSlug} />
+              <input type="hidden" name="consumptionId" value={record.id} />
+              <KitchenSubmitButton pendingLabel="Cancelando..." variant="secondary" className="px-3 py-1 text-xs">
+                Cancelar borrador
+              </KitchenSubmitButton>
+            </form>
+          </div>
         ) : null}
       </section>
 
@@ -105,14 +162,13 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
                 <tr className="text-left text-muted">
                   <th className="px-2 py-1">Insumo</th>
                   <th className="px-2 py-1">Planificado</th>
-                  <th className="px-2 py-1">Disponible</th>
+                  <th className="px-2 py-1">Disponible real</th>
+                  <th className="px-2 py-1">Ubicación</th>
                   <th className="px-2 py-1">Consumido</th>
                   <th className="px-2 py-1">Merma</th>
                   <th className="px-2 py-1">Sobrante</th>
                   <th className="px-2 py-1">Salida total</th>
                   <th className="px-2 py-1">Costo unit.</th>
-                  <th className="px-2 py-1">Ubicación</th>
-                  <th className="px-2 py-1">Disp. ubicación</th>
                   <th className="px-2 py-1">Estado</th>
                   <th className="px-2 py-1">Mov. consumo</th>
                   <th className="px-2 py-1">Mov. merma</th>
@@ -141,18 +197,22 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
                   <tr key={line.id} className="border-t border-border">
                     <td className="px-2 py-1 text-foreground">{line.kitchen_inventory_items?.name ?? line.item_id.slice(0, 8)}</td>
                     <td className="px-2 py-1 text-muted">{Number(line.planned_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {line.kitchen_inventory_units?.code ?? "ud"}</td>
-                    <td className="px-2 py-1 text-muted">{Number(line.available_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                    <td className="px-2 py-1 text-muted">
+                      {availability
+                        ? Number(availability.available_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+                        : "0.00"}
+                      {availability ? (
+                        <p className="text-[11px] text-muted">
+                          físico {availability.physical_balance.toLocaleString("es-MX", { maximumFractionDigits: 4 })} · otros {availability.reserved_other_plans.toLocaleString("es-MX", { maximumFractionDigits: 4 })} · este {availability.reserved_this_plan.toLocaleString("es-MX", { maximumFractionDigits: 4 })}
+                        </p>
+                      ) : null}
+                    </td>
+                    <td className="px-2 py-1 text-muted">{line.kitchen_inventory_locations?.name ?? "Sin ubicación"}</td>
                     <td className="px-2 py-1 text-foreground">{Number(line.consumed_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
                     <td className="px-2 py-1 text-foreground">{Number(line.waste_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
                     <td className="px-2 py-1 text-foreground">{Number(line.leftover_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
                     <td className="px-2 py-1 text-foreground">{Number(totalOut).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
                     <td className="px-2 py-1 text-foreground">{Number(line.unit_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
-                    <td className="px-2 py-1 text-muted">{line.kitchen_inventory_locations?.name ?? "Sin ubicación"}</td>
-                    <td className="px-2 py-1 text-muted">
-                      {availability
-                        ? Number(availability.available_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })
-                        : "0.00"}
-                    </td>
                     <td className={`px-2 py-1 ${stateClass}`}>{stateLabel}</td>
                     <td className="px-2 py-1 text-muted">{line.consumption_movement_id ? line.consumption_movement_id.slice(0, 8) : "—"}</td>
                     <td className="px-2 py-1 text-muted">{line.waste_movement_id ? line.waste_movement_id.slice(0, 8) : "—"}</td>

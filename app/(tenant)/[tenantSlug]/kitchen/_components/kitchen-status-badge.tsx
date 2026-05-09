@@ -18,12 +18,12 @@ const STATUS_TONE: Record<string, string> = {
   draft: "text-muted",
   reviewed: "text-amber-700",
   approved: "text-emerald-700",
-  canceled: "text-zinc-700",
+  canceled: "text-foreground",
   planned: "text-sky-700",
   confirmed: "text-emerald-700",
   received: "text-emerald-700",
   active: "text-emerald-700",
-  archived: "text-zinc-700",
+  archived: "text-foreground",
 };
 
 export function KitchenStatusBadge({ status }: KitchenStatusBadgeProps) {

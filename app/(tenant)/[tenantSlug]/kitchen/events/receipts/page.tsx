@@ -106,13 +106,19 @@ async function ApprovedPendingSection({
                         Ver requisición
                       </Link>
                       {canManage ? (
-                        <form action={createPurchaseReceiptFromRequisitionAction}>
-                          <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                          <input type="hidden" name="requisitionId" value={row.requisition_id} />
-                          <KitchenSubmitButton pendingLabel="Creando recepción..." className="px-2 py-1 text-xs">
-                            Crear recepción
-                          </KitchenSubmitButton>
-                        </form>
+                        row.can_create_receipt ? (
+                          <form action={createPurchaseReceiptFromRequisitionAction}>
+                            <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                            <input type="hidden" name="requisitionId" value={row.requisition_id} />
+                            <KitchenSubmitButton pendingLabel="Creando recepción..." className="px-2 py-1 text-xs">
+                              Crear recepción
+                            </KitchenSubmitButton>
+                          </form>
+                        ) : (
+                          <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+                            {row.receipt_block_reason ?? "No recibible"}
+                          </span>
+                        )
                       ) : null}
                     </div>
                   </td>
@@ -136,6 +142,7 @@ async function ReceiptsOverviewSection({
   const receipts = await receiptsPromise;
   const draftReceipts = receipts.filter((row) => row.status === "draft");
   const receivedReceipts = receipts.filter((row) => row.status === "received");
+  const canceledReceipts = receipts.filter((row) => row.status === "canceled");
 
   return (
     <>
@@ -163,7 +170,14 @@ async function ReceiptsOverviewSection({
                     <td className="px-2 py-1 text-foreground">
                       ${row.total_received_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
-                    <td className="px-2 py-1 text-muted">{row.line_count}</td>
+                    <td className="px-2 py-1 text-muted">
+                      <div className="space-y-1">
+                        <p>{row.line_count}</p>
+                        {row.line_count === 0 ? (
+                          <p className="text-[11px] text-warning">Inválida sin líneas</p>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="px-2 py-1">
                       <Link
                         href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}/receipts/${row.receipt_id}`}
@@ -211,6 +225,61 @@ async function ReceiptsOverviewSection({
                         className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
                       >
                         Ver detalle
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-[var(--radius-base)] border border-primary/20 bg-primary/10 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Recepciones canceladas / historial</h2>
+            <p className="mt-1 text-xs text-muted">Las recepciones canceladas no afectan inventario ni suman como recibido.</p>
+          </div>
+          <span className="rounded-full border border-border bg-surface px-2 py-1 text-[11px] text-muted">
+            {canceledReceipts.length} canceladas
+          </span>
+        </div>
+        {canceledReceipts.length === 0 ? (
+          <p className="mt-2 text-xs text-muted">No hay recepciones canceladas.</p>
+        ) : (
+          <div className="mt-2 overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="px-2 py-1">Recepción</th>
+                  <th className="px-2 py-1">Requisición</th>
+                  <th className="px-2 py-1">Total histórico</th>
+                  <th className="px-2 py-1">Líneas</th>
+                  <th className="px-2 py-1">Estado</th>
+                  <th className="px-2 py-1">Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {canceledReceipts.map((row) => (
+                  <tr key={row.receipt_id} className="border-t border-border">
+                    <td className="px-2 py-1 text-foreground">{row.receipt_id.slice(0, 8)}</td>
+                    <td className="px-2 py-1 text-muted">{row.requisition_id.slice(0, 8)}</td>
+                    <td className="px-2 py-1 text-muted">
+                      ${row.total_received_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-2 py-1 text-muted">{row.line_count}</td>
+                    <td className="px-2 py-1">
+                      <span className="rounded-full border border-border bg-surface px-2 py-1 text-[11px] text-muted">
+                        Cancelada · no afecta inventario
+                      </span>
+                    </td>
+                    <td className="px-2 py-1">
+                      <Link
+                        href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}/receipts/${row.receipt_id}`}
+                        className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
+                      >
+                        Ver historial
                       </Link>
                     </td>
                   </tr>

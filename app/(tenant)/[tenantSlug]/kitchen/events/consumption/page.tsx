@@ -28,8 +28,8 @@ export default async function KitchenConsumptionOverviewPage({ params }: Kitchen
     <div className="space-y-4">
       <KitchenPageHeader
         eyebrow="Consumo"
-        title="Consumos de Catering"
-        description="En esta fase solo se gestiona consumo draft. La confirmación con salida de inventario queda para 7G-D."
+        title="Consumo real de eventos"
+        description="El consumo en borrador no descuenta inventario. Al confirmar salida de inventario se crean movimientos reales manual_out y waste."
       />
       <Suspense fallback={<KitchenTableSkeleton rows={8} columns={6} />}>
         <ConsumptionOverviewTableSection tenantSlug={result.tenant.tenantSlug} uiTenantSlug={tenantSlug} />

@@ -67,7 +67,12 @@ export type EventCateringRequisition = {
   created_at: string;
   updated_at: string;
   created_by: string | null;
-  event_catering_plans?: { id: string; event_id: string; name: string | null } | null;
+  event_catering_plans?: {
+    id: string;
+    event_id: string;
+    name: string | null;
+    events?: { id: string; name: string | null } | null;
+  } | null;
 };
 
 export type EventCateringRequisitionLine = {
@@ -195,6 +200,16 @@ export type EventCateringPurchaseReceipt = {
   created_by: string | null;
   received_by: string | null;
   kitchen_inventory_suppliers?: { id: string; name: string } | null;
+  event_catering_requisitions?: {
+    id: string;
+    plan_id: string;
+    event_catering_plans?: {
+      id: string;
+      name: string | null;
+      event_id: string;
+      events?: { id: string; name: string | null } | null;
+    } | null;
+  } | null;
 };
 
 export type EventCateringPurchaseReceiptLine = {
@@ -219,6 +234,22 @@ export type EventCateringPurchaseReceiptLine = {
   kitchen_inventory_items?: { id: string; name: string } | null;
   kitchen_inventory_locations?: { id: string; name: string } | null;
   kitchen_inventory_units?: { id: string; code: string; name: string } | null;
+  event_catering_requisition_lines?: {
+    id: string;
+    requested_quantity: number;
+    requested_purchase_quantity: number | null;
+    expected_inventory_quantity: number | null;
+    approved_unit_price: number | null;
+    approved_total_cost: number | null;
+    quoted_unit_price: number | null;
+    quoted_total_cost: number | null;
+    preliminary_unit_price: number | null;
+    preliminary_total_cost: number | null;
+    estimated_unit_cost: number | null;
+    estimated_total_cost: number | null;
+    purchase_unit_id: string | null;
+    purchase_units?: { id: string; code: string; name: string } | null;
+  } | null;
 };
 
 export type ConsumptionStatus = "draft" | "confirmed" | "canceled";
@@ -272,6 +303,9 @@ export type ConsumptionLineLocationAvailability = {
   location_id: string;
   location_name: string;
   available_quantity: number;
+  physical_balance: number;
+  reserved_other_plans: number;
+  reserved_this_plan: number;
 };
 
 export type EventCateringConsumptionLineAvailability = {
@@ -282,6 +316,9 @@ export type EventCateringConsumptionLineAvailability = {
   unit_code: string;
   location_id: string | null;
   available_quantity: number;
+  physical_balance: number;
+  reserved_other_plans: number;
+  reserved_this_plan: number;
   total_out_quantity: number;
   has_sufficient_balance: boolean;
   missing_location: boolean;
@@ -368,7 +405,9 @@ export type CateringPlanOperationalSummary = {
   requisition_count: number;
   approved_requisition_count: number;
   receipt_count: number;
+  draft_receipt_count: number;
   received_receipt_count: number;
+  canceled_receipt_count: number;
   consumption_count: number;
   confirmed_consumption_count: number;
   estimated_plan_cost: number;

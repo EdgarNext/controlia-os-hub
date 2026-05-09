@@ -43,14 +43,6 @@ export function ConsumptionLineEditor({ tenantSlug, consumptionId, line, availab
         defaultValue={String(line.leftover_quantity)}
         className="h-8 w-20 rounded border border-border bg-surface px-2 text-xs"
       />
-      <input
-        name="unitCost"
-        type="number"
-        min="0"
-        step="0.0001"
-        defaultValue={String(line.unit_cost)}
-        className="h-8 w-20 rounded border border-border bg-surface px-2 text-xs"
-      />
       {useSearchable ? (
         <SearchableSelect
           name="locationId"
@@ -63,7 +55,7 @@ export function ConsumptionLineEditor({ tenantSlug, consumptionId, line, availab
             label: `${location.location_name} · disp ${Number(location.available_quantity).toLocaleString("es-MX", {
               minimumFractionDigits: 2,
               maximumFractionDigits: 4,
-            })}`,
+            })} · físico ${Number(location.physical_balance).toLocaleString("es-MX", { maximumFractionDigits: 4 })} · reservado otros ${Number(location.reserved_other_plans).toLocaleString("es-MX", { maximumFractionDigits: 4 })}`,
           }))}
         />
       ) : (
@@ -73,6 +65,10 @@ export function ConsumptionLineEditor({ tenantSlug, consumptionId, line, availab
             <option key={location.location_id} value={location.location_id}>
               {location.location_name} · disp{" "}
               {Number(location.available_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+              {" · físico "}
+              {Number(location.physical_balance).toLocaleString("es-MX", { maximumFractionDigits: 4 })}
+              {" · otros "}
+              {Number(location.reserved_other_plans).toLocaleString("es-MX", { maximumFractionDigits: 4 })}
             </option>
           ))}
         </select>

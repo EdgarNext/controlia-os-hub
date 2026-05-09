@@ -99,7 +99,7 @@ async function ReversalsListSection({
   const reversals = await reversalsPromise;
   const statusTone = (status: string) => {
     if (status === "applied") return "bg-emerald-500/10 text-emerald-700";
-    if (status === "canceled") return "bg-zinc-500/10 text-zinc-700";
+    if (status === "canceled") return "bg-primary/10 text-foreground";
     return "bg-amber-500/10 text-amber-700";
   };
 

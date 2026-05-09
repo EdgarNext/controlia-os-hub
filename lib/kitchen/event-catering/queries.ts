@@ -245,7 +245,7 @@ export async function listCateringRequisitions(tenantSlug: string): Promise<Even
   const { data, error } = await supabase
     .from("event_catering_requisitions")
     .select(
-      "id, tenant_id, plan_id, status, estimated_total_cost, notes, created_at, updated_at, created_by, event_catering_plans:event_catering_plans!event_catering_requisitions_tenant_plan_fkey(id,event_id,name)",
+      "id, tenant_id, plan_id, status, estimated_total_cost, notes, created_at, updated_at, created_by, event_catering_plans:event_catering_plans!event_catering_requisitions_tenant_plan_fkey(id,event_id,name,events:events!event_catering_plans_tenant_event_fkey(id,name))",
     )
     .eq("tenant_id", tenant.tenantId)
     .order("updated_at", { ascending: false });
@@ -264,7 +264,7 @@ export async function getCateringRequisition(tenantSlug: string, requisitionId: 
   const { data, error } = await supabase
     .from("event_catering_requisitions")
     .select(
-      "id, tenant_id, plan_id, status, estimated_total_cost, notes, created_at, updated_at, created_by, event_catering_plans:event_catering_plans!event_catering_requisitions_tenant_plan_fkey(id,event_id,name)",
+      "id, tenant_id, plan_id, status, estimated_total_cost, notes, created_at, updated_at, created_by, event_catering_plans:event_catering_plans!event_catering_requisitions_tenant_plan_fkey(id,event_id,name,events:events!event_catering_plans_tenant_event_fkey(id,name))",
     )
     .eq("tenant_id", tenant.tenantId)
     .eq("id", requisitionId)
@@ -290,7 +290,9 @@ export async function listCateringRequisitionLines(tenantSlug: string, requisiti
     )
     .eq("tenant_id", tenant.tenantId)
     .eq("requisition_id", requisitionId)
-    .order("estimated_total_cost", { ascending: false });
+    .order("supplier_id", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
   if (error) throw new Error(`No fue posible listar líneas de requisición: ${error.message}`);
   return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
     ...(row as unknown as EventCateringRequisitionLine),
@@ -478,7 +480,7 @@ export async function listPurchaseReceiptsForRequisition(
   const { data, error } = await supabase
     .from("event_catering_purchase_receipts")
     .select(
-      "id,tenant_id,requisition_id,supplier_id,status,received_at,invoice_ref,supplier_document_ref,total_received_cost,notes,created_at,updated_at,created_by,received_by,kitchen_inventory_suppliers:kitchen_inventory_suppliers!event_catering_purchase_receipts_tenant_supplier_fkey(id,name)",
+      "id,tenant_id,requisition_id,supplier_id,status,received_at,invoice_ref,supplier_document_ref,total_received_cost,notes,created_at,updated_at,created_by,received_by,kitchen_inventory_suppliers:kitchen_inventory_suppliers!event_catering_purchase_receipts_tenant_supplier_fkey(id,name),event_catering_requisitions:event_catering_requisitions!event_catering_purchase_receipts_tenant_requisition_fkey(id,plan_id,event_catering_plans:event_catering_plans!event_catering_requisitions_tenant_plan_fkey(id,name,event_id,events:events!event_catering_plans_tenant_event_fkey(id,name)))",
     )
     .eq("tenant_id", tenant.tenantId)
     .eq("requisition_id", requisitionId)
@@ -514,6 +516,9 @@ export async function getPurchaseReceipt(
     kitchen_inventory_suppliers: Array.isArray(row.kitchen_inventory_suppliers)
       ? ((row.kitchen_inventory_suppliers[0] ?? null) as EventCateringPurchaseReceipt["kitchen_inventory_suppliers"])
       : ((row.kitchen_inventory_suppliers ?? null) as EventCateringPurchaseReceipt["kitchen_inventory_suppliers"]),
+    event_catering_requisitions: Array.isArray(row.event_catering_requisitions)
+      ? ((row.event_catering_requisitions[0] ?? null) as EventCateringPurchaseReceipt["event_catering_requisitions"])
+      : ((row.event_catering_requisitions ?? null) as EventCateringPurchaseReceipt["event_catering_requisitions"]),
   };
 }
 
@@ -532,7 +537,33 @@ export async function listPurchaseReceiptLines(
     .eq("receipt_id", receiptId)
     .order("created_at", { ascending: true });
   if (error) throw new Error(`No fue posible listar líneas de recepción: ${error.message}`);
-  return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const requisitionLineIds = [
+    ...new Set(rows.map((row) => String(row.requisition_line_id ?? "")).filter(Boolean)),
+  ];
+  const requisitionLineById = new Map<string, EventCateringPurchaseReceiptLine["event_catering_requisition_lines"]>();
+  if (requisitionLineIds.length > 0) {
+    const { data: requisitionLines, error: requisitionLinesError } = await supabase
+      .from("event_catering_requisition_lines")
+      .select(
+        "id,requested_quantity,requested_purchase_quantity,expected_inventory_quantity,approved_unit_price,approved_total_cost,quoted_unit_price,quoted_total_cost,preliminary_unit_price,preliminary_total_cost,estimated_unit_cost,estimated_total_cost,purchase_unit_id,purchase_units:kitchen_inventory_units!event_catering_requisition_lines_tenant_purchase_unit_fkey(id,code,name)",
+      )
+      .eq("tenant_id", tenant.tenantId)
+      .in("id", requisitionLineIds);
+    if (requisitionLinesError) {
+      throw new Error(`No fue posible cargar líneas de requisición para recepción: ${requisitionLinesError.message}`);
+    }
+    for (const line of (requisitionLines ?? []) as Array<Record<string, unknown>>) {
+      requisitionLineById.set(String(line.id), {
+        ...(line as unknown as NonNullable<EventCateringPurchaseReceiptLine["event_catering_requisition_lines"]>),
+        purchase_units: Array.isArray(line.purchase_units)
+          ? ((line.purchase_units[0] ?? null) as NonNullable<EventCateringPurchaseReceiptLine["event_catering_requisition_lines"]>["purchase_units"])
+          : ((line.purchase_units ?? null) as NonNullable<EventCateringPurchaseReceiptLine["event_catering_requisition_lines"]>["purchase_units"]),
+      });
+    }
+  }
+
+  return rows.map((row) => ({
     ...(row as unknown as EventCateringPurchaseReceiptLine),
     kitchen_inventory_items: Array.isArray(row.kitchen_inventory_items)
       ? ((row.kitchen_inventory_items[0] ?? null) as EventCateringPurchaseReceiptLine["kitchen_inventory_items"])
@@ -543,6 +574,7 @@ export async function listPurchaseReceiptLines(
     kitchen_inventory_units: Array.isArray(row.kitchen_inventory_units)
       ? ((row.kitchen_inventory_units[0] ?? null) as EventCateringPurchaseReceiptLine["kitchen_inventory_units"])
       : ((row.kitchen_inventory_units ?? null) as EventCateringPurchaseReceiptLine["kitchen_inventory_units"]),
+    event_catering_requisition_lines: requisitionLineById.get(String(row.requisition_line_id)) ?? null,
   }));
 }
 
@@ -787,24 +819,66 @@ export async function listApprovedRequisitionsPendingReceipt(tenantSlug: string)
 
   const { data: lineRows, error: lineRowsError } = await supabase
     .from("event_catering_requisition_lines")
-    .select("requisition_id")
+    .select("requisition_id,item_id,unit_id,requested_quantity,requested_purchase_quantity,expected_inventory_quantity,approved_unit_price,approved_total_cost,quoted_unit_price,quoted_total_cost,preliminary_unit_price,preliminary_total_cost,estimated_unit_cost,estimated_total_cost")
     .eq("tenant_id", tenant.tenantId)
     .in("requisition_id", requisitionIds);
   if (lineRowsError) throw new Error(`No fue posible contar líneas de requisiciones: ${lineRowsError.message}`);
   const lineCountByReq = new Map<string, number>();
+  const receivableLineCountByReq = new Map<string, number>();
+  const expectedTotalByReq = new Map<string, number>();
   for (const row of lineRows ?? []) {
     lineCountByReq.set(row.requisition_id, (lineCountByReq.get(row.requisition_id) ?? 0) + 1);
+    const requestedQuantity = Number(row.requested_quantity ?? 0);
+    const expectedInventoryQuantity = Number(row.expected_inventory_quantity ?? requestedQuantity);
+    const explicitTotal = Number(row.approved_total_cost ?? 0) > 0
+      ? Number(row.approved_total_cost)
+      : Number(row.quoted_total_cost ?? 0) > 0
+        ? Number(row.quoted_total_cost)
+        : Number(row.preliminary_total_cost ?? 0) > 0
+          ? Number(row.preliminary_total_cost)
+          : Number(row.estimated_total_cost ?? 0);
+    const effectivePrice = Number(row.approved_unit_price ?? row.quoted_unit_price ?? row.preliminary_unit_price ?? row.estimated_unit_cost ?? 0);
+    const fallbackPurchaseQuantity = Number(row.requested_purchase_quantity ?? 0);
+    const fallbackTotal = fallbackPurchaseQuantity > 0 ? fallbackPurchaseQuantity * effectivePrice : 0;
+    const lineExpectedTotal = explicitTotal > 0 ? explicitTotal : fallbackTotal;
+    const isReceivable =
+      row.item_id != null &&
+      row.unit_id != null &&
+      requestedQuantity > 0 &&
+      expectedInventoryQuantity > 0 &&
+      lineExpectedTotal > 0;
+    if (isReceivable) {
+      receivableLineCountByReq.set(row.requisition_id, (receivableLineCountByReq.get(row.requisition_id) ?? 0) + 1);
+      expectedTotalByReq.set(
+        row.requisition_id,
+        (expectedTotalByReq.get(row.requisition_id) ?? 0) + lineExpectedTotal,
+      );
+    }
   }
 
   return approvedWithoutReceipt.map((row) => {
     const plan = Array.isArray(row.event_catering_plans) ? row.event_catering_plans[0] : row.event_catering_plans;
+    const lineCount = lineCountByReq.get(row.id) ?? 0;
+    const receivableLineCount = receivableLineCountByReq.get(row.id) ?? 0;
+    const expectedReceiptTotal = Number((expectedTotalByReq.get(row.id) ?? 0).toFixed(4));
+    const canCreateReceipt = lineCount > 0 && receivableLineCount === lineCount && expectedReceiptTotal > 0;
     return {
       requisition_id: row.id,
       plan_id: row.plan_id,
       event_id: plan?.event_id ?? null,
       plan_name: plan?.name ?? null,
       estimated_total_cost: Number(row.estimated_total_cost ?? 0),
-      line_count: lineCountByReq.get(row.id) ?? 0,
+      line_count: lineCount,
+      receivable_line_count: receivableLineCount,
+      expected_receipt_total: expectedReceiptTotal,
+      can_create_receipt: canCreateReceipt,
+      receipt_block_reason: canCreateReceipt
+        ? null
+        : lineCount === 0
+          ? "Sin líneas recibibles"
+          : expectedReceiptTotal <= 0
+            ? "Total esperado inválido"
+            : "Líneas incompletas para recibir",
       status: row.status,
       updated_at: row.updated_at,
     };
@@ -977,73 +1051,170 @@ export async function listEventConsumptionOverview(tenantSlug: string) {
   }));
 }
 
-export async function getConsumptionLineAvailability(
+async function buildConsumptionLineAvailability(
   tenantSlug: string,
-  consumptionRecordId: string,
-): Promise<EventCateringConsumptionLineAvailability[]> {
+  lines: Array<{
+    id: string;
+    consumption_record_id: string;
+    item_id: string;
+    unit_id: string;
+    location_id: string | null;
+    consumed_quantity: number;
+    waste_quantity: number;
+    kitchen_inventory_items?: { id?: string; name?: string } | null;
+    kitchen_inventory_units?: { id?: string; code?: string; name?: string } | null;
+  }>,
+): Promise<Map<string, EventCateringConsumptionLineAvailability[]>> {
+  const availabilityByRecord = new Map<string, EventCateringConsumptionLineAvailability[]>();
+  for (const line of lines) availabilityByRecord.set(line.consumption_record_id, availabilityByRecord.get(line.consumption_record_id) ?? []);
+  if (lines.length === 0) return availabilityByRecord;
+
   const tenant = await resolveTenantModulePageContext(tenantSlug, "event_catering", "consumption", "read");
   const supabase = await getSupabaseServerClient();
-  const lines = await listConsumptionLines(tenantSlug, consumptionRecordId);
-
-  if (lines.length === 0) return [];
-
   const itemIds = [...new Set(lines.map((line) => line.item_id))];
-  const [{ data: balances, error: balancesError }, { data: locations, error: locationsError }] = await Promise.all([
+  const recordIds = [...new Set(lines.map((line) => line.consumption_record_id))];
+
+  const [records, balances, locations, allocations] = await Promise.all([
+    supabase
+      .from("event_catering_consumption_records")
+      .select("id,plan_id")
+      .eq("tenant_id", tenant.tenantId)
+      .in("id", recordIds),
     supabase
       .from("kitchen_inventory_balances")
       .select("item_id,location_id,quantity")
       .eq("tenant_id", tenant.tenantId)
       .in("item_id", itemIds),
     supabase.from("kitchen_inventory_locations").select("id,name").eq("tenant_id", tenant.tenantId).eq("is_active", true),
+    supabase
+      .from("event_catering_inventory_allocations")
+      .select("plan_id,item_id,location_id,allocated_quantity,consumed_quantity,released_quantity,status")
+      .eq("tenant_id", tenant.tenantId)
+      .in("item_id", itemIds)
+      .eq("status", "reserved"),
   ]);
-  if (balancesError) throw new Error(`No fue posible cargar disponibilidad para consumo: ${balancesError.message}`);
-  if (locationsError) throw new Error(`No fue posible cargar ubicaciones para consumo: ${locationsError.message}`);
-
-  const itemLocationAvailable = new Map<string, number>();
-  for (const row of balances ?? []) {
-    const key = `${row.item_id}:${row.location_id}`;
-    itemLocationAvailable.set(key, Number(row.quantity ?? 0));
+  if (records.error) throw new Error(`No fue posible cargar planes para disponibilidad de consumo: ${records.error.message}`);
+  if (balances.error) throw new Error(`No fue posible cargar balances para disponibilidad de consumo: ${balances.error.message}`);
+  if (locations.error) throw new Error(`No fue posible cargar ubicaciones para disponibilidad de consumo: ${locations.error.message}`);
+  if (allocations.error && !allocations.error.message.includes("event_catering_inventory_allocations")) {
+    throw new Error(`No fue posible cargar reservas para disponibilidad de consumo: ${allocations.error.message}`);
   }
 
-  return lines.map((line) => {
+  const planByRecord = new Map((records.data ?? []).map((record) => [record.id, record.plan_id]));
+  const physicalByItemLocation = new Map<string, number>();
+  for (const row of balances.data ?? []) {
+    physicalByItemLocation.set(`${row.item_id}:${row.location_id}`, Number(row.quantity ?? 0));
+  }
+
+  const allocationByItemLocationPlan = new Map<string, number>();
+  const globalAllocationByItemPlan = new Map<string, number>();
+  for (const allocation of allocations.data ?? []) {
+    const remaining = Math.max(
+      Number(allocation.allocated_quantity ?? 0) -
+        Number(allocation.consumed_quantity ?? 0) -
+        Number(allocation.released_quantity ?? 0),
+      0,
+    );
+    if (remaining <= 0) continue;
+    if (allocation.location_id) {
+      const key = `${allocation.item_id}:${allocation.location_id}:${allocation.plan_id}`;
+      allocationByItemLocationPlan.set(key, (allocationByItemLocationPlan.get(key) ?? 0) + remaining);
+    } else {
+      const key = `${allocation.item_id}:${allocation.plan_id}`;
+      globalAllocationByItemPlan.set(key, (globalAllocationByItemPlan.get(key) ?? 0) + remaining);
+    }
+  }
+
+  const allPlanIds = [...new Set((allocations.data ?? []).map((allocation) => allocation.plan_id))];
+  const summarize = (itemId: string, locationId: string, planId: string | null) => {
+    const physical = Number((physicalByItemLocation.get(`${itemId}:${locationId}`) ?? 0).toFixed(4));
+    let reservedThis = 0;
+    let reservedOther = 0;
+    for (const candidatePlanId of allPlanIds) {
+      const amount = Number((allocationByItemLocationPlan.get(`${itemId}:${locationId}:${candidatePlanId}`) ?? 0).toFixed(4));
+      if (candidatePlanId === planId) reservedThis += amount;
+      else reservedOther += amount;
+    }
+    // Location-less allocations are treated as global reservations. They reduce availability everywhere for other plans.
+    for (const [key, amount] of globalAllocationByItemPlan.entries()) {
+      const [globalItemId, globalPlanId] = key.split(":");
+      if (globalItemId !== itemId) continue;
+      if (globalPlanId === planId) reservedThis += amount;
+      else reservedOther += amount;
+    }
+    const availableForThisPlan = Number((physical - reservedOther + reservedThis).toFixed(4));
+    return {
+      physical_balance: Number(physical.toFixed(4)),
+      reserved_other_plans: Number(reservedOther.toFixed(4)),
+      reserved_this_plan: Number(reservedThis.toFixed(4)),
+      available_quantity: availableForThisPlan,
+    };
+  };
+
+  for (const line of lines) {
+    const planId = planByRecord.get(line.consumption_record_id) ?? null;
     const totalOutQuantity = Number((Number(line.consumed_quantity ?? 0) + Number(line.waste_quantity ?? 0)).toFixed(4));
-    const availableAtCurrentLocation = line.location_id
-      ? Number((itemLocationAvailable.get(`${line.item_id}:${line.location_id}`) ?? 0).toFixed(4))
-      : 0;
+    const currentBreakdown = line.location_id
+      ? summarize(line.item_id, line.location_id, planId)
+      : { physical_balance: 0, reserved_other_plans: 0, reserved_this_plan: 0, available_quantity: 0 };
     const missingLocation = totalOutQuantity > 0 && !line.location_id;
-    const hasSufficientBalance = totalOutQuantity <= 0 || (!!line.location_id && availableAtCurrentLocation >= totalOutQuantity);
+    const hasSufficientBalance = totalOutQuantity <= 0 || (!!line.location_id && currentBreakdown.available_quantity >= totalOutQuantity);
 
     let warningMessage: string | null = null;
-    if (missingLocation) {
-      warningMessage = "Falta ubicación";
-    } else if (!hasSufficientBalance) {
-      warningMessage = "Stock insuficiente";
-    }
+    if (missingLocation) warningMessage = "Falta ubicación";
+    else if (!hasSufficientBalance) warningMessage = "Stock insuficiente";
 
-    const locationOptions = (locations ?? [])
-      .map((location) => ({
-        location_id: location.id as string,
-        location_name: (location.name as string) ?? "Ubicación",
-        available_quantity: Number((itemLocationAvailable.get(`${line.item_id}:${location.id}`) ?? 0).toFixed(4)),
-      }))
+    const locationOptions = (locations.data ?? [])
+      .map((location) => {
+        const breakdown = summarize(line.item_id, location.id as string, planId);
+        return {
+          location_id: location.id as string,
+          location_name: (location.name as string) ?? "Ubicación",
+          ...breakdown,
+        };
+      })
       .filter((option) => option.available_quantity > 0 || option.location_id === line.location_id)
-      .sort((a, b) => b.available_quantity - a.available_quantity);
+      .sort((a, b) => b.reserved_this_plan - a.reserved_this_plan || b.available_quantity - a.available_quantity);
 
-    return {
+    const availability: EventCateringConsumptionLineAvailability = {
       line_id: line.id,
       item_id: line.item_id,
       item_name: line.kitchen_inventory_items?.name ?? line.item_id,
       unit_id: line.unit_id,
       unit_code: line.kitchen_inventory_units?.code ?? "ud",
       location_id: line.location_id,
-      available_quantity: availableAtCurrentLocation,
+      ...currentBreakdown,
       total_out_quantity: totalOutQuantity,
       has_sufficient_balance: hasSufficientBalance,
       missing_location: missingLocation,
       warning_message: warningMessage,
       location_options: locationOptions,
     };
-  });
+    const bucket = availabilityByRecord.get(line.consumption_record_id) ?? [];
+    bucket.push(availability);
+    availabilityByRecord.set(line.consumption_record_id, bucket);
+  }
+
+  return availabilityByRecord;
+}
+
+export async function getConsumptionLineAvailability(
+  tenantSlug: string,
+  consumptionRecordId: string,
+): Promise<EventCateringConsumptionLineAvailability[]> {
+  const lines = (await listConsumptionLines(tenantSlug, consumptionRecordId)).map((line) => ({
+    id: line.id,
+    consumption_record_id: line.consumption_record_id,
+    item_id: line.item_id,
+    unit_id: line.unit_id,
+    location_id: line.location_id,
+    consumed_quantity: Number(line.consumed_quantity ?? 0),
+    waste_quantity: Number(line.waste_quantity ?? 0),
+    kitchen_inventory_items: line.kitchen_inventory_items,
+    kitchen_inventory_units: line.kitchen_inventory_units,
+  }));
+  const availabilityByRecord = await buildConsumptionLineAvailability(tenantSlug, lines);
+  return availabilityByRecord.get(consumptionRecordId) ?? [];
 }
 
 export async function getConsumptionLineAvailabilityByRecordIds(
@@ -1060,7 +1231,7 @@ export async function getConsumptionLineAvailabilityByRecordIds(
   const { data: linesRaw, error: linesError } = await supabase
     .from("event_catering_consumption_lines")
     .select(
-      "id,consumption_record_id,item_id,unit_id,location_id,consumed_quantity,waste_quantity,leftover_quantity,kitchen_inventory_items:kitchen_inventory_items!event_catering_consumption_lines_tenant_item_fkey(id,name),kitchen_inventory_units:kitchen_inventory_units!event_catering_consumption_lines_tenant_unit_fkey(id,code,name)",
+      "id,consumption_record_id,item_id,unit_id,location_id,consumed_quantity,waste_quantity,kitchen_inventory_items:kitchen_inventory_items!event_catering_consumption_lines_tenant_item_fkey(id,name),kitchen_inventory_units:kitchen_inventory_units!event_catering_consumption_lines_tenant_unit_fkey(id,code,name)",
     )
     .eq("tenant_id", tenant.tenantId)
     .in("consumption_record_id", consumptionRecordIds);
@@ -1074,7 +1245,6 @@ export async function getConsumptionLineAvailabilityByRecordIds(
     location_id: (row.location_id as string | null) ?? null,
     consumed_quantity: Number(row.consumed_quantity ?? 0),
     waste_quantity: Number(row.waste_quantity ?? 0),
-    leftover_quantity: Number(row.leftover_quantity ?? 0),
     kitchen_inventory_items: Array.isArray(row.kitchen_inventory_items)
       ? ((row.kitchen_inventory_items[0] ?? null) as { id?: string; name?: string } | null)
       : ((row.kitchen_inventory_items ?? null) as { id?: string; name?: string } | null),
@@ -1083,65 +1253,8 @@ export async function getConsumptionLineAvailabilityByRecordIds(
       : ((row.kitchen_inventory_units ?? null) as { id?: string; code?: string; name?: string } | null),
   }));
 
-  if (lines.length === 0) return availabilityByRecord;
-
-  const itemIds = [...new Set(lines.map((line) => line.item_id))];
-  const [{ data: balances, error: balancesError }, { data: locations, error: locationsError }] = await Promise.all([
-    supabase
-      .from("kitchen_inventory_balances")
-      .select("item_id,location_id,quantity")
-      .eq("tenant_id", tenant.tenantId)
-      .in("item_id", itemIds),
-    supabase.from("kitchen_inventory_locations").select("id,name").eq("tenant_id", tenant.tenantId).eq("is_active", true),
-  ]);
-  if (balancesError) throw new Error(`No fue posible cargar balances para disponibilidad de consumo: ${balancesError.message}`);
-  if (locationsError) throw new Error(`No fue posible cargar ubicaciones para disponibilidad de consumo: ${locationsError.message}`);
-
-  const itemLocationAvailable = new Map<string, number>();
-  for (const row of balances ?? []) {
-    itemLocationAvailable.set(`${row.item_id}:${row.location_id}`, Number(row.quantity ?? 0));
-  }
-
-  for (const line of lines) {
-    const totalOutQuantity = Number((Number(line.consumed_quantity ?? 0) + Number(line.waste_quantity ?? 0)).toFixed(4));
-    const availableAtCurrentLocation = line.location_id
-      ? Number((itemLocationAvailable.get(`${line.item_id}:${line.location_id}`) ?? 0).toFixed(4))
-      : 0;
-    const missingLocation = totalOutQuantity > 0 && !line.location_id;
-    const hasSufficientBalance = totalOutQuantity <= 0 || (!!line.location_id && availableAtCurrentLocation >= totalOutQuantity);
-
-    let warningMessage: string | null = null;
-    if (missingLocation) warningMessage = "Falta ubicación";
-    else if (!hasSufficientBalance) warningMessage = "Stock insuficiente";
-
-    const locationOptions = (locations ?? [])
-      .map((location) => ({
-        location_id: location.id as string,
-        location_name: (location.name as string) ?? "Ubicación",
-        available_quantity: Number((itemLocationAvailable.get(`${line.item_id}:${location.id}`) ?? 0).toFixed(4)),
-      }))
-      .filter((option) => option.available_quantity > 0 || option.location_id === line.location_id)
-      .sort((a, b) => b.available_quantity - a.available_quantity);
-
-    const availability: EventCateringConsumptionLineAvailability = {
-      line_id: line.id,
-      item_id: line.item_id,
-      item_name: line.kitchen_inventory_items?.name ?? line.item_id,
-      unit_id: line.unit_id,
-      unit_code: line.kitchen_inventory_units?.code ?? "ud",
-      location_id: line.location_id,
-      available_quantity: availableAtCurrentLocation,
-      total_out_quantity: totalOutQuantity,
-      has_sufficient_balance: hasSufficientBalance,
-      missing_location: missingLocation,
-      warning_message: warningMessage,
-      location_options: locationOptions,
-    };
-    const bucket = availabilityByRecord.get(line.consumption_record_id) ?? [];
-    bucket.push(availability);
-    availabilityByRecord.set(line.consumption_record_id, bucket);
-  }
-
+  const computed = await buildConsumptionLineAvailability(tenantSlug, lines);
+  for (const [recordId, rows] of computed.entries()) availabilityByRecord.set(recordId, rows);
   return availabilityByRecord;
 }
 
@@ -1262,6 +1375,7 @@ export async function getCateringPlanOperationalSummary(
   const requirementRows = requirements.data ?? [];
   const requisitionRows = requisitions.data ?? [];
   const receiptRows = receipts.data ?? [];
+  const receivedReceiptRows = receiptRows.filter((row) => row.status === "received");
   const consumptionRows = consumptionRecords.data ?? [];
   const consumptionLineRows = consumptionLines.data ?? [];
 
@@ -1282,12 +1396,14 @@ export async function getCateringPlanOperationalSummary(
     requisition_count: requisitionRows.length,
     approved_requisition_count: requisitionRows.filter((row) => row.status === "approved").length,
     receipt_count: receiptRows.length,
-    received_receipt_count: receiptRows.filter((row) => row.status === "received").length,
+    draft_receipt_count: receiptRows.filter((row) => row.status === "draft").length,
+    received_receipt_count: receivedReceiptRows.length,
+    canceled_receipt_count: receiptRows.filter((row) => row.status === "canceled").length,
     consumption_count: consumptionRows.length,
     confirmed_consumption_count: consumptionRows.filter((row) => row.status === "confirmed").length,
     estimated_plan_cost: Number(plan.data.estimated_total_cost ?? 0),
     requisition_total: requisitionRows.reduce((acc, row) => acc + Number(row.estimated_total_cost ?? 0), 0),
-    received_total_cost: receiptRows.reduce((acc, row) => acc + Number(row.total_received_cost ?? 0), 0),
+    received_total_cost: receivedReceiptRows.reduce((acc, row) => acc + Number(row.total_received_cost ?? 0), 0),
     consumed_total_cost: consumptionLineRows.reduce(
       (acc, row) => acc + Number(row.consumed_quantity ?? 0) * Number(row.unit_cost ?? 0),
       0,
@@ -1343,7 +1459,7 @@ export async function listCateringPlanItemFlow(
   if (receipts.error) throw new Error(`No fue posible cargar flujo de recepciones: ${receipts.error.message}`);
   if (balances.error) throw new Error(`No fue posible cargar balances para flujo: ${balances.error.message}`);
 
-  const receiptIds = (receipts.data ?? []).map((row) => row.id);
+  const receiptIds = (receipts.data ?? []).filter((row) => row.status === "received").map((row) => row.id);
   const consumptionIds = (consumptions.data ?? []).map((row) => row.id);
 
   const [reqLines, receiptLines, consumptionLines] = await Promise.all([

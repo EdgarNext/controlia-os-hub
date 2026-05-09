@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { ArrowRightLeft, RefreshCw } from "lucide-react";
 import { StatePanel } from "@/components/ui/state-panel";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
 import {
@@ -6,10 +7,9 @@ import {
   createPurchaseReceiptFromRequisitionAction,
   cancelCateringRequisitionAction,
   markCateringRequisitionReviewedAction,
+  refreshCateringRequisitionQuotedPricesAction,
   updateRequisitionLinePurchaseOptionAction,
   updateCateringRequisitionLineAction,
-  updateCateringRequisitionLineSupplierAction,
-  updateCateringRequisitionLineQuoteAction,
 } from "@/lib/kitchen/event-catering/actions";
 import {
   getCateringRequisition,
@@ -18,7 +18,6 @@ import {
   listPurchaseReceiptsForRequisition,
   listCateringRequisitionLines,
 } from "@/lib/kitchen/event-catering/queries";
-import { listKitchenInventorySuppliers } from "@/lib/kitchen/inventory/queries";
 import { KitchenActionRowSkeleton, KitchenTableSkeleton } from "../../../_components/kitchen-loading-skeletons";
 import { KitchenCriticalActionGroup } from "../../../_components/kitchen-critical-action-group";
 import { KitchenFormPendingFieldset } from "../../../_components/kitchen-form-pending-fieldset";
@@ -28,6 +27,20 @@ import { resolveKitchenPage } from "../../../_lib/page-access";
 type KitchenCateringRequisitionDetailPageProps = {
   params: Promise<{ tenantSlug: string; requisitionId: string }>;
 };
+
+function resolveRequisitionLineFinancialTotal(line: Awaited<ReturnType<typeof listCateringRequisitionLines>>[number]) {
+  const approvedTotal = Number(line.approved_total_cost ?? 0);
+  if (approvedTotal > 0) return approvedTotal;
+  const quotedTotal = Number(line.quoted_total_cost ?? 0);
+  if (quotedTotal > 0) return quotedTotal;
+  const preliminaryTotal = Number(line.preliminary_total_cost ?? 0);
+  if (preliminaryTotal > 0) return preliminaryTotal;
+  const estimatedTotal = Number(line.estimated_total_cost ?? 0);
+  if (estimatedTotal > 0) return estimatedTotal;
+  const unitPrice = Number(line.approved_unit_price ?? line.quoted_unit_price ?? line.preliminary_unit_price ?? line.estimated_unit_cost ?? 0);
+  const purchaseQuantity = Number(line.requested_purchase_quantity ?? 0);
+  return purchaseQuantity > 0 ? purchaseQuantity * unitPrice : 0;
+}
 
 export default async function KitchenCateringRequisitionDetailPage({
   params,
@@ -56,13 +69,16 @@ export default async function KitchenCateringRequisitionDetailPage({
   const canManage = hasModulePageAccess(accessMap.requisitions ?? "none", "manage");
   const linesPromise = listCateringRequisitionLines(result.tenant.tenantSlug, requisitionId);
   const supplierSummaryPromise = getCateringRequisitionSupplierSummary(result.tenant.tenantSlug, requisitionId);
-  const suppliersPromise = listKitchenInventorySuppliers(result.tenant.tenantId);
   const receiptsPromise = listPurchaseReceiptsForRequisition(result.tenant.tenantSlug, requisitionId);
 
   return (
     <div className="space-y-4">
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h1 className="text-lg font-semibold text-foreground">Requisición {requisition.id.slice(0, 8)}</h1>
+        <h1 className="text-lg font-semibold text-foreground">
+          Requisición - {requisition.event_catering_plans?.name ?? requisition.plan_id.slice(0, 8)} -{" "}
+          {requisition.event_catering_plans?.events?.name ?? requisition.event_catering_plans?.event_id?.slice(0, 8) ?? "Evento"}
+        </h1>
+        <p className="mt-1 text-xs text-muted">Referencia: {requisition.id.slice(0, 8)}</p>
         <p className="mt-2 text-sm text-muted">
           status={requisition.status} · costo=${Number(requisition.estimated_total_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </p>
@@ -78,7 +94,6 @@ export default async function KitchenCateringRequisitionDetailPage({
           canManage={canManage}
           linesPromise={linesPromise}
           supplierSummaryPromise={supplierSummaryPromise}
-          suppliersPromise={suppliersPromise}
           receiptsPromise={receiptsPromise}
         />
       </Suspense>
@@ -92,7 +107,6 @@ async function RequisitionContentSection({
   canManage,
   linesPromise,
   supplierSummaryPromise,
-  suppliersPromise,
   receiptsPromise,
 }: {
   tenantSlug: string;
@@ -100,13 +114,11 @@ async function RequisitionContentSection({
   canManage: boolean;
   linesPromise: ReturnType<typeof listCateringRequisitionLines>;
   supplierSummaryPromise: ReturnType<typeof getCateringRequisitionSupplierSummary>;
-  suppliersPromise: ReturnType<typeof listKitchenInventorySuppliers>;
   receiptsPromise: ReturnType<typeof listPurchaseReceiptsForRequisition>;
 }) {
-  const [lines, supplierSummary, suppliers, receipts] = await Promise.all([
+  const [lines, supplierSummary, receipts] = await Promise.all([
     linesPromise,
     supplierSummaryPromise,
-    suppliersPromise,
     receiptsPromise,
   ]);
 
@@ -124,11 +136,25 @@ async function RequisitionContentSection({
   const isDraft = requisition.status === "draft";
   const isReviewed = requisition.status === "reviewed";
   const canQuote = canManage && (isDraft || isReviewed);
+  const existingDraftReceipt = receipts.find((receipt) => receipt.status === "draft");
+  const existingReceivedReceipt = receipts.find((receipt) => receipt.status === "received");
+  const draftReceipts = receipts.filter((receipt) => receipt.status === "draft");
+  const receivedReceipts = receipts.filter((receipt) => receipt.status === "received");
+  const canceledReceipts = receipts.filter((receipt) => receipt.status === "canceled");
   const totals = lines.reduce(
     (acc, line) => {
-      acc.preliminary += Number(line.preliminary_total_cost ?? line.estimated_total_cost ?? 0);
-      acc.quoted += Number(line.quoted_total_cost ?? line.preliminary_total_cost ?? line.estimated_total_cost ?? 0);
-      acc.approved += Number(line.approved_total_cost ?? line.quoted_total_cost ?? line.preliminary_total_cost ?? line.estimated_total_cost ?? 0);
+      const preliminaryTotal = Number(line.preliminary_total_cost ?? 0) > 0
+        ? Number(line.preliminary_total_cost)
+        : Number(line.estimated_total_cost ?? 0);
+      const quotedTotal = Number(line.quoted_total_cost ?? 0) > 0
+        ? Number(line.quoted_total_cost)
+        : preliminaryTotal;
+      const approvedTotal = Number(line.approved_total_cost ?? 0) > 0
+        ? Number(line.approved_total_cost)
+        : quotedTotal;
+      acc.preliminary += preliminaryTotal;
+      acc.quoted += quotedTotal;
+      acc.approved += approvedTotal;
       return acc;
     },
     { preliminary: 0, quoted: 0, approved: 0 },
@@ -145,6 +171,47 @@ async function RequisitionContentSection({
     if (requisition.status === "reviewed" || requisition.status === "approved") return "Lista para compra";
     return "Pendiente de cotizar";
   })();
+  const supplierSummaryTotals = supplierSummary.reduce(
+    (acc, row) => {
+      acc.lineCount += row.line_count;
+      acc.preliminary += row.preliminary_total;
+      acc.quoted += row.quoted_total;
+      acc.approved += row.approved_total;
+      acc.withoutQuote += row.lines_without_quote;
+      acc.withoutPurchaseOption += row.lines_without_purchase_option;
+      acc.withoutSupplier += row.lines_without_supplier;
+      return acc;
+    },
+    {
+      lineCount: 0,
+      preliminary: 0,
+      quoted: 0,
+      approved: 0,
+      withoutQuote: 0,
+      withoutPurchaseOption: 0,
+      withoutSupplier: 0,
+    },
+  );
+  const receiptExpectedTotal = lines.reduce((acc, line) => {
+    const requestedQuantity = Number(line.requested_quantity ?? 0);
+    const expectedInventoryQuantity = Number(line.expected_inventory_quantity ?? requestedQuantity);
+    if (expectedInventoryQuantity <= 0) return acc;
+    return acc + resolveRequisitionLineFinancialTotal(line);
+  }, 0);
+  const hasReceivableLines =
+    lines.length > 0 &&
+    lines.every((line) => {
+      const requestedQuantity = Number(line.requested_quantity ?? 0);
+      const expectedInventoryQuantity = Number(line.expected_inventory_quantity ?? requestedQuantity);
+      return line.item_id != null && line.unit_id != null && requestedQuantity > 0 && expectedInventoryQuantity > 0 && resolveRequisitionLineFinancialTotal(line) > 0;
+    }) &&
+    receiptExpectedTotal > 0;
+  const canCreateReceipt =
+    canManage &&
+    requisition.status === "approved" &&
+    !existingDraftReceipt &&
+    !existingReceivedReceipt &&
+    hasReceivableLines;
 
   return (
     <>
@@ -161,6 +228,7 @@ async function RequisitionContentSection({
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {(isDraft || isReviewed) ? (
               <KitchenCriticalActionGroup
+                key={requisition.status}
                 className="flex flex-wrap items-center gap-2"
                 buttonClassName="px-3 py-1 text-xs"
                 actions={[
@@ -204,13 +272,48 @@ async function RequisitionContentSection({
               />
             ) : null}
             {requisition.status === "approved" ? (
-              <form action={createPurchaseReceiptFromRequisitionAction}>
-                <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                <input type="hidden" name="requisitionId" value={requisition.id} />
-                <KitchenSubmitButton variant="secondary" pendingLabel="Creando recepción..." className="px-3 py-1 text-xs">
-                  Crear recepción
-                </KitchenSubmitButton>
-              </form>
+              existingDraftReceipt ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <KitchenSubmitButton variant="secondary" disabled className="px-3 py-1 text-xs">
+                    Crear recepción
+                  </KitchenSubmitButton>
+                  <a
+                    href={`/${tenantSlug}/kitchen/events/requisitions/${requisition.id}/receipts/${existingDraftReceipt.id}`}
+                    className="text-xs text-primary underline underline-offset-2"
+                  >
+                    Abrir recepción draft existente
+                  </a>
+                </div>
+              ) : existingReceivedReceipt ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <KitchenSubmitButton variant="secondary" disabled className="px-3 py-1 text-xs">
+                    Recepción ya confirmada
+                  </KitchenSubmitButton>
+                  <a
+                    href={`/${tenantSlug}/kitchen/events/requisitions/${requisition.id}/receipts/${existingReceivedReceipt.id}`}
+                    className="text-xs text-primary underline underline-offset-2"
+                  >
+                    Ver recepción recibida
+                  </a>
+                </div>
+              ) : !hasReceivableLines ? (
+                <span className="rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-xs text-warning">
+                  No se puede crear recepción: líneas o total inválidos
+                </span>
+              ) : (
+                <form action={createPurchaseReceiptFromRequisitionAction}>
+                  <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                  <input type="hidden" name="requisitionId" value={requisition.id} />
+                  <KitchenSubmitButton
+                    variant="secondary"
+                    pendingLabel="Creando recepción..."
+                    disabled={!canCreateReceipt}
+                    className="px-3 py-1 text-xs"
+                  >
+                    Crear recepción
+                  </KitchenSubmitButton>
+                </form>
+              )
             ) : null}
           </div>
         ) : null}
@@ -221,22 +324,17 @@ async function RequisitionContentSection({
         {receipts.length === 0 ? (
           <p className="mt-2 text-xs text-muted">No hay recepciones registradas para esta requisición.</p>
         ) : (
-          <div className="mt-2 overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead><tr className="text-left text-muted"><th className="px-2 py-1">Recepción</th><th className="px-2 py-1">Status</th><th className="px-2 py-1">Proveedor</th><th className="px-2 py-1">Total</th><th className="px-2 py-1">Recibida</th><th className="px-2 py-1">Acción</th></tr></thead>
-              <tbody>
-                {receipts.map((receipt) => (
-                  <tr key={receipt.id} className="border-t border-border">
-                    <td className="px-2 py-1 text-foreground">{receipt.id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-foreground">{receipt.status}</td>
-                    <td className="px-2 py-1 text-muted">{receipt.kitchen_inventory_suppliers?.name ?? "—"}</td>
-                    <td className="px-2 py-1 text-foreground">${Number(receipt.total_received_cost ?? 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="px-2 py-1 text-muted">{receipt.received_at ? new Date(receipt.received_at).toLocaleString("es-MX") : "—"}</td>
-                    <td className="px-2 py-1"><a href={`/${tenantSlug}/kitchen/events/requisitions/${requisition.id}/receipts/${receipt.id}`} className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs">Ver recepción</a></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-3 space-y-4">
+            <ReceiptGroup title="Draft activa" receipts={draftReceipts} tenantSlug={tenantSlug} requisitionId={requisition.id} emptyLabel="Sin recepción draft." />
+            <ReceiptGroup title="Recibidas" receipts={receivedReceipts} tenantSlug={tenantSlug} requisitionId={requisition.id} emptyLabel="Sin recepciones recibidas." />
+            <ReceiptGroup
+              title="Canceladas / historial"
+              receipts={canceledReceipts}
+              tenantSlug={tenantSlug}
+              requisitionId={requisition.id}
+              emptyLabel="Sin recepciones canceladas."
+              muted
+            />
           </div>
         )}
       </section>
@@ -261,20 +359,69 @@ async function RequisitionContentSection({
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t border-primary/20 bg-primary/10 font-semibold text-foreground">
+                    <td className="px-2 py-1">Totales</td>
+                    <td className="px-2 py-1">{supplierSummaryTotals.lineCount}</td>
+                    <td className="px-2 py-1">${supplierSummaryTotals.preliminary.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="px-2 py-1">${supplierSummaryTotals.quoted.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="px-2 py-1">${supplierSummaryTotals.approved.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="px-2 py-1">{supplierSummaryTotals.withoutQuote}</td>
+                    <td className="px-2 py-1">{supplierSummaryTotals.withoutPurchaseOption}</td>
+                    <td className="px-2 py-1">{supplierSummaryTotals.withoutSupplier}</td>
+                    <td className="px-2 py-1">—</td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </section>
 
           <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-            <h2 className="text-sm font-semibold text-foreground">Líneas de requisición</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-foreground">Líneas de requisición</h2>
+              {canQuote ? (
+                <form id="bulk-quote-refresh-form" action={refreshCateringRequisitionQuotedPricesAction}>
+                  <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                  <input type="hidden" name="requisitionId" value={requisition.id} />
+                  <KitchenSubmitButton pendingLabel="Actualizando..." variant="secondary" className="px-2 py-1 text-xs">
+                    Actualizar Precios
+                  </KitchenSubmitButton>
+                </form>
+              ) : null}
+            </div>
             <div className="mt-3 overflow-x-auto">
               <table className="min-w-full text-xs">
-                <thead><tr className="text-left text-muted"><th className="px-2 py-1">Insumo</th><th className="px-2 py-1">Faltante</th><th className="px-2 py-1">Presentación</th><th className="px-2 py-1">Cotización</th><th className="px-2 py-1">Proveedor</th><th className="px-2 py-1">Acciones</th></tr></thead>
+                <thead><tr className="text-left text-muted"><th className="px-2 py-1">Insumo</th><th className="px-2 py-1">Faltante</th><th className="px-2 py-1">Ajustes</th><th className="px-2 py-1">Cantidad cotizada</th><th className="px-2 py-1">Presentación</th><th className="px-2 py-1">Cotización</th></tr></thead>
                 <tbody>
                   {lines.map((line) => (
                     <tr key={line.id} className="border-t border-border">
                       <td className="px-2 py-1 text-foreground">{line.kitchen_inventory_items?.name ?? line.item_id.slice(0, 8)}</td>
                       <td className="px-2 py-1 text-foreground">{Number(line.requested_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {line.kitchen_inventory_units?.code ?? "ud"}</td>
+                      <td className="px-2 py-1 text-foreground">
+                        {canManage && isDraft ? (
+                          <form action={updateCateringRequisitionLineAction} className="flex items-center gap-1">
+                            <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                            <input type="hidden" name="requisitionId" value={requisition.id} />
+                            <input type="hidden" name="lineId" value={line.id} />
+                            <KitchenFormPendingFieldset className="flex items-center gap-1">
+                              <input name="requestedQuantity" type="number" min="0.0001" step="0.0001" defaultValue={String(line.requested_quantity)} className="h-8 w-24 rounded border border-border bg-surface px-2 text-xs" />
+                              <KitchenSubmitButton
+                                pendingLabel="Guardando..."
+                                className="px-2 py-1 text-xs"
+                                aria-label="Actualizar faltante"
+                                title="Actualizar faltante"
+                              >
+                                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                              </KitchenSubmitButton>
+                            </KitchenFormPendingFieldset>
+                          </form>
+                        ) : "—"}
+                      </td>
+                      <td className="px-2 py-1 text-foreground">
+                        {line.requested_purchase_quantity != null
+                          ? `${Number(line.requested_purchase_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${line.purchase_units?.code ?? ""}`.trim()
+                          : "—"}
+                      </td>
                       <td className="px-2 py-1 text-foreground">
                         {canQuote ? (
                           <form action={updateRequisitionLinePurchaseOptionAction} className="flex items-center gap-1">
@@ -288,53 +435,58 @@ async function RequisitionContentSection({
                                   <option key={option.purchase_option_id} value={option.purchase_option_id}>{`${option.supplier_name} · ${option.purchase_unit?.code ?? "ud"}`}</option>
                                 ))}
                               </select>
-                              <KitchenSubmitButton pendingLabel="Actualizando..." className="px-2 py-1 text-xs">Cambiar</KitchenSubmitButton>
-                            </KitchenFormPendingFieldset>
-                          </form>
-                        ) : "Bloqueada por estatus"}
-                      </td>
-                      <td className="px-2 py-1 text-foreground">
-                        {canQuote ? (
-                          <form action={updateCateringRequisitionLineQuoteAction} className="flex items-center gap-1">
-                            <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                            <input type="hidden" name="requisitionId" value={requisition.id} />
-                            <input type="hidden" name="lineId" value={line.id} />
-                            <input type="hidden" name="supplierId" value={line.supplier_id ?? ""} />
-                            <KitchenFormPendingFieldset className="flex items-center gap-1">
-                              <input name="quotedUnitPrice" type="number" min="0.0001" step="0.0001" defaultValue={String(line.quoted_unit_price ?? line.preliminary_unit_price ?? line.estimated_unit_cost ?? 0)} className="h-8 w-24 rounded border border-border bg-surface px-2 text-xs" />
-                              <KitchenSubmitButton pendingLabel="Actualizando..." className="px-2 py-1 text-xs">Guardar</KitchenSubmitButton>
-                            </KitchenFormPendingFieldset>
-                          </form>
-                        ) : `$${Number(line.quoted_unit_price ?? line.preliminary_unit_price ?? line.estimated_unit_cost ?? 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}
-                      </td>
-                      <td className="px-2 py-1 text-foreground">
-                        {canQuote ? (
-                          <form action={updateCateringRequisitionLineSupplierAction} className="flex items-center gap-1">
-                            <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                            <input type="hidden" name="requisitionId" value={requisition.id} />
-                            <input type="hidden" name="lineId" value={line.id} />
-                            <KitchenFormPendingFieldset className="flex items-center gap-1">
-                              <select name="supplierId" defaultValue={line.supplier_id ?? ""} className="h-8 rounded border border-border bg-surface px-2 text-xs">
-                                <option value="">Sin proveedor</option>
-                                {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-                              </select>
-                              <KitchenSubmitButton pendingLabel="Guardando..." className="px-2 py-1 text-xs">Guardar</KitchenSubmitButton>
+                              <KitchenSubmitButton
+                                pendingLabel="Actualizando..."
+                                className="px-2 py-1 text-xs"
+                                aria-label="Cambiar presentación"
+                                title="Cambiar presentación"
+                              >
+                                <ArrowRightLeft className="h-4 w-4" aria-hidden="true" />
+                              </KitchenSubmitButton>
                             </KitchenFormPendingFieldset>
                           </form>
                         ) : (line.kitchen_inventory_suppliers?.name ?? "Sin proveedor")}
                       </td>
                       <td className="px-2 py-1 text-foreground">
-                        {canManage && isDraft ? (
-                          <form action={updateCateringRequisitionLineAction} className="flex items-center gap-1">
-                            <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                            <input type="hidden" name="requisitionId" value={requisition.id} />
-                            <input type="hidden" name="lineId" value={line.id} />
-                            <KitchenFormPendingFieldset className="flex items-center gap-1">
-                              <input name="requestedQuantity" type="number" min="0.0001" step="0.0001" defaultValue={String(line.requested_quantity)} className="h-8 w-24 rounded border border-border bg-surface px-2 text-xs" />
-                              <KitchenSubmitButton pendingLabel="Guardando..." className="px-2 py-1 text-xs">Actualizar</KitchenSubmitButton>
-                            </KitchenFormPendingFieldset>
-                          </form>
-                        ) : "—"}
+                        {canQuote ? (
+                          <div className="space-y-1">
+                            <p className="text-[11px] text-muted">
+                              Precio actual: $
+                              {Number(
+                                line.quoted_unit_price ?? line.preliminary_unit_price ?? line.estimated_unit_cost ?? 0,
+                              ).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                            </p>
+                            <input
+                              name={`quotedUnitPrice:${line.id}`}
+                              form="bulk-quote-refresh-form"
+                              type="number"
+                              min="0"
+                              step="0.0001"
+                              defaultValue={String(line.quoted_unit_price ?? line.preliminary_unit_price ?? line.estimated_unit_cost ?? 0)}
+                              className="h-8 w-28 rounded border border-border bg-surface px-2 text-xs"
+                              aria-label="Precio nuevo"
+                            />
+                            {line.price_source === "quoted_bulk_refresh" ? (
+                              <p className="text-[11px] font-semibold text-emerald-600">
+                                Precio aplicado: $
+                                {Number(line.quoted_unit_price ?? 0).toLocaleString("es-MX", {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 4,
+                                })}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <p className="text-[11px] text-muted">
+                              Precio aplicado: $
+                              {Number(
+                                line.approved_unit_price ?? line.quoted_unit_price ?? line.preliminary_unit_price ?? line.estimated_unit_cost ?? 0,
+                              ).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                            </p>
+                            <p className="text-[11px] text-muted">Verificado al revisar</p>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -354,6 +506,82 @@ function RequisitionContentFallback() {
       <KitchenActionRowSkeleton actions={3} />
       <KitchenTableSkeleton rows={6} columns={7} />
       <KitchenTableSkeleton rows={8} columns={6} />
+    </div>
+  );
+}
+
+function ReceiptGroup({
+  title,
+  receipts,
+  tenantSlug,
+  requisitionId,
+  emptyLabel,
+  muted = false,
+}: {
+  title: string;
+  receipts: Awaited<ReturnType<typeof listPurchaseReceiptsForRequisition>>;
+  tenantSlug: string;
+  requisitionId: string;
+  emptyLabel: string;
+  muted?: boolean;
+}) {
+  const labelStatus = (status: string) => {
+    if (status === "draft") return "Borrador";
+    if (status === "received") return "Recibida";
+    if (status === "canceled") return "Cancelada";
+    return status;
+  };
+
+  return (
+    <div className={muted ? "rounded border border-primary/20 bg-primary/10 p-3" : ""}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold text-foreground">{title}</h3>
+        <span className="rounded-full border border-border bg-surface px-2 py-1 text-[11px] text-muted">{receipts.length}</span>
+      </div>
+      {receipts.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">{emptyLabel}</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="min-w-full text-xs">
+            <thead>
+              <tr className="text-left text-muted">
+                <th className="px-2 py-1">Recepción</th>
+                <th className="px-2 py-1">Estado</th>
+                <th className="px-2 py-1">Proveedor</th>
+                <th className="px-2 py-1">Total</th>
+                <th className="px-2 py-1">Recibida</th>
+                <th className="px-2 py-1">Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {receipts.map((receipt) => (
+                <tr key={receipt.id} className="border-t border-border">
+                  <td className="px-2 py-1 text-foreground">{receipt.id.slice(0, 8)}</td>
+                  <td className="px-2 py-1 text-foreground">
+                    {labelStatus(receipt.status)}
+                    {receipt.status === "canceled" ? (
+                      <span className="ml-2 text-[11px] text-muted">No afecta inventario</span>
+                    ) : null}
+                  </td>
+                  <td className="px-2 py-1 text-muted">{receipt.kitchen_inventory_suppliers?.name ?? "—"}</td>
+                  <td className="px-2 py-1 text-foreground">
+                    ${Number(receipt.total_received_cost ?? 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-2 py-1 text-muted">{receipt.received_at ? new Date(receipt.received_at).toLocaleString("es-MX") : "—"}</td>
+                  <td className="px-2 py-1">
+                    <a
+                      href={`/${tenantSlug}/kitchen/events/requisitions/${requisitionId}/receipts/${receipt.id}`}
+                      className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
+                    >
+                      {receipt.status === "draft" ? "Continuar" : receipt.status === "canceled" ? "Ver historial" : "Ver recepción"}
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

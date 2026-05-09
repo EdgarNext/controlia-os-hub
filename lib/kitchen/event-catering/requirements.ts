@@ -356,7 +356,7 @@ export async function calculateCateringRequirements(tenantId: string, planId: st
     const physical = Number((physicalByItem.get(row.item_id) ?? 0).toFixed(4));
     const reservedByThisPlan = Number((reservedThisPlanByItem.get(row.item_id) ?? 0).toFixed(4));
     const reservedByOthers = Number((reservedOtherPlansByItem.get(row.item_id) ?? 0).toFixed(4));
-    const availableForPlan = Number((physical - reservedByOthers + reservedByThisPlan).toFixed(4));
+    const availableForPlan = Number((physical - reservedByOthers).toFixed(4));
     row.available_quantity = Math.max(availableForPlan, 0);
     row.shortage_quantity = Math.max(Number((row.required_quantity - row.available_quantity).toFixed(4)), 0);
     row.source_payload = {

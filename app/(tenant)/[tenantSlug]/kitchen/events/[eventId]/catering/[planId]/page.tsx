@@ -351,9 +351,13 @@ async function PlanRequirementsSection({
           </table>
           {shortages.length > 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <p className="text-xs text-amber-600">Hay {shortages.length} insumos con faltante.</p>
-              {canManageRequisitions ? (
-                <form action={generateCateringRequisitionFromShortagesAction}>
+            <p className="text-xs text-amber-600">Hay {shortages.length} insumos con faltante.</p>
+            <p className="mt-1 text-xs text-muted">
+              Al generar la requisición sugerida se aparta primero el inventario físico disponible para este plan y se compra
+              solo el faltante real.
+            </p>
+            {canManageRequisitions ? (
+              <form action={generateCateringRequisitionFromShortagesAction}>
                   <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
                   <input type="hidden" name="planId" value={planId} />
                   <KitchenSubmitButton pendingLabel="Generando..." variant="secondary" className="px-2 py-1 text-xs">
