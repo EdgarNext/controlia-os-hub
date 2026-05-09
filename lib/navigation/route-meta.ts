@@ -33,6 +33,18 @@ export function getSegmentLabel(segment: string) {
   if (segment === "catalog-v2") return "Catálogo V2";
   if (segment === "modifiers") return "Modificadores";
   if (segment === "pos") return "POS";
+  if (segment === "kitchen") return "Cocina";
+  if (segment === "inventory") return "Inventario";
+  if (segment === "setup") return "Configuración";
+  if (segment === "purchase-options") return "Opciones compra";
+  if (segment === "supplier-prices") return "Precios proveedor";
+  if (segment === "recipes") return "Recetas";
+  if (segment === "catering") return "Catering";
+  if (segment === "costing") return "Costeo";
+  if (segment === "requisitions") return "Requisiciones";
+  if (segment === "receipts") return "Recepciones";
+  if (segment === "consumption") return "Consumos";
+  if (segment === "corrections") return "Correcciones";
   if (segment === "auth") return "Auth";
 
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(segment)) {

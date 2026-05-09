@@ -24,7 +24,7 @@ export function Input({ className, invalid = false, ...props }: InputProps) {
     <input
       className={cn(
         "h-11 w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 text-sm text-foreground outline-none transition-colors",
-        "placeholder:text-muted focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30",
+        "placeholder:text-muted focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary",
         "disabled:cursor-not-allowed disabled:opacity-60",
         invalid && "border-danger focus-visible:border-danger focus-visible:ring-danger/30",
         className,

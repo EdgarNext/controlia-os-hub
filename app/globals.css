@@ -97,6 +97,55 @@ body {
   color: var(--foreground);
 }
 
+@layer base {
+  :root {
+    accent-color: var(--primary);
+  }
+
+  input,
+  textarea,
+  select {
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--foreground);
+    caret-color: var(--primary);
+    transition:
+      border-color var(--transition-fast),
+      box-shadow var(--transition-fast),
+      background-color var(--transition-fast);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted);
+  }
+
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 35%, transparent);
+  }
+
+  input:disabled,
+  textarea:disabled,
+  select:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  select option:checked {
+    background: color-mix(in oklab, var(--primary) 18%, var(--surface));
+    color: var(--foreground);
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 35%, transparent);
+    color: var(--foreground);
+  }
+}
+
 @keyframes page-enter {
   from {
     opacity: 0;

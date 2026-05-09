@@ -5,6 +5,11 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export type ModulePageAccessLevel = "none" | "read" | "manage";
 export type SalesPosPageKey = "devices" | "categories" | "products" | "reports" | "users";
+export type TenantModuleKey =
+  | "sales_pos"
+  | "kitchen_inventory"
+  | "kitchen_recipes"
+  | "event_catering";
 
 type ModulePageAccessRow = {
   page_key: string;
@@ -67,14 +72,54 @@ export async function assertSalesPosPageAccess(
   return currentLevel;
 }
 
+export async function assertTenantModulePageAccess(
+  tenantId: string,
+  moduleKey: TenantModuleKey,
+  pageKey: string,
+  requiredLevel: Exclude<ModulePageAccessLevel, "none"> = "read",
+): Promise<ModulePageAccessLevel> {
+  const accessMap = await getCurrentTenantModulePageAccessMap(tenantId, moduleKey);
+  const currentLevel = accessMap[pageKey] ?? "none";
+
+  if (!hasModulePageAccess(currentLevel, requiredLevel)) {
+    throw new Error("Access denied for this tenant page.");
+  }
+
+  return currentLevel;
+}
+
+export async function resolveTenantModulePageContext(
+  tenantSlug: string,
+  moduleKey: TenantModuleKey,
+  pageKey: string,
+  requiredLevel: Exclude<ModulePageAccessLevel, "none"> = "read",
+) {
+  const tenant = await resolveTenantContextBySlug(tenantSlug);
+  await assertTenantModulePageAccess(tenant.tenantId, moduleKey, pageKey, requiredLevel);
+  return tenant;
+}
+
+export async function resolveTenantModulePageActor(
+  tenantSlug: string,
+  moduleKey: TenantModuleKey,
+  pageKey: string,
+  requiredLevel: Exclude<ModulePageAccessLevel, "none"> = "manage",
+) {
+  const tenant = await resolveTenantModulePageContext(tenantSlug, moduleKey, pageKey, requiredLevel);
+  const user = await requireUser();
+
+  return {
+    tenant,
+    user,
+  };
+}
+
 export async function resolveSalesPosPageContext(
   tenantSlug: string,
   pageKey: SalesPosPageKey,
   requiredLevel: Exclude<ModulePageAccessLevel, "none"> = "read",
 ) {
-  const tenant = await resolveTenantContextBySlug(tenantSlug);
-  await assertSalesPosPageAccess(tenant.tenantId, pageKey, requiredLevel);
-  return tenant;
+  return resolveTenantModulePageContext(tenantSlug, "sales_pos", pageKey, requiredLevel);
 }
 
 export async function resolveSalesPosPageActor(

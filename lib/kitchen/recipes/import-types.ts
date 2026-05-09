@@ -1,0 +1,81 @@
+export type KitchenRecipeImportBatch = {
+  id: string;
+  tenant_id: string;
+  original_filename: string;
+  source_type: "excel";
+  status: "draft" | "parsed" | "validated" | "partially_applied" | "applied" | "failed" | "canceled";
+  total_rows: number;
+  parsed_recipes: number;
+  parsed_lines: number;
+  valid_rows: number;
+  warning_rows: number;
+  error_rows: number;
+  applied_recipes: number;
+  applied_lines: number;
+  skipped_rows: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  applied_at: string | null;
+};
+
+export type KitchenRecipeImportRow = {
+  id: string;
+  tenant_id: string;
+  batch_id: string;
+  row_number: number;
+  recipe_group_key: string | null;
+  recipe_name: string | null;
+  normalized_recipe_name: string | null;
+  recipe_yield_quantity: number | null;
+  recipe_yield_unit_code: string | null;
+  recipe_servings: number | null;
+  ingredient_name: string | null;
+  normalized_ingredient_name: string | null;
+  quantity: number | null;
+  unit_code: string | null;
+  raw_payload: Record<string, unknown>;
+  normalized_payload: Record<string, unknown>;
+  status: "pending" | "valid" | "warning" | "error" | "skipped" | "applied";
+  severity: "info" | "warning" | "error";
+  action: "upsert_recipe" | "upsert_recipe_line" | "alias_required" | "skip";
+  matched_recipe_id: string | null;
+  matched_recipe_version_id: string | null;
+  matched_item_id: string | null;
+  matched_alias_id: string | null;
+  matched_unit_id: string | null;
+  candidate_item_ids: string[] | null;
+  validation_errors: string[];
+  validation_warnings: string[];
+  applied_at: string | null;
+  applied_recipe_id: string | null;
+  applied_version_id: string | null;
+  applied_line_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ParsedRecipeImportRow = {
+  rowNumber: number;
+  recipeGroupKey: string;
+  recipeName: string;
+  normalizedRecipeName: string;
+  recipeServings: number | null;
+  recipeYieldQuantity: number | null;
+  recipeYieldUnitCode: string | null;
+  ingredientName: string | null;
+  normalizedIngredientName: string | null;
+  quantity: number | null;
+  unitCode: string | null;
+  raw: Record<string, unknown>;
+};
+
+export type ParsedRecipeWorkbook = {
+  filePath: string;
+  sheetNames: string[];
+  rows: ParsedRecipeImportRow[];
+  parsedRecipes: number;
+  parsedLines: number;
+  ignoredRows: number;
+  ignoredReasons: Record<string, number>;
+};

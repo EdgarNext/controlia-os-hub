@@ -7,7 +7,7 @@ import type { TenantContext } from "@/lib/auth/tenant-context";
 import type { TenantRole } from "@/lib/repos/types";
 import type { NavDomain, NavItem, NavSection } from "./platform-nav";
 
-type TenantDomainKey = "venue" | "commercial" | "cafe" | "admin";
+type TenantDomainKey = "venue" | "commercial" | "cafe" | "kitchen" | "admin";
 
 type TenantNavItemConfig = {
   href: (tenantSlug: string) => string;
@@ -21,6 +21,8 @@ type TenantNavItemConfig = {
     href: (tenantSlug: string) => string;
     label: string;
     match?: "exact" | "prefix";
+    moduleKeys?: string[];
+    pageKey?: string;
   }>;
 };
 
@@ -150,6 +152,113 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
       },
     ],
   },
+  {
+    key: "kitchen",
+    label: "Cocina",
+    accentToken: "--nav-accent-commercial",
+    moduleKeys: ["kitchen_inventory", "kitchen_recipes", "event_catering"],
+    items: [
+      {
+        href: (tenantSlug) => `/${tenantSlug}/kitchen/inventory`,
+        label: "Inventario",
+        iconKey: "catalog",
+        match: "prefix",
+        moduleKeys: ["kitchen_inventory"],
+        pageKey: "overview",
+        children: [
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/inventory/items`,
+            label: "Insumos",
+            match: "prefix",
+            moduleKeys: ["kitchen_inventory"],
+            pageKey: "items",
+          },
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/inventory/movements`,
+            label: "Movimientos",
+            match: "prefix",
+            moduleKeys: ["kitchen_inventory"],
+            pageKey: "movements",
+          },
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/inventory/setup`,
+            label: "Configuración",
+            match: "prefix",
+            moduleKeys: ["kitchen_inventory"],
+            pageKey: "items",
+          },
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/inventory/presentaciones-precios`,
+            label: "Presentaciones y Precios",
+            match: "prefix",
+            moduleKeys: ["kitchen_inventory"],
+            pageKey: "items",
+          },
+        ],
+      },
+      {
+        href: (tenantSlug) => `/${tenantSlug}/kitchen/recipes`,
+        label: "Recetas y Costeo",
+        iconKey: "products",
+        match: "prefix",
+        moduleKeys: ["kitchen_recipes"],
+        pageKey: "overview",
+      },
+      {
+        href: (tenantSlug) => `/${tenantSlug}/kitchen/events`,
+        label: "Eventos Catering",
+        iconKey: "reports",
+        match: "prefix",
+        moduleKeys: ["event_catering"],
+        pageKey: "plans",
+        children: [
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/events`,
+            label: "Eventos",
+            match: "exact",
+            moduleKeys: ["event_catering"],
+            pageKey: "plans",
+          },
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/events/requisitions`,
+            label: "Requisiciones",
+            match: "prefix",
+            moduleKeys: ["event_catering"],
+            pageKey: "requisitions",
+          },
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/events/receipts`,
+            label: "Recepciones",
+            match: "prefix",
+            moduleKeys: ["event_catering"],
+            pageKey: "requisitions",
+          },
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/events/consumption`,
+            label: "Consumos",
+            match: "prefix",
+            moduleKeys: ["event_catering"],
+            pageKey: "consumption",
+          },
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/events/corrections`,
+            label: "Correcciones",
+            match: "prefix",
+            moduleKeys: ["event_catering"],
+            pageKey: "requisitions",
+          },
+        ],
+      },
+      {
+        href: (tenantSlug) => `/${tenantSlug}/kitchen/reports`,
+        label: "Reportes Cocina",
+        iconKey: "reports",
+        match: "prefix",
+        moduleKeys: ["kitchen_inventory"],
+        pageKey: "reports",
+      },
+    ],
+  },
 ];
 
 function getTenantEnabledDomainsModules(enabledModuleKeys: string[]): Set<string> {
@@ -209,17 +318,39 @@ async function buildItem(
     }
   }
 
+  let children: NavItem["children"] | undefined;
+  if (item.children && item.children.length > 0) {
+    const visibleChildren = await Promise.all(
+      item.children.map(async (child) => {
+        const childModules = child.moduleKeys ?? item.moduleKeys;
+        if (!hasAnyEnabledModule(childModules, enabledModules)) return null;
+        if (!child.pageKey) {
+          return {
+            href: child.href(tenantSlug),
+            label: child.label,
+            match: child.match ?? "prefix",
+          };
+        }
+        const accessMap = await getCurrentTenantModulePageAccessMap(tenantId, childModules[0]);
+        const currentLevel = accessMap[child.pageKey] ?? "none";
+        if (!hasModulePageAccess(currentLevel, "read")) return null;
+        return {
+          href: child.href(tenantSlug),
+          label: child.label,
+          match: child.match ?? "prefix",
+        };
+      }),
+    );
+    children = visibleChildren.filter((child): child is NonNullable<typeof child> => child !== null);
+  }
+
   return {
     href: item.href(tenantSlug),
     label: item.label,
     iconKey: item.iconKey,
     match: item.match ?? "prefix",
     accentToken,
-    children: item.children?.map((child) => ({
-      href: child.href(tenantSlug),
-      label: child.label,
-      match: child.match ?? "prefix",
-    })),
+    children,
   };
 }
 
