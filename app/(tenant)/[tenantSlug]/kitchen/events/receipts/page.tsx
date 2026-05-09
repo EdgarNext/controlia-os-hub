@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { StatePanel } from "@/components/ui/state-panel";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
 import { createPurchaseReceiptFromRequisitionAction } from "@/lib/kitchen/event-catering/actions";
@@ -5,6 +6,12 @@ import {
   listApprovedRequisitionsPendingReceipt,
   listPurchaseReceiptsOverview,
 } from "@/lib/kitchen/event-catering/queries";
+import {
+  KitchenActionRowSkeleton,
+  KitchenTableSkeleton,
+} from "../../_components/kitchen-loading-skeletons";
+import { KitchenPageHeader } from "../../_components/kitchen-page-header";
+import { KitchenSubmitButton } from "../../_components/kitchen-submit-button";
 import Link from "next/link";
 import { resolveKitchenPage } from "../../_lib/page-access";
 
@@ -25,76 +32,113 @@ export default async function KitchenEventReceiptsPage({ params }: KitchenEventR
     );
   }
 
-  const [accessMap, approvedPending, receipts] = await Promise.all([
-    getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "event_catering"),
-    listApprovedRequisitionsPendingReceipt(result.tenant.tenantSlug),
-    listPurchaseReceiptsOverview(result.tenant.tenantSlug),
-  ]);
+  const accessMap = await getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "event_catering");
   const canManage = hasModulePageAccess(accessMap.requisitions ?? "none", "manage");
+  const approvedPendingPromise = listApprovedRequisitionsPendingReceipt(result.tenant.tenantSlug);
+  const receiptsPromise = listPurchaseReceiptsOverview(result.tenant.tenantSlug);
+
+  return (
+    <div className="space-y-4">
+      <KitchenPageHeader
+        eyebrow="Recepciones"
+        title="Recepciones"
+        description="Crear recepción en draft no actualiza inventario. Confirmar recepción en detalle sí registra movimientos purchase."
+      />
+
+      <Suspense fallback={<KitchenTableSkeleton rows={6} columns={5} />}>
+        <ApprovedPendingSection
+          tenantSlug={tenantSlug}
+          canManage={canManage}
+          approvedPendingPromise={approvedPendingPromise}
+        />
+      </Suspense>
+
+      <Suspense fallback={<KitchenActionRowSkeleton actions={2} />}>
+        <ReceiptsOverviewSection tenantSlug={tenantSlug} receiptsPromise={receiptsPromise} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function ApprovedPendingSection({
+  tenantSlug,
+  canManage,
+  approvedPendingPromise,
+}: {
+  tenantSlug: string;
+  canManage: boolean;
+  approvedPendingPromise: ReturnType<typeof listApprovedRequisitionsPendingReceipt>;
+}) {
+  const approvedPending = await approvedPendingPromise;
+
+  return (
+    <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
+      <h2 className="text-sm font-semibold text-foreground">Requisiciones aprobadas pendientes de recibir</h2>
+      {approvedPending.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">No hay requisiciones approved pendientes de recepción.</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="min-w-full text-xs">
+            <thead>
+              <tr className="text-left text-muted">
+                <th className="px-2 py-1">Requisición</th>
+                <th className="px-2 py-1">Evento/Plan</th>
+                <th className="px-2 py-1">Total</th>
+                <th className="px-2 py-1">Líneas</th>
+                <th className="px-2 py-1">Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {approvedPending.map((row) => (
+                <tr key={row.requisition_id} className="border-t border-border">
+                  <td className="px-2 py-1 text-foreground">{row.requisition_id.slice(0, 8)}</td>
+                  <td className="px-2 py-1 text-muted">{row.plan_name ?? row.plan_id?.slice(0, 8) ?? "—"}</td>
+                  <td className="px-2 py-1 text-foreground">
+                    ${row.estimated_total_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-2 py-1 text-muted">{row.line_count}</td>
+                  <td className="px-2 py-1">
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}`}
+                        className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
+                      >
+                        Ver requisición
+                      </Link>
+                      {canManage ? (
+                        <form action={createPurchaseReceiptFromRequisitionAction}>
+                          <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                          <input type="hidden" name="requisitionId" value={row.requisition_id} />
+                          <KitchenSubmitButton pendingLabel="Creando recepción..." className="px-2 py-1 text-xs">
+                            Crear recepción
+                          </KitchenSubmitButton>
+                        </form>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+async function ReceiptsOverviewSection({
+  tenantSlug,
+  receiptsPromise,
+}: {
+  tenantSlug: string;
+  receiptsPromise: ReturnType<typeof listPurchaseReceiptsOverview>;
+}) {
+  const receipts = await receiptsPromise;
   const draftReceipts = receipts.filter((row) => row.status === "draft");
   const receivedReceipts = receipts.filter((row) => row.status === "received");
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h1 className="text-lg font-semibold text-foreground">Recepciones</h1>
-        <p className="mt-1 text-xs text-muted">
-          Crear recepción en draft no actualiza inventario. Confirmar recepción en detalle sí registra movimientos purchase.
-        </p>
-      </section>
-
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-foreground">Requisiciones aprobadas pendientes de recibir</h2>
-        {approvedPending.length === 0 ? (
-          <p className="mt-2 text-xs text-muted">No hay requisiciones approved pendientes de recepción.</p>
-        ) : (
-          <div className="mt-2 overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead>
-                <tr className="text-left text-muted">
-                  <th className="px-2 py-1">Requisición</th>
-                  <th className="px-2 py-1">Evento/Plan</th>
-                  <th className="px-2 py-1">Total</th>
-                  <th className="px-2 py-1">Líneas</th>
-                  <th className="px-2 py-1">Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {approvedPending.map((row) => (
-                  <tr key={row.requisition_id} className="border-t border-border">
-                    <td className="px-2 py-1 text-foreground">{row.requisition_id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-muted">{row.plan_name ?? row.plan_id?.slice(0, 8) ?? "—"}</td>
-                    <td className="px-2 py-1 text-foreground">
-                      ${row.estimated_total_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-2 py-1 text-muted">{row.line_count}</td>
-                    <td className="px-2 py-1">
-                      <div className="flex items-center gap-2">
-                        <Link
-                          href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}`}
-                          className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
-                        >
-                          Ver requisición
-                        </Link>
-                        {canManage ? (
-                          <form action={createPurchaseReceiptFromRequisitionAction}>
-                            <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                            <input type="hidden" name="requisitionId" value={row.requisition_id} />
-                            <button type="submit" className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs">
-                              Crear recepción
-                            </button>
-                          </form>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
+    <>
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-foreground">Recepciones draft</h2>
         {draftReceipts.length === 0 ? (
@@ -176,6 +220,6 @@ export default async function KitchenEventReceiptsPage({ params }: KitchenEventR
           </div>
         )}
       </section>
-    </div>
+    </>
   );
 }

@@ -186,7 +186,29 @@ export async function listCateringRequirements(tenantSlug: string, planId: strin
 
 export async function listRequirementShortages(tenantSlug: string, planId: string): Promise<EventCateringRequirement[]> {
   const all = await listCateringRequirements(tenantSlug, planId);
-  return all.filter((row) => Number(row.shortage_quantity) > 0);
+  return listRequirementShortagesFromRequirements(all);
+}
+
+export function listRequirementShortagesFromRequirements(
+  requirements: EventCateringRequirement[],
+): EventCateringRequirement[] {
+  return requirements.filter((row) => Number(row.shortage_quantity) > 0);
+}
+
+export function summarizeCateringRequirements(requirements: EventCateringRequirement[]) {
+  const totalEstimatedCost = requirements.reduce((acc, row) => acc + Number(row.estimated_total_cost ?? 0), 0);
+  const totalRequiredLines = requirements.length;
+  const shortageCount = requirements.filter((row) => Number(row.shortage_quantity) > 0).length;
+  const totalShortageCost = requirements
+    .filter((row) => Number(row.shortage_quantity) > 0)
+    .reduce((acc, row) => acc + Number(row.shortage_quantity) * Number(row.estimated_unit_cost ?? 0), 0);
+
+  return {
+    totalEstimatedCost,
+    totalRequiredLines,
+    shortageCount,
+    totalShortageCost,
+  };
 }
 
 export async function getCateringPlanSummary(tenantSlug: string, planId: string) {
@@ -194,18 +216,10 @@ export async function getCateringPlanSummary(tenantSlug: string, planId: string)
     getCateringPlan(tenantSlug, planId),
     listCateringRequirements(tenantSlug, planId),
   ]);
-  const totalEstimatedCost = requirements.reduce((acc, row) => acc + Number(row.estimated_total_cost ?? 0), 0);
-  const totalRequiredLines = requirements.length;
-  const shortageCount = requirements.filter((row) => Number(row.shortage_quantity) > 0).length;
-  const totalShortageCost = requirements
-    .filter((row) => Number(row.shortage_quantity) > 0)
-    .reduce((acc, row) => acc + Number(row.shortage_quantity) * Number(row.estimated_unit_cost ?? 0), 0);
+  const summary = summarizeCateringRequirements(requirements);
   return {
     plan,
-    totalEstimatedCost,
-    totalRequiredLines,
-    shortageCount,
-    totalShortageCost,
+    ...summary,
   };
 }
 
@@ -293,6 +307,29 @@ export async function listCateringRequisitionLines(tenantSlug: string, requisiti
       ? ((row.kitchen_inventory_suppliers[0] ?? null) as EventCateringRequisitionLine["kitchen_inventory_suppliers"])
       : ((row.kitchen_inventory_suppliers ?? null) as EventCateringRequisitionLine["kitchen_inventory_suppliers"]),
   }));
+}
+
+export async function listCateringRequisitionLineCountsByRequisitionIds(
+  tenantSlug: string,
+  requisitionIds: string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (const requisitionId of requisitionIds) counts.set(requisitionId, 0);
+  if (requisitionIds.length === 0) return counts;
+
+  const tenant = await resolveTenantModulePageContext(tenantSlug, "event_catering", "requisitions", "read");
+  const supabase = await getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("event_catering_requisition_lines")
+    .select("requisition_id")
+    .eq("tenant_id", tenant.tenantId)
+    .in("requisition_id", requisitionIds);
+  if (error) throw new Error(`No fue posible contar líneas de requisición: ${error.message}`);
+
+  for (const row of data ?? []) {
+    counts.set(row.requisition_id, (counts.get(row.requisition_id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 export async function listPurchaseOptionsForRequisitionLine(
@@ -1009,6 +1046,105 @@ export async function getConsumptionLineAvailability(
   });
 }
 
+export async function getConsumptionLineAvailabilityByRecordIds(
+  tenantSlug: string,
+  consumptionRecordIds: string[],
+): Promise<Map<string, EventCateringConsumptionLineAvailability[]>> {
+  const availabilityByRecord = new Map<string, EventCateringConsumptionLineAvailability[]>();
+  for (const id of consumptionRecordIds) availabilityByRecord.set(id, []);
+  if (consumptionRecordIds.length === 0) return availabilityByRecord;
+
+  const tenant = await resolveTenantModulePageContext(tenantSlug, "event_catering", "consumption", "read");
+  const supabase = await getSupabaseServerClient();
+
+  const { data: linesRaw, error: linesError } = await supabase
+    .from("event_catering_consumption_lines")
+    .select(
+      "id,consumption_record_id,item_id,unit_id,location_id,consumed_quantity,waste_quantity,leftover_quantity,kitchen_inventory_items:kitchen_inventory_items!event_catering_consumption_lines_tenant_item_fkey(id,name),kitchen_inventory_units:kitchen_inventory_units!event_catering_consumption_lines_tenant_unit_fkey(id,code,name)",
+    )
+    .eq("tenant_id", tenant.tenantId)
+    .in("consumption_record_id", consumptionRecordIds);
+  if (linesError) throw new Error(`No fue posible cargar líneas de consumo para disponibilidad: ${linesError.message}`);
+
+  const lines = ((linesRaw ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    id: String(row.id),
+    consumption_record_id: String(row.consumption_record_id),
+    item_id: String(row.item_id),
+    unit_id: String(row.unit_id),
+    location_id: (row.location_id as string | null) ?? null,
+    consumed_quantity: Number(row.consumed_quantity ?? 0),
+    waste_quantity: Number(row.waste_quantity ?? 0),
+    leftover_quantity: Number(row.leftover_quantity ?? 0),
+    kitchen_inventory_items: Array.isArray(row.kitchen_inventory_items)
+      ? ((row.kitchen_inventory_items[0] ?? null) as { id?: string; name?: string } | null)
+      : ((row.kitchen_inventory_items ?? null) as { id?: string; name?: string } | null),
+    kitchen_inventory_units: Array.isArray(row.kitchen_inventory_units)
+      ? ((row.kitchen_inventory_units[0] ?? null) as { id?: string; code?: string; name?: string } | null)
+      : ((row.kitchen_inventory_units ?? null) as { id?: string; code?: string; name?: string } | null),
+  }));
+
+  if (lines.length === 0) return availabilityByRecord;
+
+  const itemIds = [...new Set(lines.map((line) => line.item_id))];
+  const [{ data: balances, error: balancesError }, { data: locations, error: locationsError }] = await Promise.all([
+    supabase
+      .from("kitchen_inventory_balances")
+      .select("item_id,location_id,quantity")
+      .eq("tenant_id", tenant.tenantId)
+      .in("item_id", itemIds),
+    supabase.from("kitchen_inventory_locations").select("id,name").eq("tenant_id", tenant.tenantId).eq("is_active", true),
+  ]);
+  if (balancesError) throw new Error(`No fue posible cargar balances para disponibilidad de consumo: ${balancesError.message}`);
+  if (locationsError) throw new Error(`No fue posible cargar ubicaciones para disponibilidad de consumo: ${locationsError.message}`);
+
+  const itemLocationAvailable = new Map<string, number>();
+  for (const row of balances ?? []) {
+    itemLocationAvailable.set(`${row.item_id}:${row.location_id}`, Number(row.quantity ?? 0));
+  }
+
+  for (const line of lines) {
+    const totalOutQuantity = Number((Number(line.consumed_quantity ?? 0) + Number(line.waste_quantity ?? 0)).toFixed(4));
+    const availableAtCurrentLocation = line.location_id
+      ? Number((itemLocationAvailable.get(`${line.item_id}:${line.location_id}`) ?? 0).toFixed(4))
+      : 0;
+    const missingLocation = totalOutQuantity > 0 && !line.location_id;
+    const hasSufficientBalance = totalOutQuantity <= 0 || (!!line.location_id && availableAtCurrentLocation >= totalOutQuantity);
+
+    let warningMessage: string | null = null;
+    if (missingLocation) warningMessage = "Falta ubicación";
+    else if (!hasSufficientBalance) warningMessage = "Stock insuficiente";
+
+    const locationOptions = (locations ?? [])
+      .map((location) => ({
+        location_id: location.id as string,
+        location_name: (location.name as string) ?? "Ubicación",
+        available_quantity: Number((itemLocationAvailable.get(`${line.item_id}:${location.id}`) ?? 0).toFixed(4)),
+      }))
+      .filter((option) => option.available_quantity > 0 || option.location_id === line.location_id)
+      .sort((a, b) => b.available_quantity - a.available_quantity);
+
+    const availability: EventCateringConsumptionLineAvailability = {
+      line_id: line.id,
+      item_id: line.item_id,
+      item_name: line.kitchen_inventory_items?.name ?? line.item_id,
+      unit_id: line.unit_id,
+      unit_code: line.kitchen_inventory_units?.code ?? "ud",
+      location_id: line.location_id,
+      available_quantity: availableAtCurrentLocation,
+      total_out_quantity: totalOutQuantity,
+      has_sufficient_balance: hasSufficientBalance,
+      missing_location: missingLocation,
+      warning_message: warningMessage,
+      location_options: locationOptions,
+    };
+    const bucket = availabilityByRecord.get(line.consumption_record_id) ?? [];
+    bucket.push(availability);
+    availabilityByRecord.set(line.consumption_record_id, bucket);
+  }
+
+  return availabilityByRecord;
+}
+
 export function getConsumptionDraftReadiness(
   status: EventCateringConsumptionRecord["status"],
   availability: EventCateringConsumptionLineAvailability[],
@@ -1171,7 +1307,7 @@ export async function listCateringPlanItemFlow(
 ): Promise<CateringPlanItemFlowRow[]> {
   const tenant = await resolveTenantModulePageContext(tenantSlug, "event_catering", "plans", "read");
   const supabase = await getSupabaseServerClient();
-  const [requirements, requisitions, receipts, consumptions, balances] = await Promise.all([
+  const [requirements, requisitions, consumptions] = await Promise.all([
     supabase
       .from("event_catering_requirements")
       .select(
@@ -1180,26 +1316,33 @@ export async function listCateringPlanItemFlow(
       .eq("tenant_id", tenant.tenantId)
       .eq("plan_id", planId),
     supabase.from("event_catering_requisitions").select("id,status").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
-    supabase
-      .from("event_catering_purchase_receipts")
-      .select("id,status,requisition_id")
-      .eq("tenant_id", tenant.tenantId)
-      .in(
-        "requisition_id",
-        (
-          await supabase.from("event_catering_requisitions").select("id").eq("tenant_id", tenant.tenantId).eq("plan_id", planId)
-        ).data?.map((row) => row.id) ?? ["00000000-0000-0000-0000-000000000000"],
-      ),
     supabase.from("event_catering_consumption_records").select("id,status").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
-    supabase.from("kitchen_inventory_balances").select("item_id,quantity").eq("tenant_id", tenant.tenantId),
   ]);
   if (requirements.error) throw new Error(`No fue posible cargar flujo de requerimientos: ${requirements.error.message}`);
   if (requisitions.error) throw new Error(`No fue posible cargar flujo de requisiciones: ${requisitions.error.message}`);
-  if (receipts.error) throw new Error(`No fue posible cargar flujo de recepciones: ${receipts.error.message}`);
   if (consumptions.error) throw new Error(`No fue posible cargar flujo de consumos: ${consumptions.error.message}`);
-  if (balances.error) throw new Error(`No fue posible cargar balances para flujo: ${balances.error.message}`);
 
   const reqIds = (requisitions.data ?? []).map((row) => row.id);
+  const requirementItemIds = [...new Set((requirements.data ?? []).map((row) => row.item_id))];
+  const [receipts, balances] = await Promise.all([
+    reqIds.length > 0
+      ? supabase
+          .from("event_catering_purchase_receipts")
+          .select("id,status,requisition_id")
+          .eq("tenant_id", tenant.tenantId)
+          .in("requisition_id", reqIds)
+      : Promise.resolve({ data: [], error: null } as const),
+    requirementItemIds.length > 0
+      ? supabase
+          .from("kitchen_inventory_balances")
+          .select("item_id,quantity")
+          .eq("tenant_id", tenant.tenantId)
+          .in("item_id", requirementItemIds)
+      : Promise.resolve({ data: [], error: null } as const),
+  ]);
+  if (receipts.error) throw new Error(`No fue posible cargar flujo de recepciones: ${receipts.error.message}`);
+  if (balances.error) throw new Error(`No fue posible cargar balances para flujo: ${balances.error.message}`);
+
   const receiptIds = (receipts.data ?? []).map((row) => row.id);
   const consumptionIds = (consumptions.data ?? []).map((row) => row.id);
 
@@ -1310,29 +1453,28 @@ export async function listCateringPlanItemFlow(
 export async function listCateringPlanWarnings(
   tenantSlug: string,
   planId: string,
+  options?: { itemFlow?: CateringPlanItemFlowRow[] },
 ): Promise<CateringPlanWarning[]> {
   const tenant = await resolveTenantModulePageContext(tenantSlug, "event_catering", "plans", "read");
   const supabase = await getSupabaseServerClient();
-  const [requirements, requisitions, receipts, consumptions, itemFlow] = await Promise.all([
+  const [requirements, requisitions, consumptions] = await Promise.all([
     supabase.from("event_catering_requirements").select("id,shortage_quantity").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
     supabase.from("event_catering_requisitions").select("id,status").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
-    supabase
-      .from("event_catering_purchase_receipts")
-      .select("id,status,requisition_id")
-      .eq("tenant_id", tenant.tenantId)
-      .in(
-        "requisition_id",
-        (
-          await supabase.from("event_catering_requisitions").select("id").eq("tenant_id", tenant.tenantId).eq("plan_id", planId)
-        ).data?.map((row) => row.id) ?? ["00000000-0000-0000-0000-000000000000"],
-      ),
     supabase.from("event_catering_consumption_records").select("id,status").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
-    listCateringPlanItemFlow(tenantSlug, planId),
   ]);
   if (requirements.error) throw new Error(`No fue posible evaluar warnings de requirements: ${requirements.error.message}`);
   if (requisitions.error) throw new Error(`No fue posible evaluar warnings de requisitions: ${requisitions.error.message}`);
-  if (receipts.error) throw new Error(`No fue posible evaluar warnings de receipts: ${receipts.error.message}`);
   if (consumptions.error) throw new Error(`No fue posible evaluar warnings de consumos: ${consumptions.error.message}`);
+  const requisitionIds = (requisitions.data ?? []).map((row) => row.id);
+  const receipts = requisitionIds.length
+    ? await supabase
+        .from("event_catering_purchase_receipts")
+        .select("id,status,requisition_id")
+        .eq("tenant_id", tenant.tenantId)
+        .in("requisition_id", requisitionIds)
+    : ({ data: [], error: null } as const);
+  if (receipts.error) throw new Error(`No fue posible evaluar warnings de receipts: ${receipts.error.message}`);
+  const itemFlow = options?.itemFlow ?? (await listCateringPlanItemFlow(tenantSlug, planId));
 
   const warnings: CateringPlanWarning[] = [];
   const hasReq = (requirements.data ?? []).length > 0;

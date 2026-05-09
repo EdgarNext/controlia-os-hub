@@ -4,6 +4,7 @@ import { cancelConsumptionDraftAction, confirmConsumptionRecordAction } from "@/
 import { getConsumptionDraftReadiness, getConsumptionLineAvailability, getConsumptionRecord, listConsumptionLines } from "@/lib/kitchen/event-catering/queries";
 import { ConsumptionLineEditor } from "../_components/consumption-line-editor";
 import { resolveKitchenPage } from "../../../../../../_lib/page-access";
+import { KitchenSubmitButton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-submit-button";
 
 type KitchenConsumptionDetailPageProps = {
   params: Promise<{ tenantSlug: string; eventId: string; planId: string; consumptionId: string }>;
@@ -68,13 +69,14 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
             <form action={confirmConsumptionRecordAction} className="mt-2">
               <input type="hidden" name="tenantSlug" value={tenantSlug} />
               <input type="hidden" name="consumptionId" value={record.id} />
-              <button
-                type="submit"
+              <KitchenSubmitButton
+                pendingLabel="Confirmando..."
                 disabled={!readiness.ready_to_confirm}
-                className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-70"
+                variant="secondary"
+                className="px-2 py-1 text-xs"
               >
                 {readiness.ready_to_confirm ? "Confirmar consumo" : "Confirmar consumo (bloqueado)"}
-              </button>
+              </KitchenSubmitButton>
             </form>
           ) : null}
         </div>
@@ -82,9 +84,13 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
           <form action={cancelConsumptionDraftAction} className="mt-3">
             <input type="hidden" name="tenantSlug" value={tenantSlug} />
             <input type="hidden" name="consumptionId" value={record.id} />
-            <button type="submit" className="inline-flex rounded border border-border bg-surface px-3 py-1 text-xs">
-              Cancelar draft
-            </button>
+            <KitchenSubmitButton
+              pendingLabel="Cancelando..."
+              variant="secondary"
+              className="px-3 py-1 text-xs"
+            >
+              Cancelar consumo
+            </KitchenSubmitButton>
           </form>
         ) : null}
       </section>

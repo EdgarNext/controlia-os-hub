@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import {
   getCurrentTenantModulePageAccessMap,
   hasModulePageAccess,
@@ -10,6 +11,8 @@ import {
   CreateKitchenInventorySupplierForm,
   CreateKitchenInventoryUnitForm,
 } from "../_components/inventory-forms";
+import { KitchenActionRowSkeleton, KitchenTableSkeleton } from "../../_components/kitchen-loading-skeletons";
+import { KitchenPageHeader } from "../../_components/kitchen-page-header";
 import { resolveKitchenPage } from "../../_lib/page-access";
 import {
   listKitchenInventoryCategories,
@@ -35,12 +38,52 @@ export default async function KitchenInventorySetupPage({ params }: KitchenInven
     );
   }
 
-  const [categories, units, suppliers, accessMap] = await Promise.all([
+  const accessMap = await getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "kitchen_inventory");
+  const canManageItems = hasModulePageAccess(accessMap.items ?? "none", "manage");
+
+  if (!canManageItems) {
+    return (
+      <StatePanel
+        kind="permission"
+        title="Solo lectura"
+        message="Solicita permisos manage para crear o editar catálogo de inventario."
+      />
+    );
+  }
+
+  const dataPromise = Promise.all([
     listKitchenInventoryCategories(result.tenant.tenantId),
     listKitchenInventoryUnits(result.tenant.tenantId),
     listKitchenInventorySuppliers(result.tenant.tenantId),
-    getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "kitchen_inventory"),
   ]);
+
+  return (
+    <div className="space-y-4">
+      <KitchenPageHeader
+        eyebrow="Inventario"
+        title="Configuración de inventario"
+        description="Administra catálogos base del módulo: insumos, categorías, unidades, proveedores y ubicaciones."
+      />
+
+      <Suspense fallback={<SetupContentFallback />}>
+        <SetupContent tenantSlug={result.tenant.tenantSlug} dataPromise={dataPromise} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function SetupContent({
+  tenantSlug,
+  dataPromise,
+}: {
+  tenantSlug: string;
+  dataPromise: ReturnType<typeof Promise.all<[
+    ReturnType<typeof listKitchenInventoryCategories>,
+    ReturnType<typeof listKitchenInventoryUnits>,
+    ReturnType<typeof listKitchenInventorySuppliers>
+  ]>>;
+}) {
+  const [categories, units, suppliers] = await dataPromise;
 
   const dedupeById = <T extends { id: string }>(rows: T[]): T[] => {
     const seen = new Set<string>();
@@ -57,39 +100,27 @@ export default async function KitchenInventorySetupPage({ params }: KitchenInven
   const uniqueUnits = dedupeById(units);
   const uniqueSuppliers = dedupeById(suppliers);
 
-  const canManageItems = hasModulePageAccess(accessMap.items ?? "none", "manage");
-
-  if (!canManageItems) {
-    return (
-      <StatePanel
-        kind="permission"
-        title="Solo lectura"
-        message="Solicita permisos manage para crear o editar catálogo de inventario."
-      />
-    );
-  }
-
   return (
-    <div className="space-y-4">
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h1 className="text-lg font-semibold text-foreground">Configuración de inventario</h1>
-        <p className="mt-2 text-sm text-muted">
-          Administra catálogos base del módulo: insumos, categorías, unidades, proveedores y ubicaciones.
-        </p>
-      </section>
+    <div className="grid gap-4 xl:grid-cols-2">
+      <CreateKitchenInventoryItemForm
+        tenantSlug={tenantSlug}
+        categories={uniqueCategories}
+        units={uniqueUnits}
+        suppliers={uniqueSuppliers}
+      />
+      <CreateKitchenInventoryCategoryForm tenantSlug={tenantSlug} />
+      <CreateKitchenInventoryUnitForm tenantSlug={tenantSlug} />
+      <CreateKitchenInventorySupplierForm tenantSlug={tenantSlug} />
+      <CreateKitchenInventoryLocationForm tenantSlug={tenantSlug} />
+    </div>
+  );
+}
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <CreateKitchenInventoryItemForm
-          tenantSlug={result.tenant.tenantSlug}
-          categories={uniqueCategories}
-          units={uniqueUnits}
-          suppliers={uniqueSuppliers}
-        />
-        <CreateKitchenInventoryCategoryForm tenantSlug={result.tenant.tenantSlug} />
-        <CreateKitchenInventoryUnitForm tenantSlug={result.tenant.tenantSlug} />
-        <CreateKitchenInventorySupplierForm tenantSlug={result.tenant.tenantSlug} />
-        <CreateKitchenInventoryLocationForm tenantSlug={result.tenant.tenantSlug} />
-      </div>
+function SetupContentFallback() {
+  return (
+    <div className="space-y-4" aria-live="polite" aria-busy="true">
+      <KitchenActionRowSkeleton actions={3} />
+      <KitchenTableSkeleton rows={6} columns={4} />
     </div>
   );
 }

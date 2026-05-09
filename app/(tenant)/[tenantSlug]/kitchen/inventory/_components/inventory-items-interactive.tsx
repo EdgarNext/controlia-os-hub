@@ -4,10 +4,37 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { StatePanel } from "@/components/ui/state-panel";
 import { formatKitchenUnit, formatQuantityWithUnit } from "@/lib/kitchen/formatters";
-import type { KitchenInventoryItemOperationalRow } from "@/lib/kitchen/inventory/types";
+
+type InventoryItemInteractiveRow = {
+  item: {
+    id: string;
+    name: string;
+    normalized_name: string;
+    sku: string | null;
+    category_id: string | null;
+    default_supplier_id: string | null;
+    unit_code: string | null;
+    category_name: string | null;
+    supplier_name: string | null;
+  };
+  totalBalance: number;
+  locationCount: number;
+  locationNames: string[];
+  estimatedValue: number;
+  currentUnitCost: number;
+  isAllowedZeroCost: boolean;
+  hasCurrentSupplierPrice: boolean;
+  currentSupplierPrice: {
+    price_per_purchase_unit: number;
+    purchase_unit_code: string | null;
+  } | null;
+  stateTags: Array<
+    "completo" | "sin_opcion_compra" | "sin_precio_proveedor" | "sin_proveedor" | "costo_0" | "unidad_dudosa" | "test_sandbox"
+  >;
+};
 
 type InventoryItemsInteractiveProps = {
-  rows: KitchenInventoryItemOperationalRow[];
+  rows: InventoryItemInteractiveRow[];
   categories: Array<{ id: string; name: string }>;
   suppliers: Array<{ id: string; name: string }>;
   initialFilters: {
@@ -219,15 +246,15 @@ export function InventoryItemsInteractive({
                     <td className="px-3 py-2 text-foreground align-top">
                       <div className="max-w-[20ch] whitespace-normal break-words">{row.item.name}</div>
                     </td>
-                    <td className="px-3 py-2 text-foreground whitespace-nowrap">{row.item.kitchen_inventory_categories?.name ?? "Sin categoría"}</td>
+                    <td className="px-3 py-2 text-foreground whitespace-nowrap">{row.item.category_name ?? "Sin categoría"}</td>
                     <td className="px-3 py-2 text-right text-foreground whitespace-nowrap">
-                      {formatQuantityWithUnit(row.totalBalance, row.item.kitchen_inventory_units?.code, 4)}
+                      {formatQuantityWithUnit(row.totalBalance, row.item.unit_code, 4)}
                     </td>
                     <td className="px-3 py-2 text-right text-foreground whitespace-nowrap">
                       {row.currentUnitCost <= 0 && !row.isAllowedZeroCost ? (
                         <span className="text-danger">Sin costo</span>
                       ) : (
-                        `${formatCurrency(row.currentUnitCost)} / ${formatKitchenUnit(row.item.kitchen_inventory_units?.code)}`
+                        `${formatCurrency(row.currentUnitCost)} / ${formatKitchenUnit(row.item.unit_code)}`
                       )}
                     </td>
                     <td className="px-3 py-2 text-right text-foreground whitespace-nowrap">{formatCurrency(row.estimatedValue)}</td>
@@ -235,7 +262,7 @@ export function InventoryItemsInteractive({
                       {row.locationCount === 0 ? "—" : `${row.locationCount} · ${row.locationNames.join(", ")}`}
                     </td>
                     <td className="px-3 py-2 text-foreground whitespace-nowrap">
-                      {row.item.kitchen_inventory_suppliers?.name ?? "Sin proveedor"}
+                      {row.item.supplier_name ?? "Sin proveedor"}
                     </td>
                     <td className="px-3 py-2 text-foreground">
                       {row.hasCurrentSupplierPrice && row.currentSupplierPrice ? (
@@ -243,7 +270,7 @@ export function InventoryItemsInteractive({
                           <div>Vigente</div>
                           <div className="text-xs text-muted">
                             {formatCurrency(Number(row.currentSupplierPrice.price_per_purchase_unit ?? 0))} /{" "}
-                            {formatKitchenUnit(row.currentSupplierPrice.purchase_unit?.code)}
+                            {formatKitchenUnit(row.currentSupplierPrice.purchase_unit_code)}
                           </div>
                         </div>
                       ) : (

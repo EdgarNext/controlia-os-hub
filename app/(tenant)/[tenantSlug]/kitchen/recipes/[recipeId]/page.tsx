@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { StatePanel } from "@/components/ui/state-panel";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
 import { calculateKitchenRecipeVersionCost } from "@/lib/kitchen/recipes/costing";
@@ -20,6 +21,7 @@ import {
   SaveKitchenRecipeSnapshotForm,
   SkipPendingRecipeIngredientForm,
 } from "../_components/recipe-forms";
+import { KitchenActionRowSkeleton, KitchenCardGridSkeleton, KitchenTableSkeleton } from "../../_components/kitchen-loading-skeletons";
 import { resolveKitchenPage } from "../../_lib/page-access";
 
 type KitchenRecipeDetailPageProps = {
@@ -51,52 +53,100 @@ export default async function KitchenRecipeDetailPage({ params }: KitchenRecipeD
     return <StatePanel kind="empty" title="Sin versiones" message="La receta no tiene versiones disponibles." />;
   }
 
-  const [lines, items, units, subRecipes, costResult, pendingImportRows, readiness] = await Promise.all([
-    listKitchenRecipeLines(result.tenant.tenantId, version.id),
-    listKitchenRecipeIngredientItems(result.tenant.tenantId),
-    listKitchenRecipeUnits(result.tenant.tenantId),
-    listKitchenSubRecipeCandidates(result.tenant.tenantId, recipe.id),
-    calculateKitchenRecipeVersionCost(result.tenant.tenantId, version.id),
-    listPendingImportRowsForRecipe(result.tenant.tenantId, recipe.id),
-    getKitchenRecipeReadiness(result.tenant.tenantId, recipe.id),
-  ]);
-  const isReady = readiness?.readiness_status === "ready";
-  const unitByCode = new Map(units.map((unit) => [unit.code.toLowerCase(), unit.id]));
-  const baseServings = Number(version.servings ?? 0);
-  const yieldUnitCode = version.kitchen_inventory_units?.code?.toLowerCase() ?? null;
-  const baseLabel = (() => {
-    if (yieldUnitCode?.includes("charol")) return baseServings === 1 ? "charola" : "charolas";
-    if (yieldUnitCode === "l" || yieldUnitCode === "ml") return baseServings === 1 ? "litro" : "litros";
-    if (yieldUnitCode === "pza") return baseServings === 1 ? "pieza" : "piezas";
-    if (baseServings > 0) return baseServings === 1 ? "persona/porción" : "personas/porciones";
-    return "unidades";
-  })();
-  const quantityPerUnitLabel = (() => {
-    if (yieldUnitCode?.includes("charol")) return "Cantidad por charola";
-    if (yieldUnitCode === "l" || yieldUnitCode === "ml") return "Cantidad por litro";
-    if (yieldUnitCode === "pza") return "Cantidad por pieza";
-    if (baseServings > 0) return "Cantidad por persona";
-    return "Cantidad por unidad de rendimiento";
-  })();
-  const costPerBaseLabel = (() => {
-    if (yieldUnitCode?.includes("charol")) return "Costo por charola";
-    if (yieldUnitCode === "l" || yieldUnitCode === "ml") return "Costo por litro";
-    if (yieldUnitCode === "pza") return "Costo por pieza";
-    if (baseServings > 0) return "Costo por persona";
-    return "Costo por unidad de rendimiento";
-  })();
+  const linesPromise = listKitchenRecipeLines(result.tenant.tenantId, version.id);
+  const itemsPromise = listKitchenRecipeIngredientItems(result.tenant.tenantId);
+  const unitsPromise = listKitchenRecipeUnits(result.tenant.tenantId);
+  const subRecipesPromise = listKitchenSubRecipeCandidates(result.tenant.tenantId, recipe.id);
+  const costResultPromise = calculateKitchenRecipeVersionCost(result.tenant.tenantId, version.id);
+  const pendingImportRowsPromise = listPendingImportRowsForRecipe(result.tenant.tenantId, recipe.id);
+  const readinessPromise = getKitchenRecipeReadiness(result.tenant.tenantId, recipe.id);
 
   return (
     <div className="space-y-4">
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
         <h1 className="text-lg font-semibold text-foreground">{recipe.name}</h1>
         <p className="mt-2 text-sm text-muted">Versión v{version.version_number} · estado {version.status}</p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
+      </section>
+
+      <Suspense fallback={<RecipeOverviewFallback canManage={canManage} />}>
+        <RecipeOverviewSection
+          tenantSlug={result.tenant.tenantSlug}
+          recipeId={recipe.id}
+          recipeVersionId={version.id}
+          versionStatus={version.status}
+          canManage={canManage}
+          costResultPromise={costResultPromise}
+          readinessPromise={readinessPromise}
+        />
+      </Suspense>
+
+      <Suspense fallback={<KitchenTableSkeleton rows={4} columns={4} />}>
+        <PendingImportsSection
+          tenantSlug={result.tenant.tenantSlug}
+          recipeId={recipe.id}
+          canManage={canManage}
+          pendingImportRowsPromise={pendingImportRowsPromise}
+          itemsPromise={itemsPromise}
+          unitsPromise={unitsPromise}
+        />
+      </Suspense>
+
+      <Suspense fallback={<KitchenTableSkeleton rows={8} columns={6} />}>
+        <RecipeLinesSection
+          tenantSlug={result.tenant.tenantSlug}
+          recipeId={recipe.id}
+          canManage={canManage}
+          versionStatus={version.status}
+          baseServings={Number(version.servings ?? 0)}
+          yieldUnitCode={version.kitchen_inventory_units?.code?.toLowerCase() ?? null}
+          linesPromise={linesPromise}
+          unitsPromise={unitsPromise}
+        />
+      </Suspense>
+
+      <Suspense fallback={<KitchenActionRowSkeleton actions={1} />}>
+        <AddRecipeLineSection
+          tenantSlug={result.tenant.tenantSlug}
+          recipeId={recipe.id}
+          canManage={canManage}
+          recipeVersion={version}
+          itemsPromise={itemsPromise}
+          unitsPromise={unitsPromise}
+          subRecipesPromise={subRecipesPromise}
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+async function RecipeOverviewSection({
+  tenantSlug,
+  recipeId,
+  recipeVersionId,
+  versionStatus,
+  canManage,
+  costResultPromise,
+  readinessPromise,
+}: {
+  tenantSlug: string;
+  recipeId: string;
+  recipeVersionId: string;
+  versionStatus: "draft" | "active" | "archived";
+  canManage: boolean;
+  costResultPromise: ReturnType<typeof calculateKitchenRecipeVersionCost>;
+  readinessPromise: ReturnType<typeof getKitchenRecipeReadiness>;
+}) {
+  const [costResult, readiness] = await Promise.all([costResultPromise, readinessPromise]);
+  const isReady = readiness?.readiness_status === "ready";
+
+  return (
+    <>
+      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
+        <div className="flex flex-wrap items-center gap-2">
           <span className={`inline-flex rounded-full px-2 py-0.5 text-xs ${isReady ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
             {isReady ? "Lista para eventos" : "Pendiente de completar"}
           </span>
           <span className="text-xs text-muted">{readiness?.readiness_reason ?? "Sin estado de readiness"}</span>
-          {!isReady && canManage ? <span className="text-xs text-muted">CTA: Completar receta</span> : null}
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
@@ -106,7 +156,7 @@ export default async function KitchenRecipeDetailPage({ params }: KitchenRecipeD
             </p>
           </div>
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-            <p className="text-xs text-muted">{costPerBaseLabel}</p>
+            <p className="text-xs text-muted">Costo por unidad de rendimiento</p>
             <p className="text-lg font-semibold text-foreground">
               {costResult.costPerServing == null
                 ? "—"
@@ -114,24 +164,22 @@ export default async function KitchenRecipeDetailPage({ params }: KitchenRecipeD
             </p>
           </div>
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-            <p className="text-xs text-muted">Rendimiento base</p>
-            <p className="text-lg font-semibold text-foreground">
-              {baseServings > 0 ? `${baseServings.toLocaleString("es-MX", { maximumFractionDigits: 2 })} ${baseLabel}` : "—"}
-            </p>
+            <p className="text-xs text-muted">Warnings de costeo</p>
+            <p className="text-lg font-semibold text-foreground">{costResult.warnings.length}</p>
           </div>
         </div>
 
         {canManage ? (
           <div className="mt-3 flex flex-wrap gap-2">
-            {version.status === "active" ? (
+            {versionStatus === "active" ? (
               <CreateDraftFromActiveKitchenRecipeVersionForm
-                tenantSlug={result.tenant.tenantSlug}
-                recipeId={recipe.id}
-                sourceVersionId={version.id}
+                tenantSlug={tenantSlug}
+                recipeId={recipeId}
+                sourceVersionId={recipeVersionId}
               />
             ) : null}
-            <ActivateKitchenRecipeVersionForm tenantSlug={result.tenant.tenantSlug} recipeId={recipe.id} recipeVersionId={version.id} />
-            <SaveKitchenRecipeSnapshotForm tenantSlug={result.tenant.tenantSlug} recipeId={recipe.id} recipeVersionId={version.id} />
+            <ActivateKitchenRecipeVersionForm tenantSlug={tenantSlug} recipeId={recipeId} recipeVersionId={recipeVersionId} />
+            <SaveKitchenRecipeSnapshotForm tenantSlug={tenantSlug} recipeId={recipeId} recipeVersionId={recipeVersionId} />
           </div>
         ) : null}
       </section>
@@ -146,89 +194,162 @@ export default async function KitchenRecipeDetailPage({ params }: KitchenRecipeD
           </ul>
         </section>
       ) : null}
+    </>
+  );
+}
 
-      {pendingImportRows.length > 0 ? (
-        <section className="rounded-[var(--radius-base)] border border-warning/40 bg-warning/10 p-4">
-          <h2 className="text-sm font-semibold text-foreground">Ingredientes pendientes de capturar</h2>
-          <p className="mt-1 text-xs text-muted">No se encontró insumo en inventario durante la importación inicial. Completa manualmente.</p>
-          <div className="mt-2 space-y-2">
-            {pendingImportRows.map((row) => (
-              <div key={row.id} className="rounded border border-border bg-surface p-2">
-                <p className="text-sm text-foreground">{row.ingredient_name ?? "Ingrediente sin nombre"}</p>
-                <p className="text-xs text-muted">
-                  cantidad: {row.quantity ?? "—"} {row.unit_code ?? ""}
-                </p>
-                <p className="text-xs text-warning">
-                  Motivo: {row.validation_warnings?.[0] ?? "No se encontró insumo en inventario."}
-                </p>
-                {canManage ? (
-                  <div className="mt-2 space-y-2">
-                    <ResolvePendingRecipeIngredientForm
-                      tenantSlug={result.tenant.tenantSlug}
-                      recipeId={recipe.id}
-                      importRowId={row.id}
-                      defaultQuantity={row.quantity}
-                      defaultUnitId={unitByCode.get(String(row.unit_code ?? "").toLowerCase())}
-                      items={items}
-                      units={units}
-                    />
-                    <SkipPendingRecipeIngredientForm
-                      tenantSlug={result.tenant.tenantSlug}
-                      recipeId={recipe.id}
-                      importRowId={row.id}
-                    />
-                    <a
-                      href={`/${result.tenant.tenantSlug}/kitchen/inventory/items`}
-                      className="inline-flex text-xs text-foreground underline underline-offset-2"
-                    >
-                      Crear insumo en inventario
-                    </a>
-                  </div>
-                ) : null}
+async function PendingImportsSection({
+  tenantSlug,
+  recipeId,
+  canManage,
+  pendingImportRowsPromise,
+  itemsPromise,
+  unitsPromise,
+}: {
+  tenantSlug: string;
+  recipeId: string;
+  canManage: boolean;
+  pendingImportRowsPromise: ReturnType<typeof listPendingImportRowsForRecipe>;
+  itemsPromise: ReturnType<typeof listKitchenRecipeIngredientItems>;
+  unitsPromise: ReturnType<typeof listKitchenRecipeUnits>;
+}) {
+  const pendingImportRows = await pendingImportRowsPromise;
+  if (pendingImportRows.length === 0) return null;
+
+  const [items, units] = await Promise.all([itemsPromise, unitsPromise]);
+  const unitByCode = new Map(units.map((unit) => [unit.code.toLowerCase(), unit.id]));
+
+  return (
+    <section className="rounded-[var(--radius-base)] border border-warning/40 bg-warning/10 p-4">
+      <h2 className="text-sm font-semibold text-foreground">Ingredientes pendientes de capturar</h2>
+      <p className="mt-1 text-xs text-muted">No se encontró insumo en inventario durante la importación inicial. Completa manualmente.</p>
+      <div className="mt-2 space-y-2">
+        {pendingImportRows.map((row) => (
+          <div key={row.id} className="rounded border border-border bg-surface p-2">
+            <p className="text-sm text-foreground">{row.ingredient_name ?? "Ingrediente sin nombre"}</p>
+            <p className="text-xs text-muted">
+              cantidad: {row.quantity ?? "—"} {row.unit_code ?? ""}
+            </p>
+            <p className="text-xs text-warning">Motivo: {row.validation_warnings?.[0] ?? "No se encontró insumo en inventario."}</p>
+            {canManage ? (
+              <div className="mt-2 space-y-2">
+                <ResolvePendingRecipeIngredientForm
+                  tenantSlug={tenantSlug}
+                  recipeId={recipeId}
+                  importRowId={row.id}
+                  defaultQuantity={row.quantity}
+                  defaultUnitId={unitByCode.get(String(row.unit_code ?? "").toLowerCase())}
+                  items={items}
+                  units={units}
+                />
+                <SkipPendingRecipeIngredientForm tenantSlug={tenantSlug} recipeId={recipeId} importRowId={row.id} />
+                <a href={`/${tenantSlug}/kitchen/inventory/items`} className="inline-flex text-xs text-foreground underline underline-offset-2">
+                  Crear insumo en inventario
+                </a>
               </div>
-            ))}
+            ) : null}
           </div>
-          {canManage ? (
-            <p className="mt-2 text-xs text-muted">Usa “Agregar línea” para capturar manualmente cada ingrediente pendiente.</p>
-          ) : null}
-        </section>
-      ) : null}
+        ))}
+      </div>
+    </section>
+  );
+}
 
-      {lines.length === 0 ? (
-        <StatePanel kind="empty" title="Sin ingredientes" message="Agrega líneas de insumos o sub-recetas para costear esta receta." />
-      ) : (
-        <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-          <h2 className="text-sm font-semibold text-foreground">Ingredientes y sub-recetas</h2>
-          <p className="mt-1 text-xs text-muted">
-            La receta se edita por unidad mínima de rendimiento. Internamente se guarda cantidad total para el rendimiento base.
-          </p>
-          <div className="mt-2">
-            <RecipeLineList
-              tenantSlug={result.tenant.tenantSlug}
-              recipeId={recipe.id}
-              canManage={canManage}
-              lines={lines}
-              baseServings={baseServings}
-              quantityPerUnitLabel={quantityPerUnitLabel}
-              versionStatus={version.status}
-              units={units}
-            />
-          </div>
-        </section>
-      )}
+async function RecipeLinesSection({
+  tenantSlug,
+  recipeId,
+  canManage,
+  versionStatus,
+  baseServings,
+  yieldUnitCode,
+  linesPromise,
+  unitsPromise,
+}: {
+  tenantSlug: string;
+  recipeId: string;
+  canManage: boolean;
+  versionStatus: string;
+  baseServings: number;
+  yieldUnitCode: string | null;
+  linesPromise: ReturnType<typeof listKitchenRecipeLines>;
+  unitsPromise: ReturnType<typeof listKitchenRecipeUnits>;
+}) {
+  const [lines, units] = await Promise.all([linesPromise, unitsPromise]);
 
-      {canManage ? (
-        <AddKitchenRecipeLineForm
-          tenantSlug={result.tenant.tenantSlug}
-          recipeId={recipe.id}
-          recipeVersion={version}
-          items={items}
+  if (lines.length === 0) {
+    return <StatePanel kind="empty" title="Sin ingredientes" message="Agrega líneas de insumos o sub-recetas para costear esta receta." />;
+  }
+
+  const quantityPerUnitLabel = (() => {
+    if (yieldUnitCode?.includes("charol")) return "Cantidad por charola";
+    if (yieldUnitCode === "l" || yieldUnitCode === "ml") return "Cantidad por litro";
+    if (yieldUnitCode === "pza") return "Cantidad por pieza";
+    if (baseServings > 0) return "Cantidad por persona";
+    return "Cantidad por unidad de rendimiento";
+  })();
+
+  return (
+    <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
+      <h2 className="text-sm font-semibold text-foreground">Ingredientes y sub-recetas</h2>
+      <p className="mt-1 text-xs text-muted">
+        La receta se edita por unidad mínima de rendimiento. Internamente se guarda cantidad total para el rendimiento base.
+      </p>
+      <div className="mt-2">
+        <RecipeLineList
+          tenantSlug={tenantSlug}
+          recipeId={recipeId}
+          canManage={canManage}
+          lines={lines}
+          baseServings={baseServings}
+          quantityPerUnitLabel={quantityPerUnitLabel}
+          versionStatus={versionStatus as "draft" | "active" | "archived"}
           units={units}
-          subRecipes={subRecipes}
         />
-      ) : (
-        <StatePanel kind="permission" title="Solo lectura" message="Tienes acceso read. Solicita manage para editar receta." />
-      )}
+      </div>
+    </section>
+  );
+}
+
+async function AddRecipeLineSection({
+  tenantSlug,
+  recipeId,
+  canManage,
+  recipeVersion,
+  itemsPromise,
+  unitsPromise,
+  subRecipesPromise,
+}: {
+  tenantSlug: string;
+  recipeId: string;
+  canManage: boolean;
+  recipeVersion: Awaited<ReturnType<typeof listKitchenRecipeVersions>>[number];
+  itemsPromise: ReturnType<typeof listKitchenRecipeIngredientItems>;
+  unitsPromise: ReturnType<typeof listKitchenRecipeUnits>;
+  subRecipesPromise: ReturnType<typeof listKitchenSubRecipeCandidates>;
+}) {
+  if (!canManage) {
+    return <StatePanel kind="permission" title="Solo lectura" message="Tienes acceso read. Solicita manage para editar receta." />;
+  }
+
+  const [items, units, subRecipes] = await Promise.all([itemsPromise, unitsPromise, subRecipesPromise]);
+
+  return (
+    <AddKitchenRecipeLineForm
+      tenantSlug={tenantSlug}
+      recipeId={recipeId}
+      recipeVersion={recipeVersion}
+      items={items}
+      units={units}
+      subRecipes={subRecipes}
+    />
+  );
+}
+
+function RecipeOverviewFallback({ canManage }: { canManage: boolean }) {
+  return (
+    <div className="space-y-4" aria-live="polite" aria-busy="true">
+      <KitchenCardGridSkeleton cards={3} />
+      {canManage ? <KitchenActionRowSkeleton actions={3} /> : null}
     </div>
   );
 }

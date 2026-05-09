@@ -1,20 +1,33 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { StatePanel } from "@/components/ui/state-panel";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
-import { listKitchenRecipes } from "@/lib/kitchen/recipes/queries";
 import {
   listKitchenRecipeActiveOrDraftVersionsByRecipeIds,
-  listKitchenRecipeLatestSnapshots,
+  listKitchenRecipeLatestSnapshotsByRecipeIds,
+  listKitchenRecipes,
   listKitchenRecipeUnits,
 } from "@/lib/kitchen/recipes/queries";
-import { listKitchenRecipeReadiness } from "@/lib/kitchen/recipes/readiness";
+import { listKitchenRecipeReadinessByRecipes } from "@/lib/kitchen/recipes/readiness";
+import {
+  KitchenActionRowSkeleton,
+  KitchenTableSkeleton,
+} from "../_components/kitchen-loading-skeletons";
+import { KitchenPageHeader } from "../_components/kitchen-page-header";
+import { resolveKitchenPage } from "../_lib/page-access";
 import { CreateKitchenRecipeForm } from "./_components/recipe-forms";
 import { RecipesListInteractive } from "./_components/recipes-list-interactive";
-import { resolveKitchenPage } from "../_lib/page-access";
 
 type KitchenRecipesPageProps = {
   params: Promise<{ tenantSlug: string }>;
   searchParams: Promise<{ q?: string; status?: string; category?: string }>;
+};
+
+type RecipesListPayload = {
+  recipes: Awaited<ReturnType<typeof listKitchenRecipes>>;
+  readiness: Awaited<ReturnType<typeof listKitchenRecipeReadinessByRecipes>>;
+  snapshots: Awaited<ReturnType<typeof listKitchenRecipeLatestSnapshotsByRecipeIds>>;
+  versionByRecipe: Awaited<ReturnType<typeof listKitchenRecipeActiveOrDraftVersionsByRecipeIds>>;
 };
 
 export default async function KitchenRecipesPage({ params, searchParams }: KitchenRecipesPageProps) {
@@ -32,15 +45,79 @@ export default async function KitchenRecipesPage({ params, searchParams }: Kitch
     );
   }
 
-  const [recipes, units, readiness, snapshots, accessMap] = await Promise.all([
-    listKitchenRecipes(result.tenant.tenantId),
-    listKitchenRecipeUnits(result.tenant.tenantId),
-    listKitchenRecipeReadiness(result.tenant.tenantId),
-    listKitchenRecipeLatestSnapshots(result.tenant.tenantId),
-    getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "kitchen_recipes"),
-  ]);
+  const accessMap = await getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "kitchen_recipes");
+  const canManage = hasModulePageAccess(accessMap.recipes ?? "none", "manage");
+  const initialFilters = {
+    q: rawSearchParams.q?.trim() ?? "",
+    status: rawSearchParams.status?.trim() ?? "",
+    category: rawSearchParams.category?.trim() ?? "",
+  };
+
+  const recipesListPromise: Promise<RecipesListPayload> = (async () => {
+    const recipes = await listKitchenRecipes(result.tenant.tenantId);
+    const recipeRefs = recipes.map((recipe) => ({ id: recipe.id, name: recipe.name }));
+    const [readiness, snapshots, versionByRecipe] = await Promise.all([
+      listKitchenRecipeReadinessByRecipes(result.tenant.tenantId, recipeRefs),
+      listKitchenRecipeLatestSnapshotsByRecipeIds(
+        result.tenant.tenantId,
+        recipes.map((recipe) => recipe.id),
+      ),
+      listKitchenRecipeActiveOrDraftVersionsByRecipeIds(
+        result.tenant.tenantId,
+        recipes.map((recipe) => recipe.id),
+      ),
+    ]);
+    return { recipes, readiness, snapshots, versionByRecipe };
+  })();
+
+  const unitsPromise = canManage ? listKitchenRecipeUnits(result.tenant.tenantId) : null;
+
+  return (
+    <div className="space-y-4">
+      <KitchenPageHeader
+        eyebrow="Recetas"
+        title="Recetas y Costeo"
+        description="Define recetas versionadas con líneas de insumos/sub-recetas y calcula costo operativo actual."
+        actions={
+          <>
+            <Link href={`/${tenantSlug}/kitchen/recipes/costing`} className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm">
+              Tablero de costeo
+            </Link>
+            <Link href={`/${tenantSlug}/kitchen/recipes/imports`} className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm">
+              Importaciones recetario
+            </Link>
+          </>
+        }
+      />
+
+      <Suspense fallback={<KitchenTableSkeleton rows={8} columns={7} />}>
+        <RecipesListSection tenantSlug={tenantSlug} initialFilters={initialFilters} dataPromise={recipesListPromise} />
+      </Suspense>
+
+      {canManage && unitsPromise ? (
+        <Suspense fallback={<KitchenActionRowSkeleton actions={1} />}>
+          <CreateRecipeSection tenantSlug={result.tenant.tenantSlug} unitsPromise={unitsPromise} />
+        </Suspense>
+      ) : (
+        <StatePanel kind="permission" title="Solo lectura" message="Solicita permisos manage para crear o editar recetas." />
+      )}
+    </div>
+  );
+}
+
+async function RecipesListSection({
+  tenantSlug,
+  initialFilters,
+  dataPromise,
+}: {
+  tenantSlug: string;
+  initialFilters: { q: string; status: string; category: string };
+  dataPromise: Promise<RecipesListPayload>;
+}) {
+  const { recipes, readiness, snapshots, versionByRecipe } = await dataPromise;
   const readinessByRecipe = new Map(readiness.map((row) => [row.recipe_id, row]));
   const snapshotByRecipe = new Map<string, { created_at: string; total_cost: number; warnings: unknown[] }>();
+
   for (const raw of snapshots) {
     const recipeId = String(raw.recipe_id ?? "");
     if (!recipeId || snapshotByRecipe.has(recipeId)) continue;
@@ -51,17 +128,15 @@ export default async function KitchenRecipesPage({ params, searchParams }: Kitch
     });
   }
 
-  const versionByRecipe = await listKitchenRecipeActiveOrDraftVersionsByRecipeIds(
-    result.tenant.tenantId,
-    recipes.map((recipe) => recipe.id),
-  );
-
-  const canManage = hasModulePageAccess(accessMap.recipes ?? "none", "manage");
-  const initialFilters = {
-    q: rawSearchParams.q?.trim() ?? "",
-    status: rawSearchParams.status?.trim() ?? "",
-    category: rawSearchParams.category?.trim() ?? "",
-  };
+  if (recipes.length === 0) {
+    return (
+      <StatePanel
+        kind="empty"
+        title="Sin recetas registradas"
+        message="Crea la primera receta para iniciar versionado y costeo."
+      />
+    );
+  }
 
   const recipeRows = recipes.map((recipe) => {
     const row = readinessByRecipe.get(recipe.id);
@@ -89,38 +164,16 @@ export default async function KitchenRecipesPage({ params, searchParams }: Kitch
     };
   });
 
-  return (
-    <div className="space-y-4">
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h1 className="text-lg font-semibold text-foreground">Recetas y Costeo</h1>
-        <p className="mt-2 text-sm text-muted">
-          Define recetas versionadas con líneas de insumos/sub-recetas y calcula costo operativo actual.
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Link href={`/${tenantSlug}/kitchen/recipes/costing`} className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm">
-            Tablero de costeo
-          </Link>
-          <Link href={`/${tenantSlug}/kitchen/recipes/imports`} className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm">
-            Importaciones Recetario
-          </Link>
-        </div>
-      </section>
+  return <RecipesListInteractive tenantSlug={tenantSlug} rows={recipeRows} initialFilters={initialFilters} />;
+}
 
-      {recipes.length === 0 ? (
-        <StatePanel
-          kind="empty"
-          title="Sin recetas registradas"
-          message="Crea la primera receta para iniciar versionado y costeo."
-        />
-      ) : (
-        <RecipesListInteractive tenantSlug={tenantSlug} rows={recipeRows} initialFilters={initialFilters} />
-      )}
-
-      {canManage ? (
-        <CreateKitchenRecipeForm tenantSlug={result.tenant.tenantSlug} units={units} />
-      ) : (
-        <StatePanel kind="permission" title="Solo lectura" message="Solicita permisos manage para crear o editar recetas." />
-      )}
-    </div>
-  );
+async function CreateRecipeSection({
+  tenantSlug,
+  unitsPromise,
+}: {
+  tenantSlug: string;
+  unitsPromise: Promise<Awaited<ReturnType<typeof listKitchenRecipeUnits>>>;
+}) {
+  const units = await unitsPromise;
+  return <CreateKitchenRecipeForm tenantSlug={tenantSlug} units={units} />;
 }

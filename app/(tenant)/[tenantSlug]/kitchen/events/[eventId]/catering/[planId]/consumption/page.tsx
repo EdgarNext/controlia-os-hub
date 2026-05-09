@@ -4,6 +4,7 @@ import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/
 import { createConsumptionDraftFromPlanAction } from "@/lib/kitchen/event-catering/actions";
 import { getCateringPlan, listConsumptionRecordsForPlan } from "@/lib/kitchen/event-catering/queries";
 import { resolveKitchenPage } from "../../../../../_lib/page-access";
+import { KitchenSubmitButton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-submit-button";
 
 type KitchenPlanConsumptionPageProps = {
   params: Promise<{ tenantSlug: string; eventId: string; planId: string }>;
@@ -36,9 +37,13 @@ export default async function KitchenPlanConsumptionPage({ params }: KitchenPlan
           <form action={createConsumptionDraftFromPlanAction} className="mt-3">
             <input type="hidden" name="tenantSlug" value={tenantSlug} />
             <input type="hidden" name="planId" value={plan.id} />
-            <button type="submit" className="inline-flex rounded border border-border bg-surface px-3 py-1 text-xs">
+            <KitchenSubmitButton
+              pendingLabel="Creando..."
+              variant="secondary"
+              className="px-3 py-1 text-xs"
+            >
               Crear/Refrescar consumo draft
-            </button>
+            </KitchenSubmitButton>
           </form>
         ) : null}
       </section>

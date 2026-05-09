@@ -192,3 +192,20 @@ export async function listKitchenRecipeLatestSnapshots(tenantId: string) {
   if (error) throw new Error(`No fue posible listar snapshots de costo: ${error.message}`);
   return data ?? [];
 }
+
+export async function listKitchenRecipeLatestSnapshotsByRecipeIds(
+  tenantId: string,
+  recipeIds: string[],
+) {
+  if (recipeIds.length === 0) return [];
+  const supabase = await getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kitchen_recipe_cost_snapshots")
+    .select("recipe_id,total_cost,warnings,created_at")
+    .eq("tenant_id", tenantId)
+    .eq("snapshot_type", "current")
+    .in("recipe_id", recipeIds)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`No fue posible listar snapshots de costo por receta: ${error.message}`);
+  return data ?? [];
+}

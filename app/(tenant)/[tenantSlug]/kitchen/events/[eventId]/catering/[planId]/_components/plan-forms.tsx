@@ -1,8 +1,8 @@
 "use client";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Button } from "@/components/ui/button";
 import { addReadyRecipeToCateringPlanAction } from "@/lib/kitchen/event-catering/actions";
+import { KitchenSubmitButton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-submit-button";
 
 type ReadyRecipeOption = {
   recipe_id: string;
@@ -58,7 +58,7 @@ export function AddReadyRecipeToPlanForm({
           Usamos los invitados/base del plan como sugerencia. Puedes ajustar si esta receta aplica solo a parte del evento.
         </p>
       </div>
-      <Button type="submit">Agregar receta</Button>
+      <KitchenSubmitButton pendingLabel="Guardando...">Agregar receta</KitchenSubmitButton>
     </form>
   );
 }

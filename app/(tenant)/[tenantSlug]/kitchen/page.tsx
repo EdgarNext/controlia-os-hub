@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { StatePanel } from "@/components/ui/state-panel";
+import { KitchenPageHeader } from "./_components/kitchen-page-header";
 import { resolveKitchenPage } from "./_lib/page-access";
 
 type KitchenHomePageProps = {
@@ -47,13 +48,11 @@ export default async function KitchenHomePage({ params }: KitchenHomePageProps) 
 
   return (
     <div className="space-y-4">
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h1 className="text-lg font-semibold text-foreground">Cocina y Operación de Eventos</h1>
-        <p className="mt-2 text-sm text-muted">
-          Esta fase habilita estructura modular, permisos y navegación. Inventario, recetas, costeo e
-          importaciones se habilitarán en siguientes fases.
-        </p>
-      </section>
+      <KitchenPageHeader
+        eyebrow="Kitchen Ops"
+        title="Cocina y Operación de Eventos"
+        description="Esta fase habilita estructura modular, permisos y navegación. Inventario, recetas, costeo e importaciones se habilitarán en siguientes fases."
+      />
 
       <section className="grid gap-3 md:grid-cols-3">
         {links.map((link) => (

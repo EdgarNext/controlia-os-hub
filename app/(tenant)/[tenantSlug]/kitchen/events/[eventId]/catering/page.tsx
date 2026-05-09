@@ -3,6 +3,7 @@ import { StatePanel } from "@/components/ui/state-panel";
 import { createCateringPlanAction } from "@/lib/kitchen/event-catering/actions";
 import { getEventForCatering, listCateringPlans } from "@/lib/kitchen/event-catering/queries";
 import { resolveKitchenPage } from "../../../_lib/page-access";
+import { KitchenSubmitButton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-submit-button";
 
 type KitchenEventCateringPageProps = {
   params: Promise<{ tenantSlug: string; eventId: string }>;
@@ -54,7 +55,13 @@ export default async function KitchenEventCateringPage({ params }: KitchenEventC
           Se sugiere la asistencia esperada del evento. Puedes ajustarla si este plan aplica solo a una parte de asistentes.
         </p>
         <textarea name="notes" placeholder="Notas" className="min-h-20 w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm" />
-        <button type="submit" className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm">Crear plan</button>
+        <KitchenSubmitButton
+          pendingLabel="Creando..."
+          variant="secondary"
+          className="text-sm"
+        >
+          Crear plan
+        </KitchenSubmitButton>
       </form>
 
       {plans.length === 0 ? (

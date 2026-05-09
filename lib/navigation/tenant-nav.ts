@@ -215,7 +215,7 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
           {
             href: (tenantSlug) => `/${tenantSlug}/kitchen/events`,
             label: "Eventos",
-            match: "exact",
+            match: "prefix",
             moduleKeys: ["event_catering"],
             pageKey: "plans",
           },

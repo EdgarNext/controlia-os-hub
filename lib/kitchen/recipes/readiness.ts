@@ -39,18 +39,34 @@ function classifyReadiness(input: {
 
 export async function listKitchenRecipeReadiness(tenantId: string): Promise<KitchenRecipeReadiness[]> {
   const supabase = await getSupabaseServerClient();
-  const [recipesRes, versionsRes, linesRes, pendingRes, snapshotsRes] = await Promise.all([
-    supabase.from("kitchen_recipe_recipes").select("id,name").eq("tenant_id", tenantId).eq("is_active", true),
+  const recipesRes = await supabase
+    .from("kitchen_recipe_recipes")
+    .select("id,name")
+    .eq("tenant_id", tenantId)
+    .eq("is_active", true);
+  if (recipesRes.error) throw new Error(`No fue posible cargar recetas para readiness: ${recipesRes.error.message}`);
+  return listKitchenRecipeReadinessByRecipes(
+    tenantId,
+    (recipesRes.data ?? []).map((recipe) => ({ id: recipe.id, name: recipe.name })),
+  );
+}
+
+export async function listKitchenRecipeReadinessByRecipes(
+  tenantId: string,
+  recipes: Array<{ id: string; name: string }>,
+): Promise<KitchenRecipeReadiness[]> {
+  if (recipes.length === 0) return [];
+
+  const recipeIds = recipes.map((recipe) => recipe.id);
+  const supabase = await getSupabaseServerClient();
+  const [versionsRes, pendingRes, snapshotsRes] = await Promise.all([
     supabase.from("kitchen_recipe_versions").select("id,recipe_id,status").eq("tenant_id", tenantId),
-    supabase
-      .from("kitchen_recipe_lines")
-      .select("id,recipe_version_id")
-      .eq("tenant_id", tenantId),
     supabase
       .from("kitchen_recipe_import_rows")
       .select("id,applied_recipe_id")
       .eq("tenant_id", tenantId)
       .eq("action", "alias_required")
+      .in("applied_recipe_id", recipeIds)
       .in("status", ["warning", "error", "pending"]),
     supabase
       .from("kitchen_recipe_cost_snapshots")
@@ -58,18 +74,24 @@ export async function listKitchenRecipeReadiness(tenantId: string): Promise<Kitc
       .eq("tenant_id", tenantId)
       .eq("snapshot_type", "current"),
   ]);
-
-  if (recipesRes.error) throw new Error(`No fue posible cargar recetas para readiness: ${recipesRes.error.message}`);
   if (versionsRes.error) throw new Error(`No fue posible cargar versiones para readiness: ${versionsRes.error.message}`);
-  if (linesRes.error) throw new Error(`No fue posible cargar líneas para readiness: ${linesRes.error.message}`);
   if (pendingRes.error) throw new Error(`No fue posible cargar pendientes para readiness: ${pendingRes.error.message}`);
   if (snapshotsRes.error) throw new Error(`No fue posible cargar snapshots para readiness: ${snapshotsRes.error.message}`);
 
-  const recipes = recipesRes.data ?? [];
   const versions = versionsRes.data ?? [];
-  const lines = linesRes.data ?? [];
   const pendingRows = pendingRes.data ?? [];
-  const snapshots = snapshotsRes.data ?? [];
+  const snapshots = (snapshotsRes.data ?? []).filter((snapshot) => recipeIds.includes(snapshot.recipe_id));
+
+  const versionIds = versions.map((version) => version.id);
+  const linesRes = versionIds.length
+    ? await supabase
+        .from("kitchen_recipe_lines")
+        .select("id,recipe_version_id")
+        .eq("tenant_id", tenantId)
+        .in("recipe_version_id", versionIds)
+    : { data: [], error: null };
+  if (linesRes.error) throw new Error(`No fue posible cargar líneas para readiness: ${linesRes.error.message}`);
+  const lines = linesRes.data ?? [];
 
   const versionToRecipe = new Map(versions.map((version) => [version.id, version.recipe_id]));
   const activeVersionByRecipe = new Map<string, string>();

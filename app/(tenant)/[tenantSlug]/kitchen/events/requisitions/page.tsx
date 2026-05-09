@@ -1,6 +1,10 @@
-import { StatePanel } from "@/components/ui/state-panel";
+import { Suspense } from "react";
 import Link from "next/link";
-import { listCateringRequisitions, listCateringRequisitionLines } from "@/lib/kitchen/event-catering/queries";
+import { StatePanel } from "@/components/ui/state-panel";
+import { KitchenTableSkeleton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-loading-skeletons";
+import { KitchenPageHeader } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-page-header";
+import { KitchenStatusBadge } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-status-badge";
+import { listCateringRequisitionLineCountsByRequisitionIds, listCateringRequisitions } from "@/lib/kitchen/event-catering/queries";
 import { resolveKitchenPage } from "../../_lib/page-access";
 
 type KitchenEventsRequisitionsPageProps = {
@@ -23,7 +27,19 @@ export default async function KitchenEventsRequisitionsPage({
     );
   }
 
-  const requisitions = await listCateringRequisitions(result.tenant.tenantSlug);
+  return (
+    <div className="space-y-4">
+      <KitchenPageHeader eyebrow="Compras sugeridas" title="Requisiciones de catering" />
+      <Suspense fallback={<KitchenTableSkeleton rows={8} columns={5} />}>
+        <RequisitionOverviewSection tenantSlug={result.tenant.tenantSlug} uiTenantSlug={tenantSlug} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function RequisitionOverviewSection({ tenantSlug, uiTenantSlug }: { tenantSlug: string; uiTenantSlug: string }) {
+  const requisitions = await listCateringRequisitions(tenantSlug);
+
   if (requisitions.length === 0) {
     return (
       <StatePanel
@@ -34,13 +50,10 @@ export default async function KitchenEventsRequisitionsPage({
     );
   }
 
-  const lineCounts = await Promise.all(
-    requisitions.map(async (req) => ({
-      id: req.id,
-      lines: (await listCateringRequisitionLines(result.tenant.tenantSlug, req.id)).length,
-    })),
+  const lineCountMap = await listCateringRequisitionLineCountsByRequisitionIds(
+    tenantSlug,
+    requisitions.map((req) => req.id),
   );
-  const lineCountMap = new Map(lineCounts.map((row) => [row.id, row.lines]));
   const statusSummary = requisitions.reduce(
     (acc, req) => {
       acc[req.status] += 1;
@@ -52,9 +65,8 @@ export default async function KitchenEventsRequisitionsPage({
 
   return (
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-      <h1 className="text-lg font-semibold text-foreground">Requisiciones de catering</h1>
       <p className="mt-1 text-xs text-muted">
-        Draft: {statusSummary.draft} · Reviewed: {statusSummary.reviewed} · Approved: {statusSummary.approved} · Canceled: {statusSummary.canceled} ·
+        Borrador: {statusSummary.draft} · Revisada: {statusSummary.reviewed} · Aprobada: {statusSummary.approved} · Cancelada: {statusSummary.canceled} ·
         Total estimado: ${statusSummary.total.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </p>
       <p className="mt-1 text-xs text-muted">
@@ -67,17 +79,14 @@ export default async function KitchenEventsRequisitionsPage({
               <div>
                 <p className="font-medium text-foreground">{req.event_catering_plans?.name ?? `Plan ${req.plan_id.slice(0, 8)}`}</p>
                 <p className="text-xs text-muted">
-                  status=
-                  <span className="ml-1 inline-flex rounded-full border border-border px-2 py-0.5 text-[11px] leading-none">
-                    {req.status}
-                  </span>
-                  {" · "}líneas={lineCountMap.get(req.id) ?? 0} · costo=${Number(req.estimated_total_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  Estado: <KitchenStatusBadge status={req.status} />
+                  {" · "}Líneas: {lineCountMap.get(req.id) ?? 0} · Costo: ${Number(req.estimated_total_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
                 {req.event_catering_plans?.event_id ? (
                   <p className="text-xs text-muted">
-                    evento:{" "}
+                    Evento:{" "}
                     <Link
-                      href={`/${tenantSlug}/kitchen/events/${req.event_catering_plans.event_id}/catering/${req.plan_id}`}
+                      href={`/${uiTenantSlug}/kitchen/events/${req.event_catering_plans.event_id}/catering/${req.plan_id}`}
                       className="underline underline-offset-2"
                     >
                       {req.event_catering_plans.event_id.slice(0, 8)}
@@ -85,7 +94,7 @@ export default async function KitchenEventsRequisitionsPage({
                   </p>
                 ) : null}
               </div>
-              <Link href={`/${tenantSlug}/kitchen/events/requisitions/${req.id}`} className="text-xs underline underline-offset-2">
+              <Link href={`/${uiTenantSlug}/kitchen/events/requisitions/${req.id}`} className="text-xs underline underline-offset-2">
                 Ver detalle
               </Link>
             </div>

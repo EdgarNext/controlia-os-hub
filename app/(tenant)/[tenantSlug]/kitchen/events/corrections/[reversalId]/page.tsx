@@ -1,7 +1,8 @@
 import { StatePanel } from "@/components/ui/state-panel";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
-import { applyConsumptionReversalAction, applyReceiptReversalAction } from "@/lib/kitchen/event-catering/actions";
+import { applyConsumptionReversalAction, applyReceiptReversalAction, cancelInventoryReversalDraftAction } from "@/lib/kitchen/event-catering/actions";
 import { getInventoryReversal, getReversalTargetSummary, listInventoryReversalLines } from "@/lib/kitchen/event-catering/queries";
+import { KitchenCriticalActionGroup } from "../../../_components/kitchen-critical-action-group";
 import { resolveKitchenPage } from "../../../_lib/page-access";
 
 type KitchenEventCorrectionDetailPageProps = {
@@ -60,13 +61,32 @@ export default async function KitchenEventCorrectionDetailPage({ params }: Kitch
               Al aplicar, se crearán movimientos <code>adjustment_in</code> con <code>source_type=correction</code>. No se borran movimientos originales.
             </p>
             {canManageConsumption ? (
-              <form action={applyConsumptionReversalAction}>
-                <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                <input type="hidden" name="reversalId" value={reversal.id} />
-                <button type="submit" className="inline-flex rounded border border-border bg-surface px-3 py-1.5 text-sm text-foreground">
-                  Aplicar reversa de consumo
-                </button>
-              </form>
+              <KitchenCriticalActionGroup
+                className="flex flex-wrap items-center gap-2"
+                buttonClassName="px-3 py-1.5 text-sm"
+                actions={[
+                  {
+                    id: "apply-consumption-reversal",
+                    action: applyConsumptionReversalAction,
+                    fields: [
+                      { name: "tenantSlug", value: tenantSlug },
+                      { name: "reversalId", value: reversal.id },
+                    ],
+                    label: "Aplicar reversa de consumo",
+                    pendingLabel: "Aplicando reversa...",
+                  },
+                  {
+                    id: "cancel-consumption-reversal",
+                    action: cancelInventoryReversalDraftAction,
+                    fields: [
+                      { name: "tenantSlug", value: tenantSlug },
+                      { name: "reversalId", value: reversal.id },
+                    ],
+                    label: "Cancelar reversa",
+                    pendingLabel: "Cancelando...",
+                  },
+                ]}
+              />
             ) : (
               <p className="text-xs text-muted">No tienes permisos manage en consumption para aplicar esta reversa.</p>
             )}
@@ -78,13 +98,32 @@ export default async function KitchenEventCorrectionDetailPage({ params }: Kitch
               Al aplicar, se crearán movimientos <code>adjustment_out</code> con <code>source_type=correction</code> y se reducirá inventario. No se borran movimientos originales.
             </p>
             {canManageRequisitions ? (
-              <form action={applyReceiptReversalAction}>
-                <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                <input type="hidden" name="reversalId" value={reversal.id} />
-                <button type="submit" className="inline-flex rounded border border-border bg-surface px-3 py-1.5 text-sm text-foreground">
-                  Aplicar reversa de recepción
-                </button>
-              </form>
+              <KitchenCriticalActionGroup
+                className="flex flex-wrap items-center gap-2"
+                buttonClassName="px-3 py-1.5 text-sm"
+                actions={[
+                  {
+                    id: "apply-receipt-reversal",
+                    action: applyReceiptReversalAction,
+                    fields: [
+                      { name: "tenantSlug", value: tenantSlug },
+                      { name: "reversalId", value: reversal.id },
+                    ],
+                    label: "Aplicar reversa de recepción",
+                    pendingLabel: "Aplicando reversa...",
+                  },
+                  {
+                    id: "cancel-receipt-reversal",
+                    action: cancelInventoryReversalDraftAction,
+                    fields: [
+                      { name: "tenantSlug", value: tenantSlug },
+                      { name: "reversalId", value: reversal.id },
+                    ],
+                    label: "Cancelar reversa",
+                    pendingLabel: "Cancelando...",
+                  },
+                ]}
+              />
             ) : (
               <p className="text-xs text-muted">No tienes permisos manage en requisitions para aplicar esta reversa.</p>
             )}
