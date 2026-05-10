@@ -56,6 +56,7 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
   }
 
   const isDraft = record.status === "draft";
+  const isConfirmed = record.status === "confirmed";
   const statusLabel = record.status === "draft" ? "Pendiente de confirmar" : record.status === "confirmed" ? "Confirmado" : "Cancelado";
   const availabilityByLine = new Map(availabilityRows.map((row) => [row.line_id, row]));
   const readiness = getConsumptionDraftReadiness(record.status, availabilityRows);
@@ -90,12 +91,14 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
           <span className="rounded-full border border-border bg-surface-2 px-3 py-1 text-xs font-medium text-foreground">{statusLabel}</span>
         </div>
         <p className="mt-3 text-xs text-warning">
-          El consumo preparado no descuenta inventario. Al confirmar, se registrarán salidas reales de inventario y mermas.
+          {isConfirmed
+            ? "Consumo confirmado: esta vista es histórica y auditable."
+            : "El consumo preparado no descuenta inventario. Al confirmar, se registrarán salidas reales de inventario y mermas."}
         </p>
         <div className="mt-3 grid gap-2 text-xs md:grid-cols-3 lg:grid-cols-6">
           <div className="rounded border border-border bg-muted/20 p-2">
             <p className="text-muted">Líneas listas</p>
-            <p className="mt-1 font-semibold text-foreground">{readyLineCount}/{lines.length}</p>
+            <p className="mt-1 font-semibold text-foreground">{isConfirmed ? lines.length : `${readyLineCount}/${lines.length}`}</p>
           </div>
           <div className="rounded border border-border bg-muted/20 p-2">
             <p className="text-muted">Total a consumir</p>
@@ -117,18 +120,19 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
           </div>
           <div className="rounded border border-border bg-muted/20 p-2">
             <p className="text-muted">Sin ubicación</p>
-            <p className="mt-1 font-semibold text-foreground">{readiness.missing_location_count}</p>
+            <p className="mt-1 font-semibold text-foreground">{isConfirmed ? "—" : readiness.missing_location_count}</p>
           </div>
           <div className="rounded border border-border bg-muted/20 p-2">
             <p className="text-muted">Sin stock</p>
-            <p className="mt-1 font-semibold text-foreground">{readiness.insufficient_stock_count}</p>
+            <p className="mt-1 font-semibold text-foreground">{isConfirmed ? "—" : readiness.insufficient_stock_count}</p>
           </div>
         </div>
         {record.status === "confirmed" ? (
           <p className="mt-1 text-xs text-emerald-600">
-            Consumo confirmado: inventario impactado con salidas y mermas registradas.
+            Confirmado · Inventario impactado · Servicio cerrado operativamente.
           </p>
         ) : null}
+        {!isConfirmed ? (
         <div className="mt-3 rounded border border-border bg-surface-2 p-3 text-xs text-muted">
           <p className="font-semibold text-foreground">Estado operativo: {readinessText}</p>
           <p className="mt-1">
@@ -166,6 +170,7 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
             </p>
           ) : null}
         </div>
+        ) : null}
         {canManage && isDraft ? (
           <details className="mt-3 rounded border border-border bg-muted/10 p-3 text-xs">
             <summary className="cursor-pointer font-medium text-foreground">Acciones de excepción</summary>
@@ -207,9 +212,9 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
                   <th className="px-2 py-1">Insumo</th>
                   <th className="px-2 py-1">Requerido / planeado</th>
                   <th className="px-2 py-1">Cantidad a consumir</th>
-                  <th className="px-2 py-1">Stock en ubicación</th>
+                  {isConfirmed ? null : <th className="px-2 py-1">Stock en ubicación</th>}
                   <th className="px-2 py-1">Ubicación asignada</th>
-                  <th className="px-2 py-1">Ajustar</th>
+                  <th className="px-2 py-1">{isConfirmed ? "Estado" : "Ajustar"}</th>
                 </tr>
               </thead>
               <tbody>
@@ -228,14 +233,16 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
                   <tr key={line.id} className="border-t border-border">
                     <td className="px-2 py-1 text-foreground">
                       {line.kitchen_inventory_items?.name ?? line.item_id.slice(0, 8)}
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {totalOut <= 0 ? <span className="rounded-full bg-muted/30 px-2 py-0.5 text-[11px] text-muted">Sin consumo</span> : null}
-                        {availability?.missing_location ? <span className="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning">Sin ubicación</span> : null}
-                        {availability && !availability.has_sufficient_balance ? (
-                          <span className="rounded-full bg-danger/10 px-2 py-0.5 text-[11px] text-danger">Stock insuficiente</span>
-                        ) : null}
-                        {hasAdjustment ? <span className="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning">Ajustado</span> : null}
-                      </div>
+                      {!isConfirmed ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {totalOut <= 0 ? <span className="rounded-full bg-muted/30 px-2 py-0.5 text-[11px] text-muted">Sin consumo</span> : null}
+                          {availability?.missing_location ? <span className="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning">Sin ubicación</span> : null}
+                          {availability && !availability.has_sufficient_balance ? (
+                            <span className="rounded-full bg-danger/10 px-2 py-0.5 text-[11px] text-danger">Stock insuficiente</span>
+                          ) : null}
+                          {hasAdjustment ? <span className="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning">Ajustado</span> : null}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-2 py-1 text-muted">{formatQuantity(Number(line.planned_quantity))} {unitCode}</td>
                     <td className="px-2 py-1 text-foreground">
@@ -247,22 +254,30 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
                         </p>
                       ) : null}
                     </td>
-                    <td className="px-2 py-1 text-muted">
-                      <span>{stockLabel}</span>
-                      {availability && availability.has_sufficient_balance && !availability.missing_location ? (
-                        <span className="ml-2 rounded-full bg-success/10 px-2 py-0.5 text-[11px] text-success">Suficiente</span>
-                      ) : null}
-                      {availability && !availability.has_sufficient_balance ? (
-                        <div className="mt-1 text-[11px] text-warning">
-                          <p>Disponible para este consumo: {formatQuantity(availability.available_quantity)} {unitCode}</p>
-                          <p>Apartado para otros planes: {formatQuantity(availability.reserved_other_plans)} {unitCode}</p>
-                          <p>Requiere: {formatQuantity(totalOut)} {unitCode}</p>
-                        </div>
-                      ) : null}
-                    </td>
+                    {isConfirmed ? null : (
+                      <td className="px-2 py-1 text-muted">
+                        <span>{stockLabel}</span>
+                        {availability && availability.has_sufficient_balance && !availability.missing_location ? (
+                          <span className="ml-2 rounded-full bg-success/10 px-2 py-0.5 text-[11px] text-success">Suficiente</span>
+                        ) : null}
+                        {availability && !availability.has_sufficient_balance ? (
+                          <div className="mt-1 text-[11px] text-warning">
+                            <p>Disponible para este consumo: {formatQuantity(availability.available_quantity)} {unitCode}</p>
+                            <p>Apartado para otros planes: {formatQuantity(availability.reserved_other_plans)} {unitCode}</p>
+                            <p>Requiere: {formatQuantity(totalOut)} {unitCode}</p>
+                          </div>
+                        ) : null}
+                      </td>
+                    )}
                     <td className="px-2 py-1 text-muted">{locationName ?? "Sin ubicación"}</td>
                     <td className="px-2 py-1">
-                      {canManage && isDraft ? (
+                      {isConfirmed ? (
+                        totalOut > 0
+                          ? line.consumption_movement_id || line.waste_movement_id
+                            ? "Salida registrada"
+                            : "Movimiento faltante"
+                          : "Sin salida registrada"
+                      ) : canManage && isDraft ? (
                         <ConsumptionLineEditor tenantSlug={tenantSlug} consumptionId={record.id} line={line} availability={availability} />
                       ) : (
                         "—"

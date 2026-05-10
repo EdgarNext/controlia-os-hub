@@ -7,7 +7,7 @@ import {
   listKitchenInventoryUnits,
 } from "@/lib/kitchen/inventory/queries";
 import { StatePanel } from "@/components/ui/state-panel";
-import { RecordKitchenInventoryMovementForm } from "../_components/inventory-forms";
+import { RecordKitchenInventoryMovementForm, TransferKitchenInventoryForm } from "../_components/inventory-forms";
 import { KitchenActionRowSkeleton, KitchenTableSkeleton } from "../../_components/kitchen-loading-skeletons";
 import { KitchenPageHeader } from "../../_components/kitchen-page-header";
 import { resolveKitchenPage } from "../../_lib/page-access";
@@ -87,12 +87,19 @@ async function MovementFormSection({
 }) {
   const [items, locations, units] = await formDataPromise;
   return (
-    <RecordKitchenInventoryMovementForm
-      tenantSlug={tenantSlug}
-      items={items}
-      units={units}
-      locations={locations}
-    />
+    <div className="grid gap-3 lg:grid-cols-2">
+      <RecordKitchenInventoryMovementForm
+        tenantSlug={tenantSlug}
+        items={items}
+        units={units}
+        locations={locations}
+      />
+      <TransferKitchenInventoryForm
+        tenantSlug={tenantSlug}
+        items={items}
+        locations={locations}
+      />
+    </div>
   );
 }
 

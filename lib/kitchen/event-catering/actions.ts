@@ -2871,6 +2871,42 @@ export async function confirmConsumptionRecordAction(formData: FormData): Promis
     });
   }
 
+  // Saneamiento seguro: cancelar drafts stale del mismo plan cuando ya hay un consumo confirmado.
+  const { data: staleDrafts, error: staleDraftsError } = await supabase
+    .from("event_catering_consumption_records")
+    .select("id")
+    .eq("tenant_id", tenant.tenantId)
+    .eq("plan_id", record.plan_id)
+    .eq("status", "draft")
+    .neq("id", record.id);
+  if (staleDraftsError) throw new Error(`No se pudieron auditar borradores stale: ${staleDraftsError.message}`);
+
+  for (const draft of staleDrafts ?? []) {
+    const { data: draftLines, error: draftLinesError } = await supabase
+      .from("event_catering_consumption_lines")
+      .select("consumption_movement_id,waste_movement_id")
+      .eq("tenant_id", tenant.tenantId)
+      .eq("consumption_record_id", draft.id);
+    if (draftLinesError) throw new Error(`No se pudieron auditar líneas de borrador stale: ${draftLinesError.message}`);
+    const hasInventoryImpact = (draftLines ?? []).some(
+      (line) => line.consumption_movement_id != null || line.waste_movement_id != null,
+    );
+    if (hasInventoryImpact) continue;
+
+    const { error: cancelDraftError } = await supabase
+      .from("event_catering_consumption_records")
+      .update({
+        status: "canceled",
+        canceled_at: new Date().toISOString(),
+        canceled_by: user.id,
+        notes: "auto_canceled_stale_draft_after_confirmed_consumption",
+      })
+      .eq("tenant_id", tenant.tenantId)
+      .eq("id", draft.id)
+      .eq("status", "draft");
+    if (cancelDraftError) throw new Error(`No se pudo cancelar borrador stale: ${cancelDraftError.message}`);
+  }
+
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/consumption`);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${record.event_id}/catering/${record.plan_id}/consumption`);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${record.event_id}/catering/${record.plan_id}/consumption/${record.id}`);

@@ -178,6 +178,7 @@ export type CateringPlanOperationalIndexRow = {
   consumption_status_summary: "none" | "draft" | "confirmed" | "mixed";
   reserved_this_plan_total: number;
   operational_status:
+    | "Servicio cerrado"
     | "Sin recetas"
     | "Requerimientos pendientes"
     | "Con faltantes"

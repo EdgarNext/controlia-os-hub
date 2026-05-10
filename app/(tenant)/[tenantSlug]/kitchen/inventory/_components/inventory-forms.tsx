@@ -20,6 +20,7 @@ import {
   deactivatePurchaseOptionAction,
   recordKitchenInventoryMovementAction,
   setDefaultPurchaseOptionAction,
+  transferKitchenInventoryBetweenLocationsAction,
 } from "@/lib/kitchen/inventory/actions";
 import { initialKitchenInventoryActionState } from "@/lib/kitchen/inventory/action-state";
 import type {
@@ -293,6 +294,70 @@ export function RecordKitchenInventoryMovementForm({
       </div>
       {state.message ? <p className={`text-xs ${state.ok ? "text-success" : "text-danger"}`}>{state.message}</p> : null}
       <Button type="submit" isLoading={isPending}>Registrar movimiento</Button>
+    </form>
+  );
+}
+
+export function TransferKitchenInventoryForm({
+  tenantSlug,
+  items,
+  locations,
+}: {
+  tenantSlug: string;
+  items: KitchenInventoryItem[];
+  locations: KitchenInventoryLocation[];
+}) {
+  const [state, formAction, isPending] = useActionState(
+    transferKitchenInventoryBetweenLocationsAction,
+    initialKitchenInventoryActionState,
+  );
+
+  return (
+    <form action={formAction} className="space-y-3 rounded-[var(--radius-base)] border border-border bg-surface p-4">
+      <input type="hidden" name="tenantSlug" value={tenantSlug} />
+      <p className="text-sm font-semibold text-foreground">Transferir entre ubicaciones</p>
+      <div className="grid gap-2 md:grid-cols-2">
+        <div className="space-y-1 md:col-span-2">
+          <SearchableSelect
+            id="transfer-item"
+            name="itemId"
+            label="Insumo"
+            placeholder="Selecciona un insumo"
+            required
+            options={items.map((item) => ({ value: item.id, label: item.name }))}
+          />
+        </div>
+        <div className="space-y-1">
+          <SearchableSelect
+            id="transfer-from-location"
+            name="fromLocationId"
+            label="Ubicación origen"
+            placeholder="Selecciona ubicación origen"
+            required
+            options={locations.map((location) => ({ value: location.id, label: location.name }))}
+          />
+        </div>
+        <div className="space-y-1">
+          <SearchableSelect
+            id="transfer-to-location"
+            name="toLocationId"
+            label="Ubicación destino"
+            placeholder="Selecciona ubicación destino"
+            required
+            options={locations.map((location) => ({ value: location.id, label: location.name }))}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="transfer-qty">Cantidad</Label>
+          <Input id="transfer-qty" name="quantity" type="number" min="0.0001" step="0.0001" required />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="transfer-reason">Motivo</Label>
+          <Input id="transfer-reason" name="reason" placeholder="Opcional" />
+        </div>
+      </div>
+      {state.message ? <p className={`text-xs ${state.ok ? "text-success" : "text-danger"}`}>{state.message}</p> : null}
+      <Button type="submit" variant="secondary" isLoading={isPending}>Registrar transferencia</Button>
     </form>
   );
 }

@@ -798,22 +798,26 @@ export async function listCateringPlanOperationalIndex(
     const req = reqByPlan.get(plan.plan_id) ?? { requirements: plan.requirements_count, shortages: plan.shortages_count, reservedThisPlanTotal: 0 };
     const receiptStatus = statusFromSet(receiptStatusesByPlan.get(plan.plan_id), "draft", "received");
     const consumptionStatus = statusFromSet(consumptionStatusesByPlan.get(plan.plan_id), "draft", "confirmed");
+    const hasConfirmedConsumption = consumptionStatus === "confirmed" || consumptionStatus === "mixed";
+    const hasDraftConsumption = consumptionStatus === "draft";
     const operationalStatus: CateringPlanOperationalIndexRow["operational_status"] =
-      plan.recipe_count === 0
-        ? "Sin recetas"
-        : req.requirements === 0
-          ? "Requerimientos pendientes"
-          : req.shortages > 0
-            ? "Con faltantes"
-            : !plan.requisition_id
-              ? "Requisición pendiente"
-              : receiptStatus === "none" || receiptStatus === "draft" || receiptStatus === "mixed"
-                ? "Compra por recibir"
-                : consumptionStatus === "draft"
-                  ? "Consumo en borrador"
-                  : consumptionStatus === "confirmed"
-                    ? "Consumo confirmado"
-                    : "Listo para consumo";
+      hasConfirmedConsumption
+        ? "Servicio cerrado"
+        : hasDraftConsumption
+          ? "Consumo en borrador"
+          : plan.recipe_count === 0
+            ? "Sin recetas"
+            : req.requirements === 0
+              ? "Requerimientos pendientes"
+              : req.shortages > 0
+                ? "Con faltantes"
+                : plan.requisition_status === "approved" && (receiptStatus === "none" || receiptStatus === "draft" || receiptStatus === "mixed")
+                  ? "Compra por recibir"
+                  : receiptStatus === "received"
+                    ? "Listo para consumo"
+                    : !plan.requisition_id
+                      ? "Listo para consumo"
+                      : "Requisición pendiente";
 
     return {
       plan_id: plan.plan_id,
@@ -1362,10 +1366,10 @@ export async function listConsumptionOperationalCandidates(
       bucket = "preparable_with_warnings";
       if (plan.latest_requisition_status == null) {
         blockingReason = "Tiene faltantes pendientes";
-      } else if (plan.receipt_status_summary === "none") {
+      } else if (plan.latest_requisition_status === "approved" && (plan.receipt_status_summary === "none" || plan.receipt_status_summary === "draft")) {
         blockingReason = "Compra autorizada pendiente de recepción";
-      } else if (plan.receipt_status_summary === "draft") {
-        blockingReason = "Recepción en borrador";
+      } else if (plan.receipt_status_summary === "none" || plan.receipt_status_summary === "draft" || plan.receipt_status_summary === "mixed") {
+        blockingReason = "Tiene requisición pendiente";
       } else {
         blockingReason = "Stock reservado insuficiente";
       }

@@ -365,6 +365,98 @@ export async function recordKitchenInventoryMovementAction(
   }
 }
 
+export async function transferKitchenInventoryBetweenLocationsAction(
+  _previousState: KitchenInventoryActionState,
+  formData: FormData,
+): Promise<KitchenInventoryActionState> {
+  try {
+    const tenantSlug = toTrimmedString(formData.get("tenantSlug")).toLowerCase();
+    const itemId = toTrimmedString(formData.get("itemId"));
+    const fromLocationId = toTrimmedString(formData.get("fromLocationId"));
+    const toLocationId = toTrimmedString(formData.get("toLocationId"));
+    const quantity = toPositiveNumber(formData.get("quantity"), "La cantidad");
+    const reason = toTrimmedString(formData.get("reason"));
+
+    if (!tenantSlug || !itemId || !fromLocationId || !toLocationId) {
+      return { ok: false, message: "Tenant, insumo y ubicaciones son obligatorios." };
+    }
+
+    if (fromLocationId === toLocationId) {
+      return { ok: false, message: "La ubicación origen y destino deben ser distintas." };
+    }
+
+    const { tenant } = await resolveTenantModulePageActor(
+      tenantSlug,
+      "kitchen_inventory",
+      "movements",
+      "manage",
+    );
+
+    await assertTenantScopedReference("kitchen_inventory_items", tenant.tenantId, itemId, "Insumo");
+    await assertTenantScopedReference("kitchen_inventory_locations", tenant.tenantId, fromLocationId, "Ubicación origen");
+    await assertTenantScopedReference("kitchen_inventory_locations", tenant.tenantId, toLocationId, "Ubicación destino");
+
+    const supabase = await getSupabaseServerClient();
+    const { data: item, error: itemError } = await supabase
+      .from("kitchen_inventory_items")
+      .select("id,default_unit_id")
+      .eq("tenant_id", tenant.tenantId)
+      .eq("id", itemId)
+      .maybeSingle();
+    if (itemError || !item?.default_unit_id) {
+      throw new Error("No se pudo determinar la unidad por defecto del insumo.");
+    }
+
+    const idempotencyBase = `${tenant.tenantId}:${itemId}:${fromLocationId}:${toLocationId}:${Date.now()}`;
+    const occurredAt = new Date().toISOString();
+    const transferReason = reason || "Transferencia entre ubicaciones";
+
+    const { error: outError } = await supabase.rpc("kitchen_inventory_record_movement", {
+      p_tenant_id: tenant.tenantId,
+      p_item_id: itemId,
+      p_location_id: fromLocationId,
+      p_unit_id: item.default_unit_id,
+      p_movement_type: "transfer_out",
+      p_quantity: quantity,
+      p_unit_cost: null,
+      p_reason: transferReason,
+      p_source_type: "transfer",
+      p_source_id: null,
+      p_idempotency_key: `${idempotencyBase}:out`,
+      p_occurred_at: occurredAt,
+    });
+    if (outError) {
+      if (outError.message.toLowerCase().includes("negative inventory")) {
+        return { ok: false, message: "No hay existencia suficiente en la ubicación origen." };
+      }
+      throw new Error(`No se pudo registrar salida de transferencia: ${outError.message}`);
+    }
+
+    const { error: inError } = await supabase.rpc("kitchen_inventory_record_movement", {
+      p_tenant_id: tenant.tenantId,
+      p_item_id: itemId,
+      p_location_id: toLocationId,
+      p_unit_id: item.default_unit_id,
+      p_movement_type: "transfer_in",
+      p_quantity: quantity,
+      p_unit_cost: null,
+      p_reason: transferReason,
+      p_source_type: "transfer",
+      p_source_id: null,
+      p_idempotency_key: `${idempotencyBase}:in`,
+      p_occurred_at: occurredAt,
+    });
+    if (inError) {
+      throw new Error(`Salida registrada, pero falló entrada en destino: ${inError.message}`);
+    }
+
+    revalidateKitchenInventoryPaths(tenant.tenantSlug);
+    return { ok: true, message: "Transferencia registrada." };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "No se pudo registrar la transferencia." };
+  }
+}
+
 export async function createPurchaseOptionAction(
   _previousState: KitchenInventoryActionState,
   formData: FormData,

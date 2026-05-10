@@ -17,6 +17,7 @@ import {
   listCateringPlanItemFlow,
   listCateringPlanWarnings,
   listCateringRequirements,
+  listConsumptionRecordsForPlan,
   listPlanRecipes,
   listReadyRecipesForCatering,
   listRequirementShortagesFromRequirements,
@@ -60,10 +61,15 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
   const warningsPromise = itemFlowPromise.then((itemFlow) =>
     listCateringPlanWarnings(result.tenant.tenantSlug, plan.id, { itemFlow }),
   );
+  const consumptionsPromise = listConsumptionRecordsForPlan(result.tenant.tenantSlug, plan.id);
   const expectedAttendance = Number(event?.expected_attendance ?? 0);
   const plannedGuestCount = Number(plan.planned_guest_count ?? 0);
   const hasGuestDelta = expectedAttendance > 0 && plannedGuestCount > 0;
   const guestDelta = hasGuestDelta ? plannedGuestCount - expectedAttendance : 0;
+  const consumptions = await consumptionsPromise;
+  const confirmedConsumption = consumptions.find((row) => row.status === "confirmed") ?? null;
+  const draftConsumption = consumptions.find((row) => row.status === "draft") ?? null;
+  const isServiceClosed = confirmedConsumption != null;
 
   return (
     <div className="space-y-4">
@@ -86,13 +92,26 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
         }
         actions={
           <Link
-            href={`/${tenantSlug}/kitchen/events/${eventId}/catering/${plan.id}/consumption`}
+            href={`/${tenantSlug}/kitchen/events/${eventId}/catering/${plan.id}/consumption${confirmedConsumption ? `/${confirmedConsumption.id}` : draftConsumption ? `/${draftConsumption.id}` : ""}`}
             className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
           >
-            Gestionar consumo draft
+            {isServiceClosed ? "Ver consumo confirmado" : "Gestionar consumo"}
           </Link>
         }
       />
+      {isServiceClosed ? (
+        <section className="rounded-[var(--radius-base)] border border-primary/20 bg-primary/10 p-3 text-xs">
+          <p className="font-semibold text-foreground">Este servicio ya tiene consumo confirmado. El inventario ya fue impactado.</p>
+          {confirmedConsumption ? (
+            <Link
+              href={`/${tenantSlug}/kitchen/events/${eventId}/catering/${plan.id}/consumption/${confirmedConsumption.id}`}
+              className="mt-2 inline-flex underline underline-offset-2"
+            >
+              Abrir consumo confirmado
+            </Link>
+          ) : null}
+        </section>
+      ) : null}
       <EventCateringContextHeader
         tenantSlug={tenantSlug}
         eventId={eventId}
@@ -129,6 +148,7 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
           requirementsPromise={requirementsPromise}
           canManageRequirements={canManageRequirements}
           canManageRequisitions={canManageRequisitions}
+          isServiceClosed={isServiceClosed}
         />
       </Suspense>
 
@@ -273,12 +293,14 @@ async function PlanRequirementsSection({
   requirementsPromise,
   canManageRequirements,
   canManageRequisitions,
+  isServiceClosed,
 }: {
   uiTenantSlug: string;
   planId: string;
   requirementsPromise: ReturnType<typeof listCateringRequirements>;
   canManageRequirements: boolean;
   canManageRequisitions: boolean;
+  isServiceClosed: boolean;
 }) {
   const [requirements, draftRequisition] = await Promise.all([
     requirementsPromise,
@@ -329,7 +351,7 @@ async function PlanRequirementsSection({
           ) : null}
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          {canManageRequirements ? (
+          {canManageRequirements && !isServiceClosed ? (
             <form action={recalculateCateringRequirementsAction}>
               <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
               <input type="hidden" name="planId" value={planId} />
@@ -338,7 +360,7 @@ async function PlanRequirementsSection({
               </KitchenSubmitButton>
             </form>
           ) : null}
-          {canManageRequirements ? (
+          {canManageRequirements && !isServiceClosed ? (
             <form action={reserveInventoryForCateringPlanAction}>
               <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
               <input type="hidden" name="planId" value={planId} />
@@ -412,7 +434,7 @@ async function PlanRequirementsSection({
               Al generar la requisición sugerida se aparta primero el inventario físico disponible para este plan y se compra
               solo el faltante real.
             </p>
-            {canManageRequisitions ? (
+            {canManageRequisitions && !isServiceClosed ? (
               <form action={generateCateringRequisitionFromShortagesAction}>
                   <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
                   <input type="hidden" name="planId" value={planId} />
