@@ -37,23 +37,13 @@ type TenantNavDomainConfig = {
 const tenantNavDomains: TenantNavDomainConfig[] = [
   {
     key: "venue",
-    label: "Venue Operations",
+    label: "Eventos y Salas",
     accentToken: "--nav-accent-venue",
     moduleKeys: ["event_core"],
     items: [
       { href: (tenantSlug) => `/${tenantSlug}/dashboard`, label: "Dashboard", iconKey: "reports", match: "prefix", moduleKeys: ["event_core"] },
       { href: (tenantSlug) => `/${tenantSlug}/venue`, label: "Salas y Layouts", iconKey: "catalog", match: "prefix", moduleKeys: ["event_core"] },
       { href: (tenantSlug) => `/${tenantSlug}/events`, label: "Eventos", iconKey: "reports", match: "prefix", moduleKeys: ["event_core"] },
-    ],
-  },
-  {
-    key: "commercial",
-    label: "Comercial",
-    accentToken: "--nav-accent-commercial",
-    moduleKeys: ["event_core"],
-    items: [
-      { href: (tenantSlug) => `/${tenantSlug}/catalog`, label: "Catalogo", iconKey: "catalog", match: "prefix", moduleKeys: ["event_core"] },
-      { href: (tenantSlug) => `/${tenantSlug}/reports`, label: "Reportes", iconKey: "reports", match: "prefix", moduleKeys: ["event_core"] },
     ],
   },
   {
@@ -133,22 +123,6 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
             match: "prefix",
           },
         ],
-      },
-    ],
-  },
-  {
-    key: "admin",
-    label: "Admin",
-    accentToken: "--nav-accent-admin",
-    moduleKeys: ["event_core"],
-    items: [
-      {
-        href: (tenantSlug) => `/${tenantSlug}/users`,
-        label: "Usuarios",
-        iconKey: "users",
-        match: "prefix",
-        moduleKeys: ["event_core"],
-        requiredRoles: ["admin"],
       },
     ],
   },
