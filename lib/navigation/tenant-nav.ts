@@ -206,7 +206,7 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
       },
       {
         href: (tenantSlug) => `/${tenantSlug}/kitchen/events`,
-        label: "Eventos Catering",
+        label: "Catering por Evento",
         iconKey: "reports",
         match: "prefix",
         moduleKeys: ["event_catering"],
@@ -215,6 +215,13 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
           {
             href: (tenantSlug) => `/${tenantSlug}/kitchen/events`,
             label: "Eventos",
+            match: "exact",
+            moduleKeys: ["event_catering"],
+            pageKey: "plans",
+          },
+          {
+            href: (tenantSlug) => `/${tenantSlug}/kitchen/events/plans`,
+            label: "Planes / Servicios",
             match: "prefix",
             moduleKeys: ["event_catering"],
             pageKey: "plans",
@@ -235,7 +242,7 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
           },
           {
             href: (tenantSlug) => `/${tenantSlug}/kitchen/events/consumption`,
-            label: "Consumos",
+            label: "Consumo real",
             match: "prefix",
             moduleKeys: ["event_catering"],
             pageKey: "consumption",

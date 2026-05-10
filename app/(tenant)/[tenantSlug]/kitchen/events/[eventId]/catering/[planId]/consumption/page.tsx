@@ -35,7 +35,7 @@ export default async function KitchenPlanConsumptionPage({ params }: KitchenPlan
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
         <h1 className="text-lg font-semibold text-foreground">Consumo del plan {plan.name ?? plan.id.slice(0, 8)}</h1>
         <p className="mt-1 text-xs text-muted">
-          El consumo en borrador no descuenta inventario. Al confirmar consumo se crearán salidas reales de inventario.
+          El consumo preparado no descuenta inventario. La salida real ocurre al confirmar.
         </p>
         {canManage ? (
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -45,7 +45,7 @@ export default async function KitchenPlanConsumptionPage({ params }: KitchenPlan
                   href={`/${tenantSlug}/kitchen/events/${eventId}/catering/${planId}/consumption/${draftRecord.id}`}
                   className="inline-flex rounded border border-border bg-surface px-3 py-1 text-xs"
                 >
-                  Abrir consumo en borrador
+                  Abrir consumo preparado
                 </Link>
                 <form action={regenerateConsumptionDraftFromPlanAction}>
                   <input type="hidden" name="tenantSlug" value={tenantSlug} />
@@ -77,7 +77,7 @@ export default async function KitchenPlanConsumptionPage({ params }: KitchenPlan
       </section>
 
       {rows.length === 0 ? (
-        <StatePanel kind="empty" title="Sin consumos" message="Aún no existe consumo draft para este plan." />
+        <StatePanel kind="empty" title="Sin consumos" message="Aún no existe consumo preparado para este plan." />
       ) : (
         <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
           <div className="overflow-x-auto">
@@ -94,7 +94,7 @@ export default async function KitchenPlanConsumptionPage({ params }: KitchenPlan
                 {rows.map((row) => (
                   <tr key={row.id} className="border-t border-border">
                     <td className="px-2 py-1 text-foreground">{row.id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-foreground">{row.status === "draft" ? "Borrador" : row.status === "confirmed" ? "Confirmado" : "Cancelado"}</td>
+                    <td className="px-2 py-1 text-foreground">{row.status === "draft" ? "Pendiente de confirmar" : row.status === "confirmed" ? "Confirmado" : "Cancelado"}</td>
                     <td className="px-2 py-1 text-muted">{new Date(row.created_at).toLocaleString("es-MX")}</td>
                     <td className="px-2 py-1">
                       <Link

@@ -11,6 +11,7 @@ import { listKitchenInventoryLocations } from "@/lib/kitchen/inventory/queries";
 import { KitchenCriticalActionGroup } from "../../../../../_components/kitchen-critical-action-group";
 import { KitchenFormPendingFieldset } from "../../../../../_components/kitchen-form-pending-fieldset";
 import { KitchenSubmitButton } from "../../../../../_components/kitchen-submit-button";
+import { EventCateringContextHeader } from "../../../../_components/event-catering-context-header";
 import { resolveKitchenPage } from "../../../../../_lib/page-access";
 
 type KitchenCateringReceiptDetailPageProps = {
@@ -159,6 +160,14 @@ export default async function KitchenCateringReceiptDetailPage({
           </div>
         ) : null}
       </section>
+      <EventCateringContextHeader
+        tenantSlug={tenantSlug}
+        eventId={requisition.event_catering_plans?.event_id ?? null}
+        eventName={requisition.event_catering_plans?.events?.name ?? null}
+        planId={requisition.plan_id}
+        planName={requisition.event_catering_plans?.name ?? null}
+        operationalStatus={receipt.status}
+      />
 
       <ReceiptLinesSection
         tenantSlug={tenantSlug}

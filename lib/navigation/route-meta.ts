@@ -40,10 +40,11 @@ export function getSegmentLabel(segment: string) {
   if (segment === "supplier-prices") return "Precios proveedor";
   if (segment === "recipes") return "Recetas";
   if (segment === "catering") return "Catering";
+  if (segment === "plans") return "Planes / Servicios";
   if (segment === "costing") return "Costeo";
   if (segment === "requisitions") return "Requisiciones";
   if (segment === "receipts") return "Recepciones";
-  if (segment === "consumption") return "Consumos";
+  if (segment === "consumption") return "Consumo real";
   if (segment === "corrections") return "Correcciones";
   if (segment === "auth") return "Auth";
 

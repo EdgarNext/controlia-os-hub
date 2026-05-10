@@ -159,6 +159,96 @@ export type CateringPlanSummary = {
   requisition_id: string | null;
 };
 
+export type CateringPlanOperationalIndexRow = {
+  plan_id: string;
+  plan_name: string | null;
+  event_id: string;
+  event_name: string | null;
+  event_date: string | null;
+  expected_attendance: number | null;
+  planned_guest_count: number | null;
+  plan_status: EventCateringPlan["status"];
+  recipes_count: number;
+  requirements_count: number;
+  shortage_count: number;
+  estimated_total_cost: number;
+  requisition_count: number;
+  latest_requisition_status: EventCateringRequisition["status"] | null;
+  receipt_status_summary: "none" | "draft" | "received" | "mixed";
+  consumption_status_summary: "none" | "draft" | "confirmed" | "mixed";
+  reserved_this_plan_total: number;
+  operational_status:
+    | "Sin recetas"
+    | "Requerimientos pendientes"
+    | "Con faltantes"
+    | "Requisición pendiente"
+    | "Compra por recibir"
+    | "Listo para consumo"
+    | "Consumo en borrador"
+    | "Consumo confirmado";
+};
+
+export type CateringRequisitionOperationalIndexRow = {
+  requisition_id: string;
+  event_id: string | null;
+  event_name: string | null;
+  event_date: string | null;
+  plan_id: string;
+  plan_name: string | null;
+  status: EventCateringRequisition["status"];
+  preliminary_total: number;
+  quoted_total: number;
+  approved_total: number;
+  estimated_total: number;
+  pending_quote_lines: number;
+  line_count: number;
+  receipt_status_summary: "sin recepción" | "borrador" | "recibida" | "cancelada/historial";
+};
+
+export type PurchaseReceiptOperationalOverviewRow = {
+  receipt_id: string;
+  receipt_status: "draft" | "received" | "canceled";
+  requisition_id: string;
+  requisition_status: EventCateringRequisition["status"] | null;
+  plan_id: string | null;
+  plan_name: string | null;
+  event_id: string | null;
+  event_name: string | null;
+  event_date: string | null;
+  total_received_cost: number;
+  total_expected_cost: number;
+  line_count: number;
+  received_at: string | null;
+  created_at: string;
+};
+
+export type ConsumptionOperationalCandidateBucket =
+  | "ready_to_prepare"
+  | "preparable_with_warnings"
+  | "draft"
+  | "confirmed"
+  | "blocked";
+
+export type ConsumptionOperationalCandidateRow = {
+  plan_id: string;
+  plan_name: string | null;
+  event_id: string;
+  event_name: string | null;
+  event_date: string | null;
+  planned_guest_count: number | null;
+  requirements_count: number;
+  shortage_count: number;
+  requisition_status_summary: EventCateringRequisition["status"] | "none";
+  receipt_status_summary: "none" | "draft" | "received" | "mixed";
+  has_draft_consumption: boolean;
+  has_confirmed_consumption: boolean;
+  ready_to_prepare: boolean;
+  ready_to_confirm: boolean;
+  reserve_sufficient: boolean;
+  blocking_reason: string | null;
+  operational_bucket: ConsumptionOperationalCandidateBucket;
+};
+
 export type CateringShortageSummaryRow = {
   item_id: string;
   item_name: string | null;

@@ -4,7 +4,7 @@ import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/
 import { createPurchaseReceiptFromRequisitionAction } from "@/lib/kitchen/event-catering/actions";
 import {
   listApprovedRequisitionsPendingReceipt,
-  listPurchaseReceiptsOverview,
+  listPurchaseReceiptsOperationalOverview,
 } from "@/lib/kitchen/event-catering/queries";
 import {
   KitchenActionRowSkeleton,
@@ -17,6 +17,19 @@ import { resolveKitchenPage } from "../../_lib/page-access";
 
 type KitchenEventReceiptsPageProps = {
   params: Promise<{ tenantSlug: string }>;
+};
+
+const requisitionStatusCopy: Record<string, string> = {
+  draft: "Borrador",
+  reviewed: "Revisada",
+  approved: "Autorizada",
+  canceled: "Cancelada",
+};
+
+const receiptStatusCopy: Record<string, string> = {
+  draft: "Borrador",
+  received: "Recibida",
+  canceled: "Cancelada",
 };
 
 export default async function KitchenEventReceiptsPage({ params }: KitchenEventReceiptsPageProps) {
@@ -35,14 +48,14 @@ export default async function KitchenEventReceiptsPage({ params }: KitchenEventR
   const accessMap = await getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "event_catering");
   const canManage = hasModulePageAccess(accessMap.requisitions ?? "none", "manage");
   const approvedPendingPromise = listApprovedRequisitionsPendingReceipt(result.tenant.tenantSlug);
-  const receiptsPromise = listPurchaseReceiptsOverview(result.tenant.tenantSlug);
+  const receiptsPromise = listPurchaseReceiptsOperationalOverview(result.tenant.tenantSlug);
 
   return (
     <div className="space-y-4">
       <KitchenPageHeader
         eyebrow="Recepciones"
         title="Recepciones"
-        description="Crear recepción en draft no actualiza inventario. Confirmar recepción en detalle sí registra movimientos purchase."
+        description="Recepción recibida actualiza inventario. Recepción cancelada queda como historial y no afecta inventario."
       />
 
       <Suspense fallback={<KitchenTableSkeleton rows={6} columns={5} />}>
@@ -73,17 +86,17 @@ async function ApprovedPendingSection({
 
   return (
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-      <h2 className="text-sm font-semibold text-foreground">Requisiciones aprobadas pendientes de recibir</h2>
+      <h2 className="text-sm font-semibold text-foreground">Requisiciones autorizadas pendientes de recibir</h2>
       {approvedPending.length === 0 ? (
-        <p className="mt-2 text-xs text-muted">No hay requisiciones approved pendientes de recepción.</p>
+        <p className="mt-2 text-xs text-muted">No hay requisiciones autorizadas pendientes de recepción.</p>
       ) : (
         <div className="mt-2 overflow-x-auto">
           <table className="min-w-full text-xs">
             <thead>
               <tr className="text-left text-muted">
-                <th className="px-2 py-1">Requisición</th>
-                <th className="px-2 py-1">Evento/Plan</th>
-                <th className="px-2 py-1">Total</th>
+                <th className="px-2 py-1">Servicio</th>
+                <th className="px-2 py-1">Evento</th>
+                <th className="px-2 py-1">Total esperado</th>
                 <th className="px-2 py-1">Líneas</th>
                 <th className="px-2 py-1">Acción</th>
               </tr>
@@ -91,10 +104,10 @@ async function ApprovedPendingSection({
             <tbody>
               {approvedPending.map((row) => (
                 <tr key={row.requisition_id} className="border-t border-border">
-                  <td className="px-2 py-1 text-foreground">{row.requisition_id.slice(0, 8)}</td>
-                  <td className="px-2 py-1 text-muted">{row.plan_name ?? row.plan_id?.slice(0, 8) ?? "—"}</td>
+                  <td className="px-2 py-1 text-foreground">{row.plan_name ?? row.plan_id?.slice(0, 8) ?? "—"}</td>
+                  <td className="px-2 py-1 text-muted">{row.event_id ? row.event_id.slice(0, 8) : "—"}</td>
                   <td className="px-2 py-1 text-foreground">
-                    ${row.estimated_total_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ${row.expected_receipt_total.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td className="px-2 py-1 text-muted">{row.line_count}</td>
                   <td className="px-2 py-1">
@@ -103,7 +116,7 @@ async function ApprovedPendingSection({
                         href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}`}
                         className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
                       >
-                        Ver requisición
+                        Abrir requisición
                       </Link>
                       {canManage ? (
                         row.can_create_receipt ? (
@@ -137,158 +150,76 @@ async function ReceiptsOverviewSection({
   receiptsPromise,
 }: {
   tenantSlug: string;
-  receiptsPromise: ReturnType<typeof listPurchaseReceiptsOverview>;
+  receiptsPromise: ReturnType<typeof listPurchaseReceiptsOperationalOverview>;
 }) {
   const receipts = await receiptsPromise;
-  const draftReceipts = receipts.filter((row) => row.status === "draft");
-  const receivedReceipts = receipts.filter((row) => row.status === "received");
-  const canceledReceipts = receipts.filter((row) => row.status === "canceled");
+  const draftReceipts = receipts.filter((row) => row.receipt_status === "draft");
+  const receivedReceipts = receipts.filter((row) => row.receipt_status === "received");
+  const canceledReceipts = receipts.filter((row) => row.receipt_status === "canceled");
+
+  const renderTable = (
+    rows: typeof receipts,
+    title: string,
+    emptyLabel: string,
+    muted = false,
+  ) => (
+    <section className={muted ? "rounded-[var(--radius-base)] border border-primary/20 bg-primary/10 p-4" : "rounded-[var(--radius-base)] border border-border bg-surface p-4"}>
+      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">{emptyLabel}</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="min-w-full text-xs">
+            <thead>
+              <tr className="text-left text-muted">
+                <th className="px-2 py-1">Evento</th>
+                <th className="px-2 py-1">Servicio</th>
+                <th className="px-2 py-1">Requisición</th>
+                <th className="px-2 py-1">Estado req.</th>
+                <th className="px-2 py-1">Estado recepción</th>
+                <th className="px-2 py-1">Total esperado</th>
+                <th className="px-2 py-1">Total recibido</th>
+                <th className="px-2 py-1">Fecha recepción</th>
+                <th className="px-2 py-1">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.receipt_id} className="border-t border-border">
+                  <td className="px-2 py-1 text-foreground">
+                    <p>{row.event_name ?? "Evento"}</p>
+                    <p className="text-[11px] text-muted">{row.event_date ? new Date(row.event_date).toLocaleString("es-MX") : "—"}</p>
+                  </td>
+                  <td className="px-2 py-1 text-foreground">{row.plan_name ?? row.plan_id?.slice(0, 8) ?? "—"}</td>
+                  <td className="px-2 py-1 text-muted">{row.requisition_id.slice(0, 8)}</td>
+                  <td className="px-2 py-1 text-muted">{row.requisition_status ? requisitionStatusCopy[row.requisition_status] ?? row.requisition_status : "—"}</td>
+                  <td className="px-2 py-1 text-foreground">{receiptStatusCopy[row.receipt_status] ?? row.receipt_status}</td>
+                  <td className="px-2 py-1 text-foreground">${row.total_expected_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-2 py-1 text-foreground">${row.total_received_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-2 py-1 text-muted">{row.received_at ? new Date(row.received_at).toLocaleString("es-MX") : "—"}</td>
+                  <td className="px-2 py-1">
+                    <div className="flex flex-col gap-1">
+                      <Link href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}/receipts/${row.receipt_id}`} className="underline underline-offset-2">Abrir recepción</Link>
+                      {row.plan_id && row.event_id ? (
+                        <Link href={`/${tenantSlug}/kitchen/events/${row.event_id}/catering/${row.plan_id}`} className="underline underline-offset-2">Abrir plan</Link>
+                      ) : null}
+                      <Link href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}`} className="underline underline-offset-2">Abrir requisición</Link>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
 
   return (
     <>
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-foreground">Recepciones draft</h2>
-        {draftReceipts.length === 0 ? (
-          <p className="mt-2 text-xs text-muted">No hay recepciones en draft.</p>
-        ) : (
-          <div className="mt-2 overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead>
-                <tr className="text-left text-muted">
-                  <th className="px-2 py-1">Recepción</th>
-                  <th className="px-2 py-1">Requisición</th>
-                  <th className="px-2 py-1">Total</th>
-                  <th className="px-2 py-1">Líneas</th>
-                  <th className="px-2 py-1">Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {draftReceipts.map((row) => (
-                  <tr key={row.receipt_id} className="border-t border-border">
-                    <td className="px-2 py-1 text-foreground">{row.receipt_id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-muted">{row.requisition_id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-foreground">
-                      ${row.total_received_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-2 py-1 text-muted">
-                      <div className="space-y-1">
-                        <p>{row.line_count}</p>
-                        {row.line_count === 0 ? (
-                          <p className="text-[11px] text-warning">Inválida sin líneas</p>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="px-2 py-1">
-                      <Link
-                        href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}/receipts/${row.receipt_id}`}
-                        className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
-                      >
-                        Continuar recepción
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-foreground">Recepciones recibidas</h2>
-        {receivedReceipts.length === 0 ? (
-          <p className="mt-2 text-xs text-muted">No hay recepciones confirmadas.</p>
-        ) : (
-          <div className="mt-2 overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead>
-                <tr className="text-left text-muted">
-                  <th className="px-2 py-1">Recepción</th>
-                  <th className="px-2 py-1">Requisición</th>
-                  <th className="px-2 py-1">Recibida</th>
-                  <th className="px-2 py-1">Total recibido</th>
-                  <th className="px-2 py-1">Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {receivedReceipts.map((row) => (
-                  <tr key={row.receipt_id} className="border-t border-border">
-                    <td className="px-2 py-1 text-foreground">{row.receipt_id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-muted">{row.requisition_id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-muted">{row.received_at ? new Date(row.received_at).toLocaleString("es-MX") : "—"}</td>
-                    <td className="px-2 py-1 text-foreground">
-                      ${row.total_received_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-2 py-1">
-                      <Link
-                        href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}/receipts/${row.receipt_id}`}
-                        className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
-                      >
-                        Ver detalle
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-[var(--radius-base)] border border-primary/20 bg-primary/10 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Recepciones canceladas / historial</h2>
-            <p className="mt-1 text-xs text-muted">Las recepciones canceladas no afectan inventario ni suman como recibido.</p>
-          </div>
-          <span className="rounded-full border border-border bg-surface px-2 py-1 text-[11px] text-muted">
-            {canceledReceipts.length} canceladas
-          </span>
-        </div>
-        {canceledReceipts.length === 0 ? (
-          <p className="mt-2 text-xs text-muted">No hay recepciones canceladas.</p>
-        ) : (
-          <div className="mt-2 overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead>
-                <tr className="text-left text-muted">
-                  <th className="px-2 py-1">Recepción</th>
-                  <th className="px-2 py-1">Requisición</th>
-                  <th className="px-2 py-1">Total histórico</th>
-                  <th className="px-2 py-1">Líneas</th>
-                  <th className="px-2 py-1">Estado</th>
-                  <th className="px-2 py-1">Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {canceledReceipts.map((row) => (
-                  <tr key={row.receipt_id} className="border-t border-border">
-                    <td className="px-2 py-1 text-foreground">{row.receipt_id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-muted">{row.requisition_id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-muted">
-                      ${row.total_received_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-2 py-1 text-muted">{row.line_count}</td>
-                    <td className="px-2 py-1">
-                      <span className="rounded-full border border-border bg-surface px-2 py-1 text-[11px] text-muted">
-                        Cancelada · no afecta inventario
-                      </span>
-                    </td>
-                    <td className="px-2 py-1">
-                      <Link
-                        href={`/${tenantSlug}/kitchen/events/requisitions/${row.requisition_id}/receipts/${row.receipt_id}`}
-                        className="inline-flex rounded border border-border bg-surface px-2 py-1 text-xs"
-                      >
-                        Ver historial
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      {renderTable(draftReceipts, "Recepciones en borrador", "No hay recepciones en borrador.")}
+      {renderTable(receivedReceipts, "Recepciones recibidas", "No hay recepciones recibidas.")}
+      {renderTable(canceledReceipts, "Recepciones canceladas / historial", "No hay recepciones canceladas.", true)}
     </>
   );
 }

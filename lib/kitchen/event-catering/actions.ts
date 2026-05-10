@@ -80,6 +80,103 @@ function resolveEmbeddedEventId(value: unknown): string | undefined {
   return undefined;
 }
 
+async function autoAssignConsumptionLocationsForRecord(
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
+  input: { tenantId: string; recordId: string; planId: string },
+) {
+  const { data: lines, error: linesError } = await supabase
+    .from("event_catering_consumption_lines")
+    .select("id,item_id,location_id,consumed_quantity,waste_quantity")
+    .eq("tenant_id", input.tenantId)
+    .eq("consumption_record_id", input.recordId);
+  if (linesError) throw new Error(`No se pudieron cargar líneas para auto-asignar: ${linesError.message}`);
+
+  const itemIds = [...new Set((lines ?? []).map((line) => line.item_id))];
+  if (itemIds.length === 0) return;
+
+  const [{ data: balances, error: balancesError }, { data: allocations, error: allocationsError }] = await Promise.all([
+    supabase
+      .from("kitchen_inventory_balances")
+      .select("item_id,location_id,quantity")
+      .eq("tenant_id", input.tenantId)
+      .in("item_id", itemIds),
+    supabase
+      .from("event_catering_inventory_allocations")
+      .select("plan_id,item_id,location_id,allocated_quantity,consumed_quantity,released_quantity,status")
+      .eq("tenant_id", input.tenantId)
+      .in("item_id", itemIds)
+      .eq("status", "reserved"),
+  ]);
+  if (balancesError) throw new Error(`No se pudieron cargar balances para auto-asignar: ${balancesError.message}`);
+  if (allocationsError && !isAllocationsTableMissing(allocationsError.message)) {
+    throw new Error(`No se pudieron cargar reservas para auto-asignar: ${allocationsError.message}`);
+  }
+
+  const physical = new Map<string, number>();
+  const locationsByItem = new Map<string, Set<string>>();
+  for (const balance of balances ?? []) {
+    if (!balance.location_id) continue;
+    physical.set(`${balance.item_id}:${balance.location_id}`, Number(balance.quantity ?? 0));
+    const bucket = locationsByItem.get(balance.item_id) ?? new Set<string>();
+    bucket.add(balance.location_id);
+    locationsByItem.set(balance.item_id, bucket);
+  }
+
+  const reservedThisByLocation = new Map<string, number>();
+  const reservedOtherByLocation = new Map<string, number>();
+  const reservedOtherGlobalByItem = new Map<string, number>();
+  for (const allocation of allocations ?? []) {
+    const remaining = Math.max(
+      Number(allocation.allocated_quantity ?? 0) -
+        Number(allocation.consumed_quantity ?? 0) -
+        Number(allocation.released_quantity ?? 0),
+      0,
+    );
+    if (remaining <= 0) continue;
+    if (!allocation.location_id) {
+      if (allocation.plan_id !== input.planId) {
+        reservedOtherGlobalByItem.set(allocation.item_id, (reservedOtherGlobalByItem.get(allocation.item_id) ?? 0) + remaining);
+      }
+      continue;
+    }
+    const key = `${allocation.item_id}:${allocation.location_id}`;
+    if (allocation.plan_id === input.planId) {
+      reservedThisByLocation.set(key, (reservedThisByLocation.get(key) ?? 0) + remaining);
+    } else {
+      reservedOtherByLocation.set(key, (reservedOtherByLocation.get(key) ?? 0) + remaining);
+    }
+  }
+
+  for (const line of lines ?? []) {
+    const totalOut = round4(Number(line.consumed_quantity ?? 0) + Number(line.waste_quantity ?? 0));
+    if (totalOut <= 0 || line.location_id) continue;
+    const globalOther = Number(reservedOtherGlobalByItem.get(line.item_id) ?? 0);
+    const candidates = [...(locationsByItem.get(line.item_id) ?? new Set<string>())]
+      .map((locationId) => {
+        const key = `${line.item_id}:${locationId}`;
+        const physicalQty = Number(physical.get(key) ?? 0);
+        const thisQty = Number(reservedThisByLocation.get(key) ?? 0);
+        const otherQty = Number(reservedOtherByLocation.get(key) ?? 0);
+        return {
+          locationId,
+          reservedThis: thisQty,
+          availableForThisPlan: round4(physicalQty - otherQty - globalOther),
+        };
+      })
+      .filter((candidate) => candidate.availableForThisPlan >= totalOut)
+      .sort((a, b) => b.reservedThis - a.reservedThis || b.availableForThisPlan - a.availableForThisPlan);
+    const selected = candidates[0];
+    if (!selected) continue;
+    const { error: updateError } = await supabase
+      .from("event_catering_consumption_lines")
+      .update({ location_id: selected.locationId })
+      .eq("tenant_id", input.tenantId)
+      .eq("consumption_record_id", input.recordId)
+      .eq("id", line.id);
+    if (updateError) throw new Error(`No se pudo auto-asignar ubicación: ${updateError.message}`);
+  }
+}
+
 function isAllocationsTableMissing(errorMessage: string): boolean {
   return (
     errorMessage.includes("event_catering_inventory_allocations") &&
@@ -242,6 +339,59 @@ async function recalculateAndPersistCateringRequirements(
   return result;
 }
 
+
+async function releaseManualStockAllocations(
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
+  input: {
+    tenantId: string;
+    planId: string;
+    userId: string;
+    keepItemUnitKeys?: Set<string>;
+  },
+) {
+  const query = supabase
+    .from("event_catering_inventory_allocations")
+    .select("id,item_id,unit_id,allocated_quantity,consumed_quantity,released_quantity,status,requirement_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("plan_id", input.planId)
+    .eq("source_type", "manual")
+    .in("status", ["reserved", "consumed"]);
+
+  const { data, error } = await query;
+  if (error) {
+    if (isAllocationsTableMissing(error.message)) return;
+    throw new Error(`No se pudieron cargar reservas manuales para liberar: ${error.message}`);
+  }
+
+  for (const allocation of data ?? []) {
+    const allocationKey = `${allocation.item_id}:${allocation.unit_id}`;
+    if (input.keepItemUnitKeys?.has(allocationKey)) continue;
+    const allocated = round4(Number(allocation.allocated_quantity ?? 0));
+    const consumed = round4(Number(allocation.consumed_quantity ?? 0));
+    const released = round4(Number(allocation.released_quantity ?? 0));
+    const remaining = round4(Math.max(allocated - consumed - released, 0));
+    if (remaining <= 0) continue;
+
+    const nextReleased = round4(released + remaining);
+    const nextStatus = consumed > 0 ? "consumed" : "released";
+    const { error: updateError } = await supabase
+      .from("event_catering_inventory_allocations")
+      .update({
+        released_quantity: nextReleased,
+        status: nextStatus,
+        released_at: new Date().toISOString(),
+        released_by: input.userId,
+        notes: "manual_stock_allocation_released_after_requirements_sync",
+      })
+      .eq("tenant_id", input.tenantId)
+      .eq("id", allocation.id);
+    if (updateError) {
+      if (isAllocationsTableMissing(updateError.message)) return;
+      throw new Error(`No se pudo liberar reserva manual obsoleta: ${updateError.message}`);
+    }
+  }
+}
+
 async function syncPlanStockAllocationsFromRequirements(
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
   input: {
@@ -258,8 +408,16 @@ async function syncPlanStockAllocationsFromRequirements(
     .eq("plan_id", input.planId)
     .gt("required_quantity", 0);
   if (requirementsError) throw new Error(`No se pudieron cargar requerimientos para apartar stock: ${requirementsError.message}`);
-  if (!requirements || requirements.length === 0) return;
+  if (!requirements || requirements.length === 0) {
+    await releaseManualStockAllocations(supabase, {
+      tenantId: input.tenantId,
+      planId: input.planId,
+      userId: input.userId,
+    });
+    return;
+  }
 
+  const activeItemUnitKeys = new Set(requirements.map((row) => `${row.item_id}:${row.unit_id}`));
   const itemIds = [...new Set(requirements.map((row) => String(row.item_id)))];
   const [balancesRes, allocationsRes] = await Promise.all([
     supabase
@@ -336,6 +494,13 @@ async function syncPlanStockAllocationsFromRequirements(
     const itemId = String(req.item_id);
     requirementsByItem.set(itemId, [...(requirementsByItem.get(itemId) ?? []), req]);
   }
+
+  await releaseManualStockAllocations(supabase, {
+    tenantId: input.tenantId,
+    planId: input.planId,
+    userId: input.userId,
+    keepItemUnitKeys: activeItemUnitKeys,
+  });
 
   for (const [itemId, itemRequirements] of requirementsByItem) {
     const physical = round4(physicalByItem.get(itemId) ?? 0);
@@ -889,6 +1054,36 @@ export async function updatePlanRecipeServingsAction(formData: FormData): Promis
   revalidateCateringPaths(tenant.tenantSlug, plan.event_id, plan.id);
 }
 
+
+async function reserveAndRefreshCateringPlanInventory(
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
+  input: {
+    tenantId: string;
+    userId: string;
+    eventId: string;
+    planId: string;
+  },
+) {
+  await recalculateAndPersistCateringRequirements(supabase, {
+    tenantId: input.tenantId,
+    planId: input.planId,
+    userId: input.userId,
+  });
+
+  await syncPlanStockAllocationsFromRequirements(supabase, {
+    tenantId: input.tenantId,
+    userId: input.userId,
+    eventId: input.eventId,
+    planId: input.planId,
+  });
+
+  return recalculateAndPersistCateringRequirements(supabase, {
+    tenantId: input.tenantId,
+    planId: input.planId,
+    userId: input.userId,
+  });
+}
+
 export async function recalculateCateringRequirementsAction(formData: FormData): Promise<void> {
   const tenantSlug = toText(formData.get("tenantSlug")).toLowerCase();
   const planId = toText(formData.get("planId"));
@@ -913,6 +1108,33 @@ export async function recalculateCateringRequirementsAction(formData: FormData):
   revalidateCateringPaths(tenant.tenantSlug, plan.event_id, plan.id);
 }
 
+export async function reserveInventoryForCateringPlanAction(formData: FormData): Promise<void> {
+  const tenantSlug = toText(formData.get("tenantSlug")).toLowerCase();
+  const planId = toText(formData.get("planId"));
+  if (!tenantSlug || !planId) throw new Error("Tenant y plan son obligatorios.");
+
+  const { tenant, user } = await resolveTenantModulePageActor(tenantSlug, "event_catering", "requirements", "manage");
+  const supabase = await getSupabaseServerClient();
+  const { data: plan, error: planError } = await supabase
+    .from("event_catering_plans")
+    .select("id,event_id")
+    .eq("tenant_id", tenant.tenantId)
+    .eq("id", planId)
+    .maybeSingle();
+  if (planError || !plan) throw new Error("Plan inválido para el tenant.");
+
+  await reserveAndRefreshCateringPlanInventory(supabase, {
+    tenantId: tenant.tenantId,
+    userId: user.id,
+    eventId: plan.event_id,
+    planId: plan.id,
+  });
+
+  revalidateCateringPaths(tenant.tenantSlug, plan.event_id, plan.id);
+  revalidatePath(`/${tenant.tenantSlug}/kitchen/events/plans`);
+  revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${plan.event_id}/catering/${plan.id}/consumption`);
+}
+
 export async function generateCateringRequisitionFromShortagesAction(formData: FormData): Promise<void> {
   const tenantSlug = toText(formData.get("tenantSlug")).toLowerCase();
   const planId = toText(formData.get("planId"));
@@ -929,23 +1151,11 @@ export async function generateCateringRequisitionFromShortagesAction(formData: F
     .maybeSingle();
   if (planError || !plan) throw new Error("Plan inválido para el tenant.");
 
-  await recalculateAndPersistCateringRequirements(supabase, {
-    tenantId: tenant.tenantId,
-    planId: plan.id,
-    userId: user.id,
-  });
-
-  await syncPlanStockAllocationsFromRequirements(supabase, {
+  await reserveAndRefreshCateringPlanInventory(supabase, {
     tenantId: tenant.tenantId,
     userId: user.id,
     eventId: plan.event_id,
     planId: plan.id,
-  });
-
-  await recalculateAndPersistCateringRequirements(supabase, {
-    tenantId: tenant.tenantId,
-    planId: plan.id,
-    userId: user.id,
   });
 
   const { data: shortages, error: shortagesError } = await supabase
@@ -956,7 +1166,9 @@ export async function generateCateringRequisitionFromShortagesAction(formData: F
     .gt("shortage_quantity", 0);
   if (shortagesError) throw new Error(`No fue posible cargar faltantes del plan: ${shortagesError.message}`);
   if (!shortages || shortages.length === 0) {
-    throw new Error("El plan no tiene faltantes; no se generó requisición.");
+    revalidateCateringPaths(tenant.tenantSlug, plan.event_id, plan.id);
+    revalidatePath(`/${tenant.tenantSlug}/kitchen/events/plans`);
+    return;
   }
 
   const itemIds = [...new Set(shortages.map((row) => row.item_id))];
@@ -2248,12 +2460,12 @@ export async function createConsumptionDraftFromPlanAction(formData: FormData): 
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (existingDraftError) throw new Error(`No se pudo validar consumo draft existente: ${existingDraftError.message}`);
+  if (existingDraftError) throw new Error(`No se pudo validar consumo preparado existente: ${existingDraftError.message}`);
   if (existingDraft?.id) {
     revalidatePath(`/${tenant.tenantSlug}/kitchen/events/consumption`);
     revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${plan.event_id}/catering/${plan.id}/consumption`);
     revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${plan.event_id}/catering/${plan.id}/consumption/${existingDraft.id}`);
-    throw new Error("Ya existe un consumo en borrador. Ábrelo o usa Regenerar propuesta.");
+    throw new Error("Ya existe un consumo preparado. Ábrelo o usa Regenerar propuesta.");
   }
 
   const { data: requirements, error: reqError } = await supabase
@@ -2262,7 +2474,7 @@ export async function createConsumptionDraftFromPlanAction(formData: FormData): 
     .eq("tenant_id", tenant.tenantId)
     .eq("plan_id", plan.id);
   if (reqError) throw new Error(`No fue posible cargar requerimientos del plan: ${reqError.message}`);
-  if (!requirements || requirements.length === 0) throw new Error("El plan no tiene requerimientos para generar consumo draft.");
+  if (!requirements || requirements.length === 0) throw new Error("El plan no tiene requerimientos para preparar consumo.");
 
   const { data: created, error: createError } = await supabase
     .from("event_catering_consumption_records")
@@ -2271,12 +2483,12 @@ export async function createConsumptionDraftFromPlanAction(formData: FormData): 
       plan_id: plan.id,
       event_id: plan.event_id,
       status: "draft",
-      notes: `Consumo draft generado desde requirements del plan ${plan.id}`,
+      notes: `Consumo preparado desde requerimientos del plan ${plan.id}`,
       created_by: user.id,
     })
     .select("id")
     .single();
-  if (createError || !created) throw new Error(`No se pudo crear consumo draft: ${createError?.message ?? "error"}`);
+  if (createError || !created) throw new Error(`No se pudo preparar consumo: ${createError?.message ?? "error"}`);
 
   const rows = requirements.map((row) => {
     const plannedQuantity = Number(row.required_quantity ?? 0);
@@ -2289,18 +2501,20 @@ export async function createConsumptionDraftFromPlanAction(formData: FormData): 
       location_id: null,
       unit_id: row.unit_id,
       planned_quantity: round4(plannedQuantity),
-      consumed_quantity: 0,
+      consumed_quantity: round4(plannedQuantity),
       waste_quantity: 0,
       leftover_quantity: 0,
       available_quantity: round4(Number(row.available_quantity ?? 0)),
       unit_cost: round4(unitCost),
-      total_cost: 0,
+      total_cost: round4(plannedQuantity * unitCost),
       notes: null,
       created_by: user.id,
     };
   });
   const { error: insertLinesError } = await supabase.from("event_catering_consumption_lines").insert(rows);
-  if (insertLinesError) throw new Error(`No se pudieron crear líneas de consumo draft: ${insertLinesError.message}`);
+  if (insertLinesError) throw new Error(`No se pudieron crear líneas de consumo preparado: ${insertLinesError.message}`);
+
+  await autoAssignConsumptionLocationsForRecord(supabase, { tenantId: tenant.tenantId, recordId: created.id, planId: plan.id });
 
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/consumption`);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${plan.event_id}/catering/${plan.id}/consumption`);
@@ -2334,8 +2548,8 @@ export async function regenerateConsumptionDraftFromPlanAction(formData: FormDat
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (draftError) throw new Error(`No se pudo cargar consumo draft: ${draftError.message}`);
-  if (!draft) throw new Error("No existe consumo en borrador para regenerar.");
+  if (draftError) throw new Error(`No se pudo cargar consumo preparado: ${draftError.message}`);
+  if (!draft) throw new Error("No existe consumo preparado para regenerar.");
 
   const { data: requirements, error: reqError } = await supabase
     .from("event_catering_requirements")
@@ -2363,18 +2577,20 @@ export async function regenerateConsumptionDraftFromPlanAction(formData: FormDat
       location_id: null,
       unit_id: row.unit_id,
       planned_quantity: round4(plannedQuantity),
-      consumed_quantity: 0,
+      consumed_quantity: round4(plannedQuantity),
       waste_quantity: 0,
       leftover_quantity: 0,
       available_quantity: round4(Number(row.available_quantity ?? 0)),
       unit_cost: round4(unitCost),
-      total_cost: 0,
+      total_cost: round4(plannedQuantity * unitCost),
       notes: "consumption_draft_regenerated_from_requirements",
       created_by: user.id,
     };
   });
   const { error: insertLinesError } = await supabase.from("event_catering_consumption_lines").insert(rows);
   if (insertLinesError) throw new Error(`No se pudieron regenerar líneas de consumo: ${insertLinesError.message}`);
+
+  await autoAssignConsumptionLocationsForRecord(supabase, { tenantId: tenant.tenantId, recordId: draft.id, planId: plan.id });
 
   const { error: updateRecordError } = await supabase
     .from("event_catering_consumption_records")
@@ -2410,7 +2626,7 @@ export async function updateConsumptionLineAction(formData: FormData): Promise<v
     .eq("id", consumptionId)
     .maybeSingle();
   if (recordError || !record) throw new Error("Consumo inválido para el tenant.");
-  if (record.status !== "draft") throw new Error("Solo se puede editar consumo en status draft.");
+  if (record.status !== "draft") throw new Error("Solo se puede editar un consumo preparado pendiente de confirmar.");
 
   const { data: line, error: lineError } = await supabase
     .from("event_catering_consumption_lines")
@@ -2487,7 +2703,7 @@ export async function applyPlannedQuantitiesToConsumptionAction(formData: FormDa
     .eq("id", consumptionId)
     .maybeSingle();
   if (recordError || !record) throw new Error("Consumo inválido para el tenant.");
-  if (record.status !== "draft") throw new Error("Solo se pueden aplicar cantidades planeadas a un consumo draft.");
+  if (record.status !== "draft") throw new Error("Solo se pueden restaurar cantidades planeadas a un consumo preparado.");
 
   const { data: lines, error: linesError } = await supabase
     .from("event_catering_consumption_lines")
@@ -2542,7 +2758,7 @@ export async function bulkAssignConsumptionLocationAction(formData: FormData): P
       .maybeSingle(),
   ]);
   if (recordError || !record) throw new Error("Consumo inválido para el tenant.");
-  if (record.status !== "draft") throw new Error("Solo se pueden asignar ubicaciones en consumo draft.");
+  if (record.status !== "draft") throw new Error("Solo se pueden asignar ubicaciones en consumo preparado.");
   if (locationError || !location) throw new Error("Ubicación inválida para el tenant.");
 
   let query = supabase
@@ -2573,92 +2789,9 @@ export async function autoAssignConsumptionLocationsAction(formData: FormData): 
     .eq("id", consumptionId)
     .maybeSingle();
   if (recordError || !record) throw new Error("Consumo inválido para el tenant.");
-  if (record.status !== "draft") throw new Error("Solo se puede auto-asignar ubicación en consumo draft.");
+  if (record.status !== "draft") throw new Error("Solo se puede auto-asignar ubicación en consumo preparado.");
 
-  const { data: lines, error: linesError } = await supabase
-    .from("event_catering_consumption_lines")
-    .select("id,item_id,location_id,consumed_quantity,waste_quantity")
-    .eq("tenant_id", tenant.tenantId)
-    .eq("consumption_record_id", record.id);
-  if (linesError) throw new Error(`No se pudieron cargar líneas para auto-asignar: ${linesError.message}`);
-  const itemIds = [...new Set((lines ?? []).map((line) => line.item_id))];
-  if (itemIds.length === 0) return;
-
-  const [{ data: balances, error: balancesError }, { data: allocations, error: allocationsError }] = await Promise.all([
-    supabase
-      .from("kitchen_inventory_balances")
-      .select("item_id,location_id,quantity")
-      .eq("tenant_id", tenant.tenantId)
-      .in("item_id", itemIds),
-    supabase
-      .from("event_catering_inventory_allocations")
-      .select("plan_id,item_id,location_id,allocated_quantity,consumed_quantity,released_quantity,status")
-      .eq("tenant_id", tenant.tenantId)
-      .in("item_id", itemIds)
-      .eq("status", "reserved"),
-  ]);
-  if (balancesError) throw new Error(`No se pudieron cargar balances para auto-asignar: ${balancesError.message}`);
-  if (allocationsError && !isAllocationsTableMissing(allocationsError.message)) {
-    throw new Error(`No se pudieron cargar reservas para auto-asignar: ${allocationsError.message}`);
-  }
-
-  const physical = new Map<string, number>();
-  for (const balance of balances ?? []) {
-    physical.set(`${balance.item_id}:${balance.location_id}`, Number(balance.quantity ?? 0));
-  }
-  const reservedThis = new Map<string, number>();
-  const reservedOther = new Map<string, number>();
-  for (const allocation of allocations ?? []) {
-    const remaining = Math.max(
-      Number(allocation.allocated_quantity ?? 0) -
-        Number(allocation.consumed_quantity ?? 0) -
-        Number(allocation.released_quantity ?? 0),
-      0,
-    );
-    if (remaining <= 0 || !allocation.location_id) continue;
-    const key = `${allocation.item_id}:${allocation.location_id}`;
-    if (allocation.plan_id === record.plan_id) {
-      reservedThis.set(key, (reservedThis.get(key) ?? 0) + remaining);
-    } else {
-      reservedOther.set(key, (reservedOther.get(key) ?? 0) + remaining);
-    }
-  }
-
-  const locationsByItem = new Map<string, Set<string>>();
-  for (const balance of balances ?? []) {
-    if (!balance.location_id) continue;
-    const bucket = locationsByItem.get(balance.item_id) ?? new Set<string>();
-    bucket.add(balance.location_id);
-    locationsByItem.set(balance.item_id, bucket);
-  }
-
-  for (const line of lines ?? []) {
-    const totalOut = round4(Number(line.consumed_quantity ?? 0) + Number(line.waste_quantity ?? 0));
-    if (totalOut <= 0 || line.location_id) continue;
-    const candidates = [...(locationsByItem.get(line.item_id) ?? new Set<string>())]
-      .map((locationId) => {
-        const key = `${line.item_id}:${locationId}`;
-        const physicalQty = Number(physical.get(key) ?? 0);
-        const thisQty = Number(reservedThis.get(key) ?? 0);
-        const otherQty = Number(reservedOther.get(key) ?? 0);
-        return {
-          locationId,
-          reservedThis: thisQty,
-          availableForThisPlan: round4(physicalQty - otherQty + thisQty),
-        };
-      })
-      .filter((candidate) => candidate.availableForThisPlan >= totalOut)
-      .sort((a, b) => b.reservedThis - a.reservedThis || b.availableForThisPlan - a.availableForThisPlan);
-    const selected = candidates[0];
-    if (!selected) continue;
-    const { error: updateError } = await supabase
-      .from("event_catering_consumption_lines")
-      .update({ location_id: selected.locationId })
-      .eq("tenant_id", tenant.tenantId)
-      .eq("consumption_record_id", record.id)
-      .eq("id", line.id);
-    if (updateError) throw new Error(`No se pudo auto-asignar ubicación: ${updateError.message}`);
-  }
+  await autoAssignConsumptionLocationsForRecord(supabase, { tenantId: tenant.tenantId, recordId: record.id, planId: record.plan_id });
 
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/consumption`);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${record.event_id}/catering/${record.plan_id}/consumption`);
@@ -2679,7 +2812,7 @@ export async function cancelConsumptionDraftAction(formData: FormData): Promise<
     .eq("id", consumptionId)
     .maybeSingle();
   if (recordError || !record) throw new Error("Consumo inválido para el tenant.");
-  if (record.status !== "draft") throw new Error("Solo se puede cancelar un consumo draft.");
+  if (record.status !== "draft") throw new Error("Solo se puede cancelar un consumo preparado.");
 
   const { error: cancelError } = await supabase
     .from("event_catering_consumption_records")
@@ -2691,7 +2824,7 @@ export async function cancelConsumptionDraftAction(formData: FormData): Promise<
     })
     .eq("tenant_id", tenant.tenantId)
     .eq("id", record.id);
-  if (cancelError) throw new Error(`No se pudo cancelar consumo draft: ${cancelError.message}`);
+  if (cancelError) throw new Error(`No se pudo cancelar consumo preparado: ${cancelError.message}`);
 
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/consumption`);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${record.event_id}/catering/${record.plan_id}/consumption`);

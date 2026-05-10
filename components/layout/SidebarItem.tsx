@@ -46,6 +46,19 @@ export function SidebarItem({ item, collapsed, accentToken, onNavigate }: Sideba
               ? ShoppingBasket
               : Store;
 
+  const isKitchenEventsChildActive = (childHref: string) => {
+    if (!childHref.includes("/kitchen/events")) return null;
+    if (childHref.endsWith("/kitchen/events")) return pathname === childHref;
+    if (childHref.endsWith("/kitchen/events/plans")) {
+      return pathname.startsWith(childHref) || /\/kitchen\/events\/[^/]+\/catering(\/[^/]+)?(\/.*)?$/.test(pathname);
+    }
+    if (childHref.endsWith("/kitchen/events/requisitions")) return pathname.startsWith(childHref);
+    if (childHref.endsWith("/kitchen/events/receipts")) return pathname.startsWith(childHref);
+    if (childHref.endsWith("/kitchen/events/consumption")) return pathname.startsWith(childHref);
+    if (childHref.endsWith("/kitchen/events/corrections")) return pathname.startsWith(childHref);
+    return null;
+  };
+
   return (
     <div className="space-y-1">
       <Link
@@ -76,7 +89,9 @@ export function SidebarItem({ item, collapsed, accentToken, onNavigate }: Sideba
       {!collapsed && hasChildren ? (
         <div className="ml-8 space-y-1 border-l border-border pl-4">
           {item.children?.map((child) => {
-            const childActive = child.match === "exact" ? pathname === child.href : pathname.startsWith(child.href);
+            const kitchenEventsChildActive = isKitchenEventsChildActive(child.href);
+            const childActive =
+              kitchenEventsChildActive ?? (child.match === "exact" ? pathname === child.href : pathname.startsWith(child.href));
             return (
               <Link
                 key={child.href}

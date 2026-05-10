@@ -6,6 +6,7 @@ import {
   generateCateringRequisitionFromShortagesAction,
   recalculateCateringRequirementsAction,
   removeRecipeFromCateringPlanAction,
+  reserveInventoryForCateringPlanAction,
   updatePlanRecipeServingsAction,
 } from "@/lib/kitchen/event-catering/actions";
 import {
@@ -26,6 +27,7 @@ import { KitchenMetricCard } from "@/app/(tenant)/[tenantSlug]/kitchen/_componen
 import { KitchenPageHeader } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-page-header";
 import { KitchenStatusBadge } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-status-badge";
 import { KitchenSubmitButton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-submit-button";
+import { EventCateringContextHeader } from "@/app/(tenant)/[tenantSlug]/kitchen/events/_components/event-catering-context-header";
 import { resolveKitchenPage } from "../../../../_lib/page-access";
 import { AddReadyRecipeToPlanForm } from "./_components/plan-forms";
 
@@ -90,6 +92,16 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
             Gestionar consumo draft
           </Link>
         }
+      />
+      <EventCateringContextHeader
+        tenantSlug={tenantSlug}
+        eventId={eventId}
+        eventName={event?.name ?? null}
+        eventDate={event?.starts_at ?? null}
+        planId={plan.id}
+        planName={plan.name}
+        peopleBase={plan.planned_guest_count}
+        operationalStatus={plan.status}
       />
 
       <Suspense fallback={<KitchenTableSkeleton rows={2} columns={4} />}>
@@ -273,6 +285,29 @@ async function PlanRequirementsSection({
     getPlanDraftRequisition(uiTenantSlug, planId),
   ]);
   const shortages = listRequirementShortagesFromRequirements(requirements);
+  const reservationSummary = requirements.reduce(
+    (acc, row) => {
+      const availability = (row.source_payload as {
+        availability_breakdown?: {
+          reserved_this_plan?: number;
+        };
+      }).availability_breakdown;
+      const required = Number(row.required_quantity ?? 0);
+      const reservedThisPlan = Number(availability?.reserved_this_plan ?? 0);
+      return {
+        required: acc.required + required,
+        reservedThisPlan: acc.reservedThisPlan + reservedThisPlan,
+        fullyReservedLines: acc.fullyReservedLines + (required > 0 && reservedThisPlan >= required ? 1 : 0),
+      };
+    },
+    { required: 0, reservedThisPlan: 0, fullyReservedLines: 0 },
+  );
+  const hasRequirements = requirements.length > 0;
+  const isFullyReserved =
+    hasRequirements &&
+    reservationSummary.fullyReservedLines === requirements.length &&
+    reservationSummary.reservedThisPlan >= reservationSummary.required;
+  const isPartiallyReserved = hasRequirements && reservationSummary.reservedThisPlan > 0 && !isFullyReserved;
 
   return (
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
@@ -280,18 +315,39 @@ async function PlanRequirementsSection({
         <div>
           <h2 className="text-sm font-semibold text-foreground">Requerimientos y faltantes</h2>
           <p className="text-xs text-muted">
-            No descuenta inventario. El stock reservado para otros eventos no se considera disponible para este plan.
+            Actualizar solo calcula. Apartar inventario reserva stock disponible para este servicio y evita que otros planes lo usen.
           </p>
+          {hasRequirements ? (
+            <p className="mt-1 text-xs text-muted">
+              Estado:{" "}
+              {isFullyReserved
+                ? "Inventario apartado para este servicio."
+                : isPartiallyReserved
+                  ? "Inventario parcialmente apartado."
+                  : "Requerimientos calculados, inventario aún no apartado."}
+            </p>
+          ) : null}
         </div>
-        {canManageRequirements ? (
-          <form action={recalculateCateringRequirementsAction}>
-            <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
-            <input type="hidden" name="planId" value={planId} />
-            <KitchenSubmitButton pendingLabel="Recalculando..." variant="secondary" className="px-3 py-2 text-xs">
-              Recalcular requerimientos
-            </KitchenSubmitButton>
-          </form>
-        ) : null}
+        <div className="flex flex-wrap justify-end gap-2">
+          {canManageRequirements ? (
+            <form action={recalculateCateringRequirementsAction}>
+              <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
+              <input type="hidden" name="planId" value={planId} />
+              <KitchenSubmitButton pendingLabel="Recalculando..." variant="secondary" className="px-3 py-2 text-xs">
+                Actualizar requerimientos
+              </KitchenSubmitButton>
+            </form>
+          ) : null}
+          {canManageRequirements ? (
+            <form action={reserveInventoryForCateringPlanAction}>
+              <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
+              <input type="hidden" name="planId" value={planId} />
+              <KitchenSubmitButton pendingLabel="Apartando..." variant="primary" className="px-3 py-2 text-xs">
+                Apartar inventario para este servicio
+              </KitchenSubmitButton>
+            </form>
+          ) : null}
+        </div>
       </div>
       {requirements.length === 0 ? (
         <div className="mt-3">
@@ -375,7 +431,13 @@ async function PlanRequirementsSection({
               ) : null}
             </div>
           ) : (
-            <p className="mt-2 text-xs text-emerald-600">Sin faltantes para este plan.</p>
+            <div className="mt-2 space-y-1 text-xs">
+              <p className={isFullyReserved ? "text-emerald-600" : "text-muted"}>
+                {isFullyReserved
+                  ? "Sin faltantes. Inventario apartado para este servicio."
+                  : "Sin faltantes calculados. Puedes apartar inventario para este servicio antes de planear otro servicio."}
+              </p>
+            </div>
           )}
         </div>
       )}

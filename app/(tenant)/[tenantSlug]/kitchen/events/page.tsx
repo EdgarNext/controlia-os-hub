@@ -50,20 +50,21 @@ export default async function KitchenEventsPage({ params }: KitchenEventsPagePro
       <KitchenPageHeader
         eyebrow="Catering"
         title="Catering por Evento"
-        description={
-          <>
-            Esta sección se integra con eventos existentes en <code>public.events</code>. No se crea una entidad paralela.
-          </>
-        }
+        description="Directorio operativo de eventos. Crea y abre servicios de catering por evento."
         actions={
-          canReadRequisitions ? (
-            <Link
-              href={`/${tenantSlug}/kitchen/events/requisitions`}
-              className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
-            >
-              Requisiciones
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href={`/${tenantSlug}/kitchen/events/plans`} className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm">
+              Planes / Servicios
             </Link>
-          ) : null
+            {canReadRequisitions ? (
+              <Link
+                href={`/${tenantSlug}/kitchen/events/requisitions`}
+                className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
+              >
+                Requisiciones
+              </Link>
+            ) : null}
+          </div>
         }
       />
 
@@ -72,7 +73,11 @@ export default async function KitchenEventsPage({ params }: KitchenEventsPagePro
       </Suspense>
 
       <Suspense fallback={<KitchenTableSkeleton rows={8} columns={5} />}>
-        <CateringEventsTableSection tenantSlug={tenantSlug} eventsPromise={eventsPromise} />
+        <CateringEventsTableSection
+          tenantSlug={tenantSlug}
+          eventsPromise={eventsPromise}
+          planSummariesPromise={planSummariesPromise}
+        />
       </Suspense>
 
       {canReadPlans && planSummariesPromise ? (
@@ -120,11 +125,17 @@ async function CateringSummarySection({
 async function CateringEventsTableSection({
   tenantSlug,
   eventsPromise,
+  planSummariesPromise,
 }: {
   tenantSlug: string;
   eventsPromise: ReturnType<typeof listEventsForCatering>;
+  planSummariesPromise: ReturnType<typeof listCateringPlanSummaries> | null;
 }) {
-  const events = await eventsPromise;
+  const [events, planSummaries] = await Promise.all([eventsPromise, planSummariesPromise ?? Promise.resolve([])]);
+  const planCountByEvent = new Map<string, number>();
+  for (const plan of planSummaries) {
+    planCountByEvent.set(plan.event_id, (planCountByEvent.get(plan.event_id) ?? 0) + 1);
+  }
   if (events.length === 0) {
     return (
       <StatePanel
@@ -139,14 +150,15 @@ async function CateringEventsTableSection({
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
       <h2 className="text-sm font-semibold text-foreground">Eventos disponibles</h2>
       <div className="mt-2 overflow-x-auto">
-        <table className="w-full min-w-[860px] text-left text-sm">
+        <table className="w-full min-w-[980px] text-left text-sm">
           <thead className="text-xs uppercase tracking-[0.08em] text-muted">
             <tr>
               <th className="py-2">Evento</th>
               <th className="py-2">Estado</th>
               <th className="py-2">Inicio</th>
               <th className="py-2">Invitados</th>
-              <th className="py-2">Acción</th>
+              <th className="py-2">Servicios</th>
+              <th className="py-2">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -156,10 +168,16 @@ async function CateringEventsTableSection({
                 <td className="py-2"><KitchenStatusBadge status={event.status} /></td>
                 <td className="py-2">{event.starts_at ? new Date(event.starts_at).toLocaleString("es-MX") : "—"}</td>
                 <td className="py-2">{event.expected_attendance ?? "—"}</td>
+                <td className="py-2">{planCountByEvent.get(event.id) ?? 0}</td>
                 <td className="py-2">
-                  <Link href={`/${tenantSlug}/kitchen/events/${event.id}/catering`} className="underline underline-offset-2">
-                    Abrir catering
-                  </Link>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link href={`/${tenantSlug}/kitchen/events/${event.id}/catering`} className="underline underline-offset-2">
+                      Crear servicio
+                    </Link>
+                    <Link href={`/${tenantSlug}/kitchen/events/${event.id}/catering`} className="underline underline-offset-2">
+                      Ver servicios
+                    </Link>
+                  </div>
                 </td>
               </tr>
             ))}

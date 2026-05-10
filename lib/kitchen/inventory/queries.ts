@@ -308,7 +308,14 @@ export async function listKitchenInventoryItemOperationalRows(
   return items.map((item) => {
     const itemBalances = balancesByItem.get(item.id) ?? [];
     const totalBalance = itemBalances.reduce((sum, row) => sum + Number(row.quantity), 0);
-    const locationNames = [...new Set(itemBalances.map((row) => locationById.get(row.location_id)).filter(Boolean))] as string[];
+    const locationNames = [
+      ...new Set(
+        itemBalances
+          .filter((row) => Number(row.quantity ?? 0) > 0)
+          .map((row) => locationById.get(row.location_id))
+          .filter(Boolean),
+      ),
+    ] as string[];
     const unitCode = item.kitchen_inventory_units?.code ?? null;
     const hasDefaultPurchaseOption = defaultPoByItem.get(item.id) === true;
     const hasCurrentSupplierPrice = currentPriceByItem.get(item.id) === true;
@@ -379,7 +386,14 @@ export async function getKitchenInventoryItemsInteractiveData(tenantId: string) 
   const rows: KitchenInventoryItemOperationalRow[] = items.map((item) => {
     const itemBalances = balancesByItem.get(item.id) ?? [];
     const totalBalance = itemBalances.reduce((sum, row) => sum + Number(row.quantity), 0);
-    const locationNames = [...new Set(itemBalances.map((row) => locationById.get(row.location_id)).filter(Boolean))] as string[];
+    const locationNames = [
+      ...new Set(
+        itemBalances
+          .filter((row) => Number(row.quantity ?? 0) > 0)
+          .map((row) => locationById.get(row.location_id))
+          .filter(Boolean),
+      ),
+    ] as string[];
     const unitCode = item.kitchen_inventory_units?.code ?? null;
     const hasDefaultPurchaseOption = hasDefaultPurchaseOptionByItem.has(item.id);
     const currentPrice = currentSupplierPriceByItem.get(item.id);

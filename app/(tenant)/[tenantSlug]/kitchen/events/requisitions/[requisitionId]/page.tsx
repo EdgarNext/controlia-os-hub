@@ -22,6 +22,7 @@ import { KitchenActionRowSkeleton, KitchenTableSkeleton } from "../../../_compon
 import { KitchenCriticalActionGroup } from "../../../_components/kitchen-critical-action-group";
 import { KitchenFormPendingFieldset } from "../../../_components/kitchen-form-pending-fieldset";
 import { KitchenSubmitButton } from "../../../_components/kitchen-submit-button";
+import { EventCateringContextHeader } from "../../_components/event-catering-context-header";
 import { resolveKitchenPage } from "../../../_lib/page-access";
 
 type KitchenCateringRequisitionDetailPageProps = {
@@ -86,6 +87,14 @@ export default async function KitchenCateringRequisitionDetailPage({
           Esta requisición es una sugerencia de compra. Aprobar no descuenta inventario ni crea compra real todavía.
         </p>
       </section>
+      <EventCateringContextHeader
+        tenantSlug={tenantSlug}
+        eventId={requisition.event_catering_plans?.event_id ?? null}
+        eventName={requisition.event_catering_plans?.events?.name ?? null}
+        planId={requisition.plan_id}
+        planName={requisition.event_catering_plans?.name ?? null}
+        operationalStatus={requisition.status}
+      />
 
       <Suspense fallback={<RequisitionContentFallback />}>
         <RequisitionContentSection
