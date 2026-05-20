@@ -60,9 +60,12 @@ type BindingSelectRow = {
   consumption_policy: "kitchen_dispatch" | "payment_close" | "disabled";
   is_active: boolean;
   notes: string | null;
-  products: { name: string | null } | null;
-  kitchen_recipe_recipes: { name: string | null } | null;
-  kitchen_recipe_versions: { version_number: number | null } | null;
+  products: { name: string | null } | Array<{ name: string | null }> | null;
+  kitchen_recipe_recipes: { name: string | null } | Array<{ name: string | null }> | null;
+  kitchen_recipe_versions:
+    | { version_number: number | null }
+    | Array<{ version_number: number | null }>
+    | null;
 };
 
 type RuleSelectRow = {
@@ -76,9 +79,15 @@ type RuleSelectRow = {
   applies_to_product_id: string | null;
   is_active: boolean;
   notes: string | null;
-  kitchen_inventory_items: { name: string | null } | null;
-  kitchen_inventory_units: { code: string | null } | null;
-  products: { name: string | null } | null;
+  kitchen_inventory_items:
+    | { name: string | null }
+    | Array<{ name: string | null }>
+    | null;
+  kitchen_inventory_units:
+    | { code: string | null }
+    | Array<{ code: string | null }>
+    | null;
+  products: { name: string | null } | Array<{ name: string | null }> | null;
 };
 
 type MatcherSelectRow = {
@@ -90,8 +99,16 @@ type MatcherSelectRow = {
   normalized_value: string;
   priority: number;
   is_active: boolean;
-  sales_pos_inventory_modifier_rules: { name: string | null } | null;
+  sales_pos_inventory_modifier_rules:
+    | { name: string | null }
+    | Array<{ name: string | null }>
+    | null;
 };
+
+function firstOrNull<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
 
 export type InventoryItemForRuleSelect = {
   id: string;
@@ -167,9 +184,9 @@ export async function listBindings(tenantId: string): Promise<PosInventoryBindin
     consumption_policy: row.consumption_policy,
     is_active: row.is_active,
     notes: row.notes ?? null,
-    product_name: row.products?.name ?? null,
-    recipe_name: row.kitchen_recipe_recipes?.name ?? null,
-    recipe_version_number: row.kitchen_recipe_versions?.version_number ?? null,
+    product_name: firstOrNull(row.products)?.name ?? null,
+    recipe_name: firstOrNull(row.kitchen_recipe_recipes)?.name ?? null,
+    recipe_version_number: firstOrNull(row.kitchen_recipe_versions)?.version_number ?? null,
   }));
 }
 
@@ -207,9 +224,9 @@ export async function listRules(tenantId: string): Promise<PosInventoryRuleRow[]
     applies_to_product_id: row.applies_to_product_id,
     is_active: row.is_active,
     notes: row.notes ?? null,
-    ingredient_name: row.kitchen_inventory_items?.name ?? null,
-    unit_code: row.kitchen_inventory_units?.code ?? null,
-    product_name: row.products?.name ?? null,
+    ingredient_name: firstOrNull(row.kitchen_inventory_items)?.name ?? null,
+    unit_code: firstOrNull(row.kitchen_inventory_units)?.code ?? null,
+    product_name: firstOrNull(row.products)?.name ?? null,
   }));
 }
 
@@ -231,7 +248,7 @@ export async function listMatchers(tenantId: string): Promise<PosInventoryMatche
     normalized_value: row.normalized_value,
     priority: row.priority,
     is_active: row.is_active,
-    rule_name: row.sales_pos_inventory_modifier_rules?.name ?? null,
+    rule_name: firstOrNull(row.sales_pos_inventory_modifier_rules)?.name ?? null,
   }));
 }
 
