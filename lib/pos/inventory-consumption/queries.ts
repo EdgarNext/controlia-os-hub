@@ -172,7 +172,7 @@ export async function listBindings(tenantId: string): Promise<PosInventoryBindin
   const { data, error } = await supabase
     .from("sales_pos_product_recipe_bindings")
     .select(
-      "id, tenant_id, product_id, recipe_id, recipe_version_id, consumption_policy, is_active, notes, products(name), kitchen_recipe_recipes(name), kitchen_recipe_versions(version_number)",
+      "id, tenant_id, product_id, recipe_id, recipe_version_id, consumption_policy, is_active, notes, products!sales_pos_product_recipe_bindings_tenant_product_fkey(name), kitchen_recipe_recipes!sales_pos_product_recipe_bindings_tenant_recipe_fkey(name), kitchen_recipe_versions!sales_pos_product_recipe_bindings_tenant_recipe_version_fkey(version_number)",
     )
     .eq("tenant_id", tenantId)
     .order("updated_at", { ascending: false });
@@ -213,7 +213,7 @@ export async function listRules(tenantId: string): Promise<PosInventoryRuleRow[]
   const { data, error } = await supabase
     .from("sales_pos_inventory_modifier_rules")
     .select(
-      "id, tenant_id, name, ingredient_inventory_item_id, operation, delta_quantity, delta_unit_id, applies_to_product_id, is_active, notes, kitchen_inventory_items(name), kitchen_inventory_units(code), products(name)",
+      "id, tenant_id, name, ingredient_inventory_item_id, operation, delta_quantity, delta_unit_id, applies_to_product_id, is_active, notes, kitchen_inventory_items!sales_pos_inventory_modifier_rules_tenant_item_fkey(name), kitchen_inventory_units!sales_pos_inventory_modifier_rules_tenant_delta_unit_fkey(code), products!sales_pos_inventory_modifier_rules_tenant_product_fkey(name)",
     )
     .eq("tenant_id", tenantId)
     .order("updated_at", { ascending: false });
@@ -240,7 +240,7 @@ export async function listMatchers(tenantId: string): Promise<PosInventoryMatche
   const supabase = await getSupabaseServerClient();
   const { data, error } = await supabase
     .from("sales_pos_inventory_modifier_rule_matchers")
-    .select("id, tenant_id, rule_id, matcher_type, matcher_value, normalized_value, priority, is_active, sales_pos_inventory_modifier_rules(name)")
+    .select("id, tenant_id, rule_id, matcher_type, matcher_value, normalized_value, priority, is_active, sales_pos_inventory_modifier_rules!sales_pos_inventory_modifier_rule_matchers_rule_id_fkey(name)")
     .eq("tenant_id", tenantId)
     .order("updated_at", { ascending: false });
   if (error) throw new Error(`Unable to load matcher aliases: ${error.message}`);
