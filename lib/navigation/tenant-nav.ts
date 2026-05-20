@@ -124,6 +124,14 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
           },
         ],
       },
+      {
+        href: (tenantSlug) => `/${tenantSlug}/pos/inventory`,
+        label: "POS Inventario",
+        iconKey: "products",
+        match: "prefix",
+        moduleKeys: ["sales_pos"],
+        pageKey: "products",
+      },
     ],
   },
   {

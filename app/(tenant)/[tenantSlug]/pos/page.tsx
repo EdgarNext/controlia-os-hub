@@ -41,6 +41,12 @@ export default async function PosPage({ params }: PosPageProps) {
       description: "Consulta ventas y estado de sincronización POS.",
       visible: hasModulePageAccess(accessMap.reports ?? "none", "read"),
     },
+    {
+      href: `/${tenant.tenantSlug}/pos/inventory`,
+      title: "POS Inventario",
+      description: "Configura bindings POS→receta, reglas y aliases en modo simulación.",
+      visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
+    },
   ].filter((link) => link.visible);
 
   return (
