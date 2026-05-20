@@ -10,6 +10,7 @@ import type {
 
 export type PosCatalogV2ProductFormValues = {
   name: string;
+  short_code?: string | null;
   category_id: string | null;
   product_type: SalesPosProduct["product_type"];
   class: SalesPosProduct["class"];

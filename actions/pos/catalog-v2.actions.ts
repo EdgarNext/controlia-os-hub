@@ -152,6 +152,8 @@ function validateProductInput(formData: FormData): {
 } {
   const fieldErrors: CatalogV2ActionState["fieldErrors"] = {};
   const name = toTrimmedString(formData.get("name"));
+  const shortCodeRaw = toTrimmedString(formData.get("short_code"));
+  const shortCode = shortCodeRaw ? shortCodeRaw.toUpperCase() : null;
   const categoryRaw = toTrimmedString(formData.get("category_id"));
   const categoryId = categoryRaw || null;
   const productType = parseProductType(formData.get("product_type"));
@@ -175,6 +177,10 @@ function validateProductInput(formData: FormData): {
     fieldErrors.name = "El nombre no puede exceder 120 caracteres.";
   }
 
+  if (shortCode && !/^[A-Z0-9]{2,6}$/.test(shortCode)) {
+    fieldErrors.short_code = "Usa 2 a 6 caracteres (A-Z o 0-9).";
+  }
+
   if (productType === "simple" || productType === "combo") {
     if (basePriceCents === null) {
       fieldErrors.base_price_cents = "El precio base es obligatorio para productos simples y combos.";
@@ -192,6 +198,7 @@ function validateProductInput(formData: FormData): {
   return {
     input: {
       name,
+      short_code: shortCode,
       category_id: categoryId,
       product_type: productType,
       class: productClass,

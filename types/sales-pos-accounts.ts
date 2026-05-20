@@ -27,6 +27,7 @@ export type SalesPosProduct = {
   product_type: SalesPosCatalogProductType;
   class: "food" | "drink";
   name: string;
+  short_code: string | null;
   base_price_cents: number | null;
   requires_variant_selection: boolean;
   default_variant_id: string | null;

@@ -316,6 +316,7 @@ export async function saveCatalogV2Product(input: {
   const payload = {
     tenant_id: input.tenantId,
     name: input.form.name,
+    short_code: toNullableString(input.form.short_code),
     category_id: input.form.category_id,
     product_type: input.form.product_type,
     class: input.form.class,
@@ -336,7 +337,7 @@ export async function saveCatalogV2Product(input: {
         .eq("tenant_id", input.tenantId)
         .eq("id", input.id)
         .select(
-          "id, tenant_id, category_id, product_type, class, name, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at, created_at, created_by, updated_by",
+          "id, tenant_id, category_id, product_type, class, name, short_code, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at, created_at, created_by, updated_by",
         )
         .maybeSingle<PosCatalogV2ProductListItem>()
     : await supabase
@@ -346,7 +347,7 @@ export async function saveCatalogV2Product(input: {
           created_by: input.actorUserId,
         })
         .select(
-          "id, tenant_id, category_id, product_type, class, name, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at, created_at, created_by, updated_by",
+          "id, tenant_id, category_id, product_type, class, name, short_code, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at, created_at, created_by, updated_by",
         )
         .single<PosCatalogV2ProductListItem>();
 

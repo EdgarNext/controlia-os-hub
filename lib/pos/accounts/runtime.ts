@@ -546,9 +546,9 @@ async function assertSimpleProduct(tenantId: string, productId: string): Promise
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from("products")
-    .select(
-      "id, tenant_id, category_id, product_type, class, name, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at",
-    )
+      .select(
+      "id, tenant_id, category_id, product_type, class, name, short_code, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at",
+      )
     .eq("tenant_id", tenantId)
     .eq("id", productId)
     .eq("product_type", "simple")
@@ -1297,7 +1297,7 @@ export async function getSalesPosCatalog(input: {
     supabase
       .from("products")
       .select(
-        "id, tenant_id, category_id, product_type, class, name, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at",
+        "id, tenant_id, category_id, product_type, class, name, short_code, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at",
       )
       .eq("tenant_id", input.tenantId)
       .eq("is_active", true)

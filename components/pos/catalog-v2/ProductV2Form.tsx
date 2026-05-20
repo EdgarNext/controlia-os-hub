@@ -109,6 +109,20 @@ export function ProductV2Form({
           </label>
 
           <label className="block space-y-1 text-sm">
+            <span className="text-muted">Código corto (sin imagen)</span>
+            <input
+              type="text"
+              name="short_code"
+              defaultValue={initialValues?.short_code ?? ""}
+              className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 uppercase"
+              placeholder="Ej. TCH"
+              maxLength={6}
+            />
+            {renderError(state, "short_code")}
+            <p className="text-xs text-muted">Se usa como identificador visual grande en POS cuando no hay imagen.</p>
+          </label>
+
+          <label className="block space-y-1 text-sm">
             <span className="text-muted">Tipo de producto</span>
             <select
               name="product_type"

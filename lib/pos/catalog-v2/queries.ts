@@ -50,7 +50,7 @@ async function listProductsBase(tenantId: string): Promise<ProductRow[]> {
   const { data, error } = await supabase
     .from("products")
     .select(
-      "id, tenant_id, category_id, product_type, class, name, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at, created_at, created_by, updated_by",
+      "id, tenant_id, category_id, product_type, class, name, short_code, base_price_cents, requires_variant_selection, default_variant_id, is_active, is_sold_out, is_popular, image_path, deleted_at, updated_at, created_at, created_by, updated_by",
     )
     .eq("tenant_id", tenantId)
     .order("deleted_at", { ascending: true, nullsFirst: true })
