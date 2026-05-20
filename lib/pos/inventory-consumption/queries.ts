@@ -115,7 +115,10 @@ export type InventoryItemForRuleSelect = {
   name: string;
   default_unit_id: string | null;
   is_active: boolean;
-  kitchen_inventory_units: { code: string | null } | null;
+  kitchen_inventory_units:
+    | { code: string | null }
+    | Array<{ code: string | null }>
+    | null;
 };
 
 export async function getPosInventorySettings(tenantId: string): Promise<PosInventorySettingsRow | null> {
@@ -199,7 +202,10 @@ export async function listInventoryItemsForRules(tenantId: string) {
     .eq("is_active", true)
     .order("name", { ascending: true });
   if (error) throw new Error(`Unable to load inventory items: ${error.message}`);
-  return (data ?? []) as InventoryItemForRuleSelect[];
+  return ((data ?? []) as InventoryItemForRuleSelect[]).map((row) => ({
+    ...row,
+    kitchen_inventory_units: firstOrNull(row.kitchen_inventory_units),
+  }));
 }
 
 export async function listRules(tenantId: string): Promise<PosInventoryRuleRow[]> {

@@ -255,7 +255,9 @@ export default async function PosInventoryPage({ params }: PageProps) {
               {inventoryItems
                 .map((item: InventoryItemForRuleSelect) => ({
                   unitId: item.default_unit_id as string | null,
-                  code: item.kitchen_inventory_units?.code as string | undefined,
+                  code: Array.isArray(item.kitchen_inventory_units)
+                    ? item.kitchen_inventory_units[0]?.code ?? undefined
+                    : item.kitchen_inventory_units?.code ?? undefined,
                 }))
                 .filter((row) => row.unitId && row.code)
                 .filter(
