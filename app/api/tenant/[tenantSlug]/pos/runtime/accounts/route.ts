@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authenticatePosDevice } from "@/lib/pos/device-auth";
 import {
   addSimpleSalesAccountLine,
+  ACCOUNT_CLOSE_TOTAL_MISMATCH_RETRYABLE_CODE,
   assignSalesAccount,
   captureSalesAccountPayment,
   closeSalesAccount,
@@ -327,6 +328,17 @@ export async function POST(request: Request, context: { params: Promise<RoutePar
     return badRequest(`Unsupported action: ${action}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected runtime accounts error.";
+    if (message.includes(ACCOUNT_CLOSE_TOTAL_MISMATCH_RETRYABLE_CODE)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: message,
+          code: ACCOUNT_CLOSE_TOTAL_MISMATCH_RETRYABLE_CODE,
+          retryable: true,
+        },
+        { status: 409 },
+      );
+    }
     if (
       message.includes("required") ||
       message.includes("invalid") ||

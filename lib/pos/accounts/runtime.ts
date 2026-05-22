@@ -339,6 +339,30 @@ export type SyncSalesAccountMutationInput = {
   accountEvent?: unknown;
 };
 
+export const ACCOUNT_CLOSE_TOTAL_MISMATCH_RETRYABLE_CODE =
+  "ACCOUNT_CLOSE_TOTAL_MISMATCH_RETRYABLE";
+
+function buildAccountCloseRetryableError(input: {
+  tenantId: string;
+  salesAccountId: string;
+  mutationId: string;
+  totalCents: number;
+  paymentsTotalCents: number;
+  balanceDueCents: number;
+}): Error {
+  console.warn("[sales-accounts-sync] close mismatch retryable", {
+    tenant_id: input.tenantId,
+    sales_account_id: input.salesAccountId,
+    mutation_id: input.mutationId,
+    total_cents: input.totalCents,
+    payments_total_cents: input.paymentsTotalCents,
+    balance_due_cents: input.balanceDueCents,
+  });
+  return new Error(
+    `${ACCOUNT_CLOSE_TOTAL_MISMATCH_RETRYABLE_CODE}: sales_account_id=${input.salesAccountId} mutation_id=${input.mutationId} total_cents=${input.totalCents} payments_total_cents=${input.paymentsTotalCents} balance_due_cents=${input.balanceDueCents}`,
+  );
+}
+
 export type RuntimePosTable = {
   id: string;
   tenant_id: string;
@@ -2572,16 +2596,18 @@ export async function syncSalesAccountMutation(
       throw new Error("Only open sales accounts can be closed.");
     }
 
-    if (accountToClose.balance_due_cents !== 0) {
-      throw new Error(
-        `Synced sales account cannot be closed while balance is still due (balance_due_cents=${accountToClose.balance_due_cents}).`,
-      );
-    }
-
-    if (accountToClose.payments_total_cents !== accountToClose.total_cents) {
-      throw new Error(
-        `Synced sales account cannot be closed until captured payments match the account total (payments_total_cents=${accountToClose.payments_total_cents}, total_cents=${accountToClose.total_cents}).`,
-      );
+    if (
+      accountToClose.balance_due_cents !== 0 ||
+      accountToClose.payments_total_cents !== accountToClose.total_cents
+    ) {
+      throw buildAccountCloseRetryableError({
+        tenantId: input.tenantId,
+        salesAccountId: account.id,
+        mutationId: input.mutationId,
+        totalCents: accountToClose.total_cents,
+        paymentsTotalCents: accountToClose.payments_total_cents,
+        balanceDueCents: accountToClose.balance_due_cents,
+      });
     }
 
     const { error } = await supabase
