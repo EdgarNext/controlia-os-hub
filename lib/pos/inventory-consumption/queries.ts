@@ -403,6 +403,311 @@ export type KitchenDispatchSimulationSource = {
   }>;
 };
 
+export type PosInventorySimulationEventRow = {
+  event_id: string;
+  created_at: string;
+  calculated_at: string | null;
+  status: "calculated" | "error" | string;
+  mode: "simulation" | "active" | "disabled" | string;
+  trigger_type: string;
+  source_type: string;
+  source_id: string;
+  kitchen_batch_id: string | null;
+  sales_account_id: string | null;
+  idempotency_key: string;
+  error_message: string | null;
+  metadata: Record<string, unknown>;
+  line_count: number;
+  warning_count: number;
+  distinct_inventory_item_count: number;
+  product_names: string[];
+  skipped_items: Array<{ productId: string; reason: string }>;
+  unmatched_modifiers: Array<{ sourceModifierText: string }>;
+};
+
+export type PosInventorySimulationEventLineRow = {
+  line_id: string;
+  created_at: string;
+  product_id: string | null;
+  product_name: string | null;
+  order_item_id: string | null;
+  recipe_id: string | null;
+  recipe_name: string | null;
+  recipe_version_id: string | null;
+  inventory_item_id: string | null;
+  inventory_item_name: string | null;
+  quantity: number;
+  unit_id: string | null;
+  unit_code: string | null;
+  reason: string;
+  modifier_rule_id: string | null;
+  modifier_rule_name: string | null;
+  source_modifier_text: string | null;
+  warning_message: string | null;
+  movement_id: string | null;
+};
+
+export type PosInventorySimulationEventDetail = {
+  event: PosInventorySimulationEventRow | null;
+  lines: PosInventorySimulationEventLineRow[];
+};
+
+type PosConsumptionEventSelectRow = {
+  id: string;
+  created_at: string;
+  calculated_at: string | null;
+  status: string;
+  mode: string;
+  trigger_type: string;
+  source_type: string;
+  source_id: string;
+  kitchen_batch_id: string | null;
+  sales_account_id: string | null;
+  idempotency_key: string;
+  error_message: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+type PosConsumptionLineSelectRow = {
+  id: string;
+  created_at: string;
+  event_id: string;
+  product_id: string | null;
+  order_item_id: string | null;
+  recipe_id: string | null;
+  recipe_version_id: string | null;
+  inventory_item_id: string | null;
+  quantity: number | null;
+  unit_id: string | null;
+  reason: string | null;
+  modifier_rule_id: string | null;
+  source_modifier_text: string | null;
+  warning_message: string | null;
+  movement_id: string | null;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function toStringSafe(value: unknown): string {
+  return typeof value === "string" ? value : String(value ?? "");
+}
+
+function parseSkippedItems(metadata: Record<string, unknown>): Array<{ productId: string; reason: string }> {
+  return asArray(metadata.skipped_items)
+    .map((entry) => asRecord(entry))
+    .map((entry) => ({
+      productId: toStringSafe(entry.productId || entry.product_id),
+      reason: toStringSafe(entry.reason),
+    }))
+    .filter((entry) => entry.productId.length > 0);
+}
+
+function parseUnmatchedModifiers(
+  metadata: Record<string, unknown>,
+): Array<{ sourceModifierText: string }> {
+  return asArray(metadata.unmatched_modifiers)
+    .map((entry) => asRecord(entry))
+    .map((entry) => ({
+      sourceModifierText: toStringSafe(entry.sourceModifierText || entry.source_modifier_text),
+    }))
+    .filter((entry) => entry.sourceModifierText.length > 0);
+}
+
+export async function listPosInventorySimulationEvents(
+  tenantId: string,
+  limit = 20,
+): Promise<PosInventorySimulationEventRow[]> {
+  const supabase = await getSupabaseServerClient();
+  const { data: events, error: eventsError } = await supabase
+    .from("sales_pos_inventory_consumption_events")
+    .select(
+      "id, created_at, calculated_at, status, mode, trigger_type, source_type, source_id, kitchen_batch_id, sales_account_id, idempotency_key, error_message, metadata",
+    )
+    .eq("tenant_id", tenantId)
+    .eq("mode", "simulation")
+    .order("created_at", { ascending: false })
+    .limit(Math.max(1, Math.min(limit, 100)));
+  if (eventsError) {
+    throw new Error(`Unable to load POS simulation events: ${eventsError.message}`);
+  }
+
+  const eventRows = (events ?? []) as PosConsumptionEventSelectRow[];
+  const eventIds = eventRows.map((row) => row.id);
+  const lineByEvent = new Map<string, PosConsumptionLineSelectRow[]>();
+  if (eventIds.length > 0) {
+    const { data: lines, error: linesError } = await supabase
+      .from("sales_pos_inventory_consumption_lines")
+      .select(
+        "id, created_at, event_id, product_id, order_item_id, recipe_id, recipe_version_id, inventory_item_id, quantity, unit_id, reason, modifier_rule_id, source_modifier_text, warning_message, movement_id",
+      )
+      .eq("tenant_id", tenantId)
+      .in("event_id", eventIds);
+    if (linesError) {
+      throw new Error(`Unable to load POS simulation lines summary: ${linesError.message}`);
+    }
+    for (const line of (lines ?? []) as PosConsumptionLineSelectRow[]) {
+      const group = lineByEvent.get(line.event_id) ?? [];
+      group.push(line);
+      lineByEvent.set(line.event_id, group);
+    }
+  }
+
+  const allLines = Array.from(lineByEvent.values()).flat();
+  const productIds = Array.from(new Set(allLines.map((line) => line.product_id).filter(Boolean) as string[]));
+  const { data: products, error: productsError } = productIds.length
+    ? await supabase.from("products").select("id, name").eq("tenant_id", tenantId).in("id", productIds)
+    : { data: [], error: null };
+  if (productsError) throw new Error(`Unable to load POS simulation products summary: ${productsError.message}`);
+  const productNameById = new Map((products ?? []).map((row) => [String((row as { id: string }).id), String((row as { name: string }).name)]));
+
+  return eventRows.map((event) => {
+    const metadata = asRecord(event.metadata);
+    const lines = lineByEvent.get(event.id) ?? [];
+    const warningFromLines = lines.filter(
+      (line) =>
+        String(line.reason ?? "") === "unmatched_modifier_warning" ||
+        (line.warning_message != null && String(line.warning_message).trim().length > 0),
+    ).length;
+    const warningFromMetadata = asArray(metadata.warnings).length;
+    const productNames = Array.from(
+      new Set(
+        lines
+          .map((line) => (line.product_id ? productNameById.get(line.product_id) ?? null : null))
+          .filter((name): name is string => Boolean(name && name.trim())),
+      ),
+    );
+
+    return {
+      event_id: event.id,
+      created_at: event.created_at,
+      calculated_at: event.calculated_at,
+      status: event.status,
+      mode: event.mode,
+      trigger_type: event.trigger_type,
+      source_type: event.source_type,
+      source_id: event.source_id,
+      kitchen_batch_id: event.kitchen_batch_id,
+      sales_account_id: event.sales_account_id,
+      idempotency_key: event.idempotency_key,
+      error_message: event.error_message,
+      metadata,
+      line_count: lines.length,
+      warning_count: Math.max(warningFromLines, warningFromMetadata),
+      distinct_inventory_item_count: new Set(
+        lines.map((line) => line.inventory_item_id).filter((value): value is string => Boolean(value)),
+      ).size,
+      product_names: productNames,
+      skipped_items: parseSkippedItems(metadata),
+      unmatched_modifiers: parseUnmatchedModifiers(metadata),
+    };
+  });
+}
+
+export async function getPosInventorySimulationEventDetail(
+  tenantId: string,
+  eventId: string,
+): Promise<PosInventorySimulationEventDetail> {
+  const supabase = await getSupabaseServerClient();
+  const [events, lines] = await Promise.all([
+    listPosInventorySimulationEvents(tenantId, 100),
+    supabase
+      .from("sales_pos_inventory_consumption_lines")
+      .select(
+        "id, created_at, event_id, product_id, order_item_id, recipe_id, recipe_version_id, inventory_item_id, quantity, unit_id, reason, modifier_rule_id, source_modifier_text, warning_message, movement_id",
+      )
+      .eq("tenant_id", tenantId)
+      .eq("event_id", eventId)
+      .order("created_at", { ascending: true }),
+  ]);
+
+  if (lines.error) {
+    throw new Error(`Unable to load POS simulation event detail lines: ${lines.error.message}`);
+  }
+
+  const lineRows = (lines.data ?? []) as PosConsumptionLineSelectRow[];
+  const productIds = Array.from(new Set(lineRows.map((row) => row.product_id).filter(Boolean) as string[]));
+  const recipeIds = Array.from(new Set(lineRows.map((row) => row.recipe_id).filter(Boolean) as string[]));
+  const inventoryItemIds = Array.from(
+    new Set(lineRows.map((row) => row.inventory_item_id).filter(Boolean) as string[]),
+  );
+  const unitIds = Array.from(new Set(lineRows.map((row) => row.unit_id).filter(Boolean) as string[]));
+  const modifierRuleIds = Array.from(
+    new Set(lineRows.map((row) => row.modifier_rule_id).filter(Boolean) as string[]),
+  );
+
+  const [products, recipes, inventoryItems, units, modifierRules] = await Promise.all([
+    productIds.length
+      ? supabase.from("products").select("id, name").eq("tenant_id", tenantId).in("id", productIds)
+      : Promise.resolve({ data: [], error: null }),
+    recipeIds.length
+      ? supabase.from("kitchen_recipe_recipes").select("id, name").eq("tenant_id", tenantId).in("id", recipeIds)
+      : Promise.resolve({ data: [], error: null }),
+    inventoryItemIds.length
+      ? supabase.from("kitchen_inventory_items").select("id, name").eq("tenant_id", tenantId).in("id", inventoryItemIds)
+      : Promise.resolve({ data: [], error: null }),
+    unitIds.length
+      ? supabase.from("kitchen_inventory_units").select("id, code").eq("tenant_id", tenantId).in("id", unitIds)
+      : Promise.resolve({ data: [], error: null }),
+    modifierRuleIds.length
+      ? supabase
+          .from("sales_pos_inventory_modifier_rules")
+          .select("id, name")
+          .eq("tenant_id", tenantId)
+          .in("id", modifierRuleIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (products.error) throw new Error(`Unable to load simulation detail products: ${products.error.message}`);
+  if (recipes.error) throw new Error(`Unable to load simulation detail recipes: ${recipes.error.message}`);
+  if (inventoryItems.error) {
+    throw new Error(`Unable to load simulation detail inventory items: ${inventoryItems.error.message}`);
+  }
+  if (units.error) throw new Error(`Unable to load simulation detail units: ${units.error.message}`);
+  if (modifierRules.error) {
+    throw new Error(`Unable to load simulation detail modifier rules: ${modifierRules.error.message}`);
+  }
+
+  const productNameById = new Map((products.data ?? []).map((row) => [String((row as { id: string }).id), String((row as { name: string }).name)]));
+  const recipeNameById = new Map((recipes.data ?? []).map((row) => [String((row as { id: string }).id), String((row as { name: string }).name)]));
+  const inventoryItemNameById = new Map((inventoryItems.data ?? []).map((row) => [String((row as { id: string }).id), String((row as { name: string }).name)]));
+  const unitCodeById = new Map((units.data ?? []).map((row) => [String((row as { id: string }).id), String((row as { code: string }).code)]));
+  const modifierRuleNameById = new Map((modifierRules.data ?? []).map((row) => [String((row as { id: string }).id), String((row as { name: string }).name)]));
+
+  return {
+    event: events.find((entry) => entry.event_id === eventId) ?? null,
+    lines: lineRows.map((row) => ({
+      line_id: row.id,
+      created_at: row.created_at,
+      product_id: row.product_id,
+      product_name: row.product_id ? productNameById.get(row.product_id) ?? null : null,
+      order_item_id: row.order_item_id,
+      recipe_id: row.recipe_id,
+      recipe_name: row.recipe_id ? recipeNameById.get(row.recipe_id) ?? null : null,
+      recipe_version_id: row.recipe_version_id,
+      inventory_item_id: row.inventory_item_id,
+      inventory_item_name: row.inventory_item_id ? inventoryItemNameById.get(row.inventory_item_id) ?? null : null,
+      quantity: Number(row.quantity ?? 0),
+      unit_id: row.unit_id,
+      unit_code: row.unit_id ? unitCodeById.get(row.unit_id) ?? null : null,
+      reason: String(row.reason ?? ""),
+      modifier_rule_id: row.modifier_rule_id,
+      modifier_rule_name: row.modifier_rule_id ? modifierRuleNameById.get(row.modifier_rule_id) ?? null : null,
+      source_modifier_text: row.source_modifier_text,
+      warning_message: row.warning_message,
+      movement_id: row.movement_id,
+    })),
+  };
+}
+
 export async function getKitchenDispatchSimulationSource(
   tenantId: string,
   kitchenBatchId: string,

@@ -18,7 +18,9 @@ import {
   resolveSalesPosPageContext,
 } from "@/lib/auth/module-page-access";
 import {
+  getPosInventorySimulationEventDetail,
   getRecipeVersionPosConsumptionReadiness,
+  listPosInventorySimulationEvents,
   getPosInventorySettings,
   getReadinessMap,
   type InventoryItemForRuleSelect,
@@ -33,6 +35,7 @@ import {
 
 type PageProps = {
   params: Promise<{ tenantSlug: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 const TARGET_INGREDIENTS = [
@@ -47,8 +50,18 @@ const TARGET_INGREDIENTS = [
 
 const EXCLUDED_INGREDIENTS = ["lechuga", "tomate", "mayonesa"];
 
-export default async function PosInventoryPage({ params }: PageProps) {
+function getSingleSearchParam(
+  params: Record<string, string | string[] | undefined>,
+  key: string,
+): string | null {
+  const value = params[key];
+  if (Array.isArray(value)) return value[0] ?? null;
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+export default async function PosInventoryPage({ params, searchParams }: PageProps) {
   const { tenantSlug } = await params;
+  const resolvedSearchParams = (await searchParams) ?? {};
   const tenant = await resolveSalesPosPageContext(tenantSlug, "products", "read");
   const accessMap = await getCurrentTenantModulePageAccessMap(tenant.tenantId, "sales_pos");
   const canManage = hasModulePageAccess(accessMap.products ?? "none", "manage");
@@ -63,6 +76,15 @@ export default async function PosInventoryPage({ params }: PageProps) {
     listMatchers(tenant.tenantId),
     getReadinessMap(tenant.tenantId),
   ]);
+  const simulationEvents = await listPosInventorySimulationEvents(tenant.tenantId, 25);
+  const simulationDetails = await Promise.all(
+    simulationEvents.slice(0, 10).map((event) => getPosInventorySimulationEventDetail(tenant.tenantId, event.event_id)),
+  );
+  const simulationDetailsByEvent = new Map(
+    simulationDetails
+      .filter((detail) => detail.event)
+      .map((detail) => [detail.event!.event_id, detail]),
+  );
   const inventoryItems = await listInventoryItemsForRules(tenant.tenantId);
   const [recipePosReadinessEntries, bindingPosReadinessEntries] = await Promise.all([
     Promise.all(
@@ -109,6 +131,14 @@ export default async function PosInventoryPage({ params }: PageProps) {
   const unboundPreparedCount = preparedProducts.filter((product) => !boundProductIds.has(product.id)).length;
   const activeRules = rules.filter((entry) => entry.is_active);
   const activeMatchers = matchers.filter((entry) => entry.is_active);
+  const simulationCalculatedCount = simulationEvents.filter((event) => event.status === "calculated").length;
+  const simulationErrorCount = simulationEvents.filter((event) => event.status === "error").length;
+  const simulationWarningCount = simulationEvents.reduce((sum, event) => sum + event.warning_count, 0);
+  const simStatus = getSingleSearchParam(resolvedSearchParams, "simStatus");
+  const simEventId = getSingleSearchParam(resolvedSearchParams, "simEventId");
+  const simBatchId = getSingleSearchParam(resolvedSearchParams, "simBatchId");
+  const simLines = getSingleSearchParam(resolvedSearchParams, "simLines");
+  const simMessage = getSingleSearchParam(resolvedSearchParams, "simMessage");
 
   return (
     <div className="space-y-6">
@@ -443,6 +473,145 @@ export default async function PosInventoryPage({ params }: PageProps) {
             </button>
           ) : null}
         </form>
+        {simStatus ? (
+          <div
+            className={`rounded border p-3 text-sm ${
+              simStatus === "error"
+                ? "border-red-300 bg-red-50 text-red-800"
+                : "border-emerald-300 bg-emerald-50 text-emerald-800"
+            }`}
+          >
+            {simStatus === "created"
+              ? `Simulación creada para batch ${simBatchId ?? "n/a"} · event ${simEventId ?? "n/a"} · líneas ${simLines ?? "0"}.`
+              : null}
+            {simStatus === "existing"
+              ? `Idempotencia aplicada: ya existía evento para batch ${simBatchId ?? "n/a"} · event ${simEventId ?? "n/a"} · líneas ${simLines ?? "0"}.`
+              : null}
+            {simStatus === "error" ? `Error al simular batch ${simBatchId ?? "n/a"}: ${simMessage ?? "Sin detalle."}` : null}
+          </div>
+        ) : null}
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="text-lg font-semibold">6) Simulaciones de consumo</h2>
+        <p className="text-sm text-muted">
+          Vista de preview/logs tenant-scoped. Simulación: no descuenta inventario real ni crea movimientos.
+        </p>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded border p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-muted">Events simulation</p>
+            <p className="text-xl font-semibold">{simulationEvents.length}</p>
+          </div>
+          <div className="rounded border p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-muted">Calculated</p>
+            <p className="text-xl font-semibold">{simulationCalculatedCount}</p>
+          </div>
+          <div className="rounded border p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-muted">Error</p>
+            <p className="text-xl font-semibold">{simulationErrorCount}</p>
+          </div>
+          <div className="rounded border p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-muted">Warnings</p>
+            <p className="text-xl font-semibold">{simulationWarningCount}</p>
+          </div>
+        </div>
+
+        {simulationEvents.length <= 0 ? (
+          <p className="text-sm text-muted">No hay eventos de simulación para este tenant.</p>
+        ) : (
+          <div className="space-y-2">
+            {simulationEvents.map((event) => {
+              const detail = simulationDetailsByEvent.get(event.event_id);
+              const skippedPreview = event.skipped_items
+                .slice(0, 3)
+                .map((item) => `${item.productId} (${item.reason})`)
+                .join(", ");
+              return (
+                <details key={event.event_id} className="rounded border p-3">
+                  <summary className="cursor-pointer list-none">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-semibold">{event.status}</span>
+                      <span className="text-muted">· {new Date(event.created_at).toLocaleString("es-MX")}</span>
+                      <span className="text-muted">· batch {event.kitchen_batch_id ?? event.source_id}</span>
+                      <span className="text-muted">· líneas {event.line_count}</span>
+                      <span className="text-muted">· warnings {event.warning_count}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted">
+                      {event.product_names.length > 0
+                        ? `Productos: ${event.product_names.join(", ")}`
+                        : "Sin productos resueltos"}
+                    </p>
+                  </summary>
+
+                  <div className="mt-3 space-y-3 text-sm">
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <p><span className="font-medium">Event:</span> {event.event_id}</p>
+                      <p><span className="font-medium">Idempotency:</span> {event.idempotency_key}</p>
+                      <p><span className="font-medium">Trigger:</span> {event.trigger_type}</p>
+                      <p><span className="font-medium">Source:</span> {event.source_type} / {event.source_id}</p>
+                      <p><span className="font-medium">Sales account:</span> {event.sales_account_id ?? "-"}</p>
+                      <p><span className="font-medium">Ingredientes distintos:</span> {event.distinct_inventory_item_count}</p>
+                    </div>
+
+                    {event.error_message ? (
+                      <p className="rounded border border-red-300 bg-red-50 p-2 text-red-800">
+                        Error: {event.error_message}
+                      </p>
+                    ) : null}
+
+                    {event.unmatched_modifiers.length > 0 ? (
+                      <p className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-800">
+                        Unmatched modifiers: {event.unmatched_modifiers.map((row) => row.sourceModifierText).join(", ")}
+                      </p>
+                    ) : null}
+
+                    {event.skipped_items.length > 0 ? (
+                      <p className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-800">
+                        Productos skipped (sin binding/qty inválida): {skippedPreview}
+                      </p>
+                    ) : null}
+
+                    <div className="overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-muted">
+                            <th>Producto</th>
+                            <th>Ingrediente</th>
+                            <th>Cantidad</th>
+                            <th>Reason</th>
+                            <th>Rule</th>
+                            <th>Source modifier</th>
+                            <th>Warning</th>
+                            <th>Movement</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(detail?.lines ?? []).map((line) => (
+                            <tr key={line.line_id} className="border-t">
+                              <td>{line.product_name ?? line.product_id ?? "-"}</td>
+                              <td>{line.inventory_item_name ?? line.inventory_item_id ?? "-"}</td>
+                              <td>{line.quantity} {line.unit_code ?? line.unit_id ?? ""}</td>
+                              <td>{line.reason}</td>
+                              <td>{line.modifier_rule_name ?? line.modifier_rule_id ?? "-"}</td>
+                              <td>{line.source_modifier_text ?? "-"}</td>
+                              <td>{line.warning_message ?? "-"}</td>
+                              <td>{line.movement_id ?? "null"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <p className="text-xs text-muted">
+                      Simulación: no descuenta inventario y `movement_id` debe permanecer `null`.
+                    </p>
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        )}
       </Card>
     </div>
   );

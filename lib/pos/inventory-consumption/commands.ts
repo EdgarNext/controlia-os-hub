@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
   calculatePosInventoryConsumptionForKitchenDispatch,
@@ -7,7 +9,7 @@ import {
   type EngineRecipeLine,
 } from "./engine";
 import { isAllowedSimulationMode } from "./normalizers";
-import { getKitchenDispatchSimulationSource, getPosInventorySettings } from "./queries";
+import { getPosInventorySettings, type KitchenDispatchSimulationSource } from "./queries";
 
 export async function saveInventorySettings(input: {
   tenantId: string;
@@ -176,8 +178,10 @@ export async function setMatcherActive(input: {
   if (error) throw new Error(`Unable to update matcher status: ${error.message}`);
 }
 
-async function loadEngineBindings(tenantId: string): Promise<EngineBinding[]> {
-  const supabase = await getSupabaseServerClient();
+async function loadEngineBindings(
+  supabase: SupabaseClient,
+  tenantId: string,
+): Promise<EngineBinding[]> {
   const { data, error } = await supabase
     .from("sales_pos_product_recipe_bindings")
     .select("id, tenant_id, product_id, recipe_id, recipe_version_id, consumption_policy, is_active")
@@ -197,11 +201,11 @@ async function loadEngineBindings(tenantId: string): Promise<EngineBinding[]> {
 }
 
 async function loadEngineRecipeLines(
+  supabase: SupabaseClient,
   tenantId: string,
   recipeVersionIds: string[],
 ): Promise<EngineRecipeLine[]> {
   if (recipeVersionIds.length <= 0) return [];
-  const supabase = await getSupabaseServerClient();
   const { data, error } = await supabase
     .from("kitchen_recipe_lines")
     .select("tenant_id, recipe_version_id, line_type, item_id, quantity, unit_id")
@@ -225,8 +229,10 @@ async function loadEngineRecipeLines(
     }));
 }
 
-async function loadEngineRules(tenantId: string): Promise<EngineModifierRule[]> {
-  const supabase = await getSupabaseServerClient();
+async function loadEngineRules(
+  supabase: SupabaseClient,
+  tenantId: string,
+): Promise<EngineModifierRule[]> {
   const { data, error } = await supabase
     .from("sales_pos_inventory_modifier_rules")
     .select("id, tenant_id, ingredient_inventory_item_id, operation, delta_quantity, delta_unit_id, applies_to_product_id, is_active")
@@ -256,8 +262,10 @@ async function loadEngineRules(tenantId: string): Promise<EngineModifierRule[]> 
   }));
 }
 
-async function loadEngineMatchers(tenantId: string): Promise<EngineModifierMatcher[]> {
-  const supabase = await getSupabaseServerClient();
+async function loadEngineMatchers(
+  supabase: SupabaseClient,
+  tenantId: string,
+): Promise<EngineModifierMatcher[]> {
   const { data, error } = await supabase
     .from("sales_pos_inventory_modifier_rule_matchers")
     .select("id, tenant_id, rule_id, matcher_type, matcher_value, normalized_value, priority, is_active")
@@ -277,12 +285,104 @@ async function loadEngineMatchers(tenantId: string): Promise<EngineModifierMatch
   }));
 }
 
+async function loadKitchenDispatchSimulationSourceWithAdmin(
+  supabase: SupabaseClient,
+  tenantId: string,
+  kitchenBatchId: string,
+): Promise<KitchenDispatchSimulationSource | null> {
+  const { data: batch, error: batchError } = await supabase
+    .from("kitchen_ticket_batches")
+    .select("id, tenant_id, sales_account_id, trigger_type, batch_status")
+    .eq("tenant_id", tenantId)
+    .eq("id", kitchenBatchId)
+    .maybeSingle<{
+      id: string;
+      tenant_id: string;
+      sales_account_id: string;
+      trigger_type: "account_opened" | "line_added" | "line_updated" | "line_voided" | "manual_reprint";
+      batch_status: "pending" | "sent" | "confirmed" | "failed" | "canceled";
+    }>();
+  if (batchError) throw new Error(`Unable to load kitchen batch: ${batchError.message}`);
+  if (!batch) return null;
+
+  const { data: kitchenLines, error: kitchenLinesError } = await supabase
+    .from("kitchen_ticket_lines")
+    .select("id, sales_account_line_id, ticket_action, quantity_delta, product_name_snapshot")
+    .eq("tenant_id", tenantId)
+    .eq("kitchen_ticket_batch_id", kitchenBatchId)
+    .order("line_sort_order", { ascending: true });
+  if (kitchenLinesError) {
+    throw new Error(`Unable to load kitchen lines for simulation: ${kitchenLinesError.message}`);
+  }
+
+  const salesAccountLineIds = (kitchenLines ?? [])
+    .map((line) => String((line as { sales_account_line_id: string }).sales_account_line_id))
+    .filter(Boolean);
+
+  let linesById = new Map<
+    string,
+    { product_id: string; selected_modifiers_snapshot: Record<string, unknown>[] }
+  >();
+  if (salesAccountLineIds.length > 0) {
+    const { data: accountLines, error: accountLinesError } = await supabase
+      .from("sales_account_lines")
+      .select("id, product_id, selected_modifiers_snapshot")
+      .eq("tenant_id", tenantId)
+      .in("id", salesAccountLineIds);
+    if (accountLinesError) {
+      throw new Error(`Unable to load sales account lines for simulation: ${accountLinesError.message}`);
+    }
+    linesById = new Map(
+      (accountLines ?? []).map((line) => [
+        String((line as { id: string }).id),
+        {
+          product_id: String((line as { product_id: string }).product_id),
+          selected_modifiers_snapshot:
+            (((line as { selected_modifiers_snapshot: Record<string, unknown>[] | null })
+              .selected_modifiers_snapshot as Record<string, unknown>[] | null) ?? []),
+        },
+      ]),
+    );
+  }
+
+  const dispatchItems = (kitchenLines ?? [])
+    .map((kitchenLine) => {
+      const salesAccountLineId = String(
+        (kitchenLine as { sales_account_line_id: string }).sales_account_line_id,
+      );
+      const linked = linesById.get(salesAccountLineId);
+      if (!linked) return null;
+      const sourceLabel =
+        String((kitchenLine as { product_name_snapshot?: string }).product_name_snapshot ?? "").trim() ||
+        linked.product_id;
+
+      return {
+        kitchenTicketLineId: String((kitchenLine as { id: string }).id),
+        salesAccountLineId,
+        ticketAction: (kitchenLine as { ticket_action: "add" | "adjust" | "void" }).ticket_action,
+        quantityDelta: Number((kitchenLine as { quantity_delta: number }).quantity_delta ?? 0),
+        productId: linked.product_id,
+        selectedModifiersSnapshot: linked.selected_modifiers_snapshot,
+        sourceLabel,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry != null);
+
+  return {
+    kitchenBatchId: batch.id,
+    salesAccountId: batch.sales_account_id,
+    triggerType: batch.trigger_type,
+    batchStatus: batch.batch_status,
+    dispatchItems,
+  };
+}
+
 export async function simulateKitchenDispatchInventoryConsumption(input: {
   tenantId: string;
   actorUserId: string;
   kitchenBatchId: string;
 }) {
-  const supabase = await getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   const settings = await getPosInventorySettings(input.tenantId);
   if (!settings) throw new Error("No POS inventory settings configured for this tenant.");
   if (!settings.enabled) throw new Error("POS inventory simulation is disabled for this tenant.");
@@ -293,7 +393,11 @@ export async function simulateKitchenDispatchInventoryConsumption(input: {
     throw new Error("consume_prepared_on must be kitchen_dispatch.");
   }
 
-  const source = await getKitchenDispatchSimulationSource(input.tenantId, input.kitchenBatchId);
+  const source = await loadKitchenDispatchSimulationSourceWithAdmin(
+    supabase,
+    input.tenantId,
+    input.kitchenBatchId,
+  );
   if (!source) {
     throw new Error("Kitchen batch not found in tenant scope.");
   }
@@ -302,11 +406,12 @@ export async function simulateKitchenDispatchInventoryConsumption(input: {
   }
 
   const [bindings, rules, matchers] = await Promise.all([
-    loadEngineBindings(input.tenantId),
-    loadEngineRules(input.tenantId),
-    loadEngineMatchers(input.tenantId),
+    loadEngineBindings(supabase, input.tenantId),
+    loadEngineRules(supabase, input.tenantId),
+    loadEngineMatchers(supabase, input.tenantId),
   ]);
   const recipeLines = await loadEngineRecipeLines(
+    supabase,
     input.tenantId,
     bindings.map((binding) => binding.recipeVersionId),
   );

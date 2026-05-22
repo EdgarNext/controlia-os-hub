@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { resolveSalesPosPageActor } from "@/lib/auth/module-page-access";
 import {
   simulateKitchenDispatchInventoryConsumption,
@@ -44,13 +45,29 @@ export async function simulateInventoryConsumptionForKitchenDispatchAction(formD
   if (!kitchenBatchId) throw new Error("kitchenBatchId es obligatorio.");
 
   const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
-  await simulateKitchenDispatchInventoryConsumption({
-    tenantId: tenant.tenantId,
-    actorUserId: user.id,
-    kitchenBatchId,
-  });
-
-  revalidateInventoryPath(tenant.tenantSlug);
+  try {
+    const result = await simulateKitchenDispatchInventoryConsumption({
+      tenantId: tenant.tenantId,
+      actorUserId: user.id,
+      kitchenBatchId,
+    });
+    revalidateInventoryPath(tenant.tenantSlug);
+    const status = result.created ? "created" : "existing";
+    const params = new URLSearchParams({
+      simStatus: status,
+      simEventId: result.eventId,
+      simBatchId: kitchenBatchId,
+      simLines: String(result.linesInserted),
+    });
+    redirect(`/${tenant.tenantSlug}/pos/inventory?${params.toString()}`);
+  } catch (error) {
+    const params = new URLSearchParams({
+      simStatus: "error",
+      simBatchId: kitchenBatchId,
+      simMessage: error instanceof Error ? error.message : "Simulation failed.",
+    });
+    redirect(`/${tenant.tenantSlug}/pos/inventory?${params.toString()}`);
+  }
 }
 
 export async function saveInventorySettingsAction(formData: FormData) {
