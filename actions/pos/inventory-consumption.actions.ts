@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { resolveSalesPosPageActor } from "@/lib/auth/module-page-access";
 import {
+  simulateKitchenDispatchInventoryConsumption,
   setBindingActive,
   setMatcherActive,
   setRuleActive,
@@ -13,6 +14,8 @@ import {
 } from "@/lib/pos/inventory-consumption/commands";
 import { normalizeMatcherValue } from "@/lib/pos/inventory-consumption/normalizers";
 import {
+  getBindingById,
+  getRecipeVersionPosConsumptionReadiness,
   getReadinessMap,
   listRecipeVersionsForInventory,
 } from "@/lib/pos/inventory-consumption/queries";
@@ -33,6 +36,21 @@ function asNullable(value: FormDataEntryValue | null): string | null {
 function revalidateInventoryPath(tenantSlug: string) {
   revalidatePath(`/${tenantSlug}/pos`);
   revalidatePath(`/${tenantSlug}/pos/inventory`);
+}
+
+export async function simulateInventoryConsumptionForKitchenDispatchAction(formData: FormData) {
+  const tenantSlug = asTrimmed(formData.get("tenantSlug")).toLowerCase();
+  const kitchenBatchId = asTrimmed(formData.get("kitchenBatchId"));
+  if (!kitchenBatchId) throw new Error("kitchenBatchId es obligatorio.");
+
+  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  await simulateKitchenDispatchInventoryConsumption({
+    tenantId: tenant.tenantId,
+    actorUserId: user.id,
+    kitchenBatchId,
+  });
+
+  revalidateInventoryPath(tenant.tenantSlug);
 }
 
 export async function saveInventorySettingsAction(formData: FormData) {
@@ -81,7 +99,16 @@ export async function saveBindingAction(formData: FormData) {
 
   const recipeReadiness = readiness.get(recipeId) ?? "incomplete";
   if (isActive && recipeReadiness !== "ready") {
-    throw new Error("No se puede activar binding con receta no lista (readiness != ready).");
+    const posReadiness = await getRecipeVersionPosConsumptionReadiness({
+      tenantId: tenant.tenantId,
+      recipeId,
+      recipeVersionId,
+    });
+    if (!posReadiness.usable) {
+      throw new Error(
+        `La receta no tiene líneas válidas para consumo POS: ${posReadiness.reasons.join(" ")}`,
+      );
+    }
   }
 
   await upsertBinding({
@@ -105,6 +132,24 @@ export async function toggleBindingActiveAction(formData: FormData) {
   const isActive = asTrimmed(formData.get("nextState")) === "active";
   if (!bindingId) throw new Error("bindingId es obligatorio.");
   const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  if (isActive) {
+    const binding = await getBindingById(tenant.tenantId, bindingId);
+    if (!binding) throw new Error("Binding no encontrado para el tenant.");
+    const readiness = await getReadinessMap(tenant.tenantId);
+    const recipeReadiness = readiness.get(binding.recipe_id) ?? "incomplete";
+    if (recipeReadiness !== "ready") {
+      const posReadiness = await getRecipeVersionPosConsumptionReadiness({
+        tenantId: tenant.tenantId,
+        recipeId: binding.recipe_id,
+        recipeVersionId: binding.recipe_version_id,
+      });
+      if (!posReadiness.usable) {
+        throw new Error(
+          `La receta no tiene líneas válidas para consumo POS: ${posReadiness.reasons.join(" ")}`,
+        );
+      }
+    }
+  }
   await setBindingActive({ tenantId: tenant.tenantId, actorUserId: user.id, bindingId, isActive });
   revalidateInventoryPath(tenant.tenantSlug);
 }
@@ -210,4 +255,3 @@ export async function toggleMatcherActiveAction(formData: FormData) {
   await setMatcherActive({ tenantId: tenant.tenantId, actorUserId: user.id, matcherId, isActive });
   revalidateInventoryPath(tenant.tenantSlug);
 }
-

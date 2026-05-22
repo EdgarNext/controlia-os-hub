@@ -4,6 +4,7 @@ import {
   saveInventorySettingsAction,
   saveMatcherAction,
   saveModifierRuleAction,
+  simulateInventoryConsumptionForKitchenDispatchAction,
   toggleBindingActiveAction,
   toggleMatcherActiveAction,
   toggleModifierRuleActiveAction,
@@ -17,6 +18,7 @@ import {
   resolveSalesPosPageContext,
 } from "@/lib/auth/module-page-access";
 import {
+  getRecipeVersionPosConsumptionReadiness,
   getPosInventorySettings,
   getReadinessMap,
   type InventoryItemForRuleSelect,
@@ -62,6 +64,43 @@ export default async function PosInventoryPage({ params }: PageProps) {
     getReadinessMap(tenant.tenantId),
   ]);
   const inventoryItems = await listInventoryItemsForRules(tenant.tenantId);
+  const [recipePosReadinessEntries, bindingPosReadinessEntries] = await Promise.all([
+    Promise.all(
+      recipes.map(async (recipe) => {
+        const version = recipeVersions.find((entry) => entry.recipe_id === recipe.id);
+        if (!version) {
+          return [
+            recipe.id,
+            {
+              usable: false,
+              reasons: ["Sin versión seleccionable."],
+              lineCount: 0,
+              invalidLineCount: 0,
+              unresolvedIngredientCount: 0,
+            },
+          ] as [string, Awaited<ReturnType<typeof getRecipeVersionPosConsumptionReadiness>>];
+        }
+        const posReadiness = await getRecipeVersionPosConsumptionReadiness({
+          tenantId: tenant.tenantId,
+          recipeId: recipe.id,
+          recipeVersionId: version.id,
+        });
+        return [recipe.id, posReadiness] as [string, Awaited<ReturnType<typeof getRecipeVersionPosConsumptionReadiness>>];
+      }),
+    ),
+    Promise.all(
+      bindings.map(async (binding) => {
+        const posReadiness = await getRecipeVersionPosConsumptionReadiness({
+          tenantId: tenant.tenantId,
+          recipeId: binding.recipe_id,
+          recipeVersionId: binding.recipe_version_id,
+        });
+        return [binding.id, posReadiness] as [string, Awaited<ReturnType<typeof getRecipeVersionPosConsumptionReadiness>>];
+      }),
+    ),
+  ]);
+  const recipePosReadiness = new Map(recipePosReadinessEntries);
+  const bindingPosReadiness = new Map(bindingPosReadinessEntries);
 
   const activeProducts = products.filter((p) => p.deleted_at == null && p.is_active);
   const preparedProducts = activeProducts.filter((p) => p.class === "food");
@@ -135,7 +174,8 @@ export default async function PosInventoryPage({ params }: PageProps) {
       <Card className="space-y-3">
         <h2 className="text-lg font-semibold">2) Bindings producto → receta</h2>
         <p className="text-sm text-muted">
-          Se recomienda activar solo recetas con readiness <code>ready</code>.
+          Se recomienda activar recetas con <code>ready</code> o con consumo POS usable.
+          El consumo POS no requiere snapshot de costo; solo líneas válidas de receta.
         </p>
         <form action={saveBindingAction} className="grid gap-3 md:grid-cols-3">
           <input type="hidden" name="tenantSlug" value={tenant.tenantSlug} />
@@ -156,7 +196,8 @@ export default async function PosInventoryPage({ params }: PageProps) {
               <option value="">Selecciona</option>
               {recipes.map((recipe) => (
                 <option key={recipe.id} value={recipe.id}>
-                  {recipe.name} · readiness {readiness.get(recipe.id) ?? "n/a"}
+                  {recipe.name} · readiness {readiness.get(recipe.id) ?? "n/a"} · POS{" "}
+                  {recipePosReadiness.get(recipe.id)?.usable ? "usable" : "no usable"}
                 </option>
               ))}
             </select>
@@ -194,7 +235,7 @@ export default async function PosInventoryPage({ params }: PageProps) {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-muted">
-                <th>Producto</th><th>Receta</th><th>Versión</th><th>Policy</th><th>Activo</th><th>Acción</th>
+                <th>Producto</th><th>Receta</th><th>Versión</th><th>Readiness</th><th>POS consumo</th><th>Policy</th><th>Activo</th><th>Acción</th>
               </tr>
             </thead>
             <tbody>
@@ -203,6 +244,13 @@ export default async function PosInventoryPage({ params }: PageProps) {
                   <td>{binding.product_name ?? binding.product_id}</td>
                   <td>{binding.recipe_name ?? binding.recipe_id}</td>
                   <td>{binding.recipe_version_number ?? "-"}</td>
+                  <td>{readiness.get(binding.recipe_id) ?? "n/a"}</td>
+                  <td>
+                    {bindingPosReadiness.get(binding.id)?.usable ? "usable" : "no usable"}
+                    {bindingPosReadiness.get(binding.id)?.usable
+                      ? ` · ${bindingPosReadiness.get(binding.id)?.lineCount ?? 0} líneas`
+                      : ` · ${(bindingPosReadiness.get(binding.id)?.reasons ?? []).join(" ")}`}
+                  </td>
                   <td>{binding.consumption_policy}</td>
                   <td>{binding.is_active ? "Sí" : "No"}</td>
                   <td>
@@ -370,6 +418,31 @@ export default async function PosInventoryPage({ params }: PageProps) {
         <Link href={`/${tenant.tenantSlug}/pos/catalog-v2/modifiers`} className="text-sm text-primary hover:underline">
           Revisar modifier options en catálogo v2
         </Link>
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="text-lg font-semibold">5) Simulación manual por kitchen dispatch</h2>
+        <p className="text-sm text-muted">
+          Ejecuta cálculo simulado para un `kitchen_ticket_batch.id` específico. No crea movimientos reales.
+        </p>
+        <form action={simulateInventoryConsumptionForKitchenDispatchAction} className="grid gap-3 md:grid-cols-3">
+          <input type="hidden" name="tenantSlug" value={tenant.tenantSlug} />
+          <label className="text-sm md:col-span-2">
+            kitchen_batch_id
+            <input
+              name="kitchenBatchId"
+              required
+              placeholder="UUID del kitchen_ticket_batch"
+              className="mt-1 w-full rounded border px-2 py-1"
+              disabled={!canManage}
+            />
+          </label>
+          {canManage ? (
+            <button className="self-end rounded border px-3 py-2 text-sm font-medium">
+              Simular dispatch
+            </button>
+          ) : null}
+        </form>
       </Card>
     </div>
   );

@@ -51,6 +51,14 @@ export type PosInventoryMatcherRow = {
   rule_name: string | null;
 };
 
+export type PosConsumptionReadiness = {
+  usable: boolean;
+  reasons: string[];
+  lineCount: number;
+  invalidLineCount: number;
+  unresolvedIngredientCount: number;
+};
+
 type BindingSelectRow = {
   id: string;
   tenant_id: string;
@@ -193,6 +201,37 @@ export async function listBindings(tenantId: string): Promise<PosInventoryBindin
   }));
 }
 
+export async function getBindingById(
+  tenantId: string,
+  bindingId: string,
+): Promise<PosInventoryBindingRow | null> {
+  const supabase = await getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("sales_pos_product_recipe_bindings")
+    .select(
+      "id, tenant_id, product_id, recipe_id, recipe_version_id, consumption_policy, is_active, notes, products!sales_pos_product_recipe_bindings_tenant_product_fkey(name), kitchen_recipe_recipes!sales_pos_product_recipe_bindings_tenant_recipe_fkey(name), kitchen_recipe_versions!sales_pos_product_recipe_bindings_tenant_recipe_version_fkey(version_number)",
+    )
+    .eq("tenant_id", tenantId)
+    .eq("id", bindingId)
+    .maybeSingle();
+  if (error) throw new Error(`Unable to load binding: ${error.message}`);
+  if (!data) return null;
+  const row = data as BindingSelectRow;
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    product_id: row.product_id,
+    recipe_id: row.recipe_id,
+    recipe_version_id: row.recipe_version_id,
+    consumption_policy: row.consumption_policy,
+    is_active: row.is_active,
+    notes: row.notes ?? null,
+    product_name: firstOrNull(row.products)?.name ?? null,
+    recipe_name: firstOrNull(row.kitchen_recipe_recipes)?.name ?? null,
+    recipe_version_number: firstOrNull(row.kitchen_recipe_versions)?.version_number ?? null,
+  };
+}
+
 export async function listInventoryItemsForRules(tenantId: string) {
   const supabase = await getSupabaseServerClient();
   const { data, error } = await supabase
@@ -265,4 +304,194 @@ export async function getReadinessMap(tenantId: string): Promise<Map<string, str
   } catch {
     return new Map<string, string>();
   }
+}
+
+type RecipeVersionLineRow = {
+  recipe_version_id: string;
+  line_type: "inventory_item" | "sub_recipe";
+  item_id: string | null;
+  quantity: number | null;
+  unit_id: string | null;
+};
+
+export async function getRecipeVersionPosConsumptionReadiness(input: {
+  tenantId: string;
+  recipeId: string;
+  recipeVersionId: string;
+}): Promise<PosConsumptionReadiness> {
+  const supabase = await getSupabaseServerClient();
+  const [versionRes, linesRes, pendingRes] = await Promise.all([
+    supabase
+      .from("kitchen_recipe_versions")
+      .select("id, recipe_id")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.recipeVersionId)
+      .eq("recipe_id", input.recipeId)
+      .maybeSingle(),
+    supabase
+      .from("kitchen_recipe_lines")
+      .select("recipe_version_id, line_type, item_id, quantity, unit_id")
+      .eq("tenant_id", input.tenantId)
+      .eq("recipe_version_id", input.recipeVersionId),
+    supabase
+      .from("kitchen_recipe_import_rows")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", input.tenantId)
+      .eq("action", "alias_required")
+      .eq("applied_recipe_id", input.recipeId)
+      .in("status", ["warning", "error", "pending"]),
+  ]);
+
+  if (versionRes.error) {
+    throw new Error(`Unable to validate recipe version for POS consumption: ${versionRes.error.message}`);
+  }
+  if (linesRes.error) {
+    throw new Error(`Unable to validate recipe lines for POS consumption: ${linesRes.error.message}`);
+  }
+  if (pendingRes.error) {
+    throw new Error(`Unable to validate unresolved ingredients for POS consumption: ${pendingRes.error.message}`);
+  }
+
+  if (!versionRes.data) {
+    return {
+      usable: false,
+      reasons: ["La versión seleccionada no pertenece a la receta o al tenant."],
+      lineCount: 0,
+      invalidLineCount: 0,
+      unresolvedIngredientCount: 0,
+    };
+  }
+
+  const lines = (linesRes.data ?? []) as RecipeVersionLineRow[];
+  const inventoryLines = lines.filter((line) => line.line_type === "inventory_item");
+  const invalidLineCount = inventoryLines.filter(
+    (line) =>
+      !line.item_id ||
+      line.quantity == null ||
+      Number(line.quantity) <= 0 ||
+      !line.unit_id,
+  ).length;
+  const unresolvedIngredientCount = pendingRes.count ?? 0;
+
+  const reasons: string[] = [];
+  if (inventoryLines.length <= 0) reasons.push("La versión no tiene líneas de inventario.");
+  if (invalidLineCount > 0) reasons.push("La versión contiene líneas inválidas para consumo POS.");
+  if (unresolvedIngredientCount > 0) reasons.push("La receta tiene ingredientes pendientes/no resueltos.");
+
+  return {
+    usable: reasons.length === 0,
+    reasons,
+    lineCount: inventoryLines.length,
+    invalidLineCount,
+    unresolvedIngredientCount,
+  };
+}
+
+export type KitchenDispatchSimulationSource = {
+  kitchenBatchId: string;
+  salesAccountId: string;
+  triggerType: "account_opened" | "line_added" | "line_updated" | "line_voided" | "manual_reprint";
+  batchStatus: "pending" | "sent" | "confirmed" | "failed" | "canceled";
+  dispatchItems: Array<{
+    kitchenTicketLineId: string;
+    salesAccountLineId: string;
+    ticketAction: "add" | "adjust" | "void";
+    quantityDelta: number;
+    productId: string;
+    selectedModifiersSnapshot: Record<string, unknown>[];
+    sourceLabel: string;
+  }>;
+};
+
+export async function getKitchenDispatchSimulationSource(
+  tenantId: string,
+  kitchenBatchId: string,
+): Promise<KitchenDispatchSimulationSource | null> {
+  const supabase = await getSupabaseServerClient();
+  const { data: batch, error: batchError } = await supabase
+    .from("kitchen_ticket_batches")
+    .select("id, tenant_id, sales_account_id, trigger_type, batch_status")
+    .eq("tenant_id", tenantId)
+    .eq("id", kitchenBatchId)
+    .maybeSingle<{
+      id: string;
+      tenant_id: string;
+      sales_account_id: string;
+      trigger_type: "account_opened" | "line_added" | "line_updated" | "line_voided" | "manual_reprint";
+      batch_status: "pending" | "sent" | "confirmed" | "failed" | "canceled";
+    }>();
+
+  if (batchError) throw new Error(`Unable to load kitchen batch: ${batchError.message}`);
+  if (!batch) return null;
+
+  const { data: kitchenLines, error: kitchenLinesError } = await supabase
+    .from("kitchen_ticket_lines")
+    .select("id, sales_account_line_id, ticket_action, quantity_delta, product_name_snapshot")
+    .eq("tenant_id", tenantId)
+    .eq("kitchen_ticket_batch_id", kitchenBatchId)
+    .order("line_sort_order", { ascending: true });
+  if (kitchenLinesError) {
+    throw new Error(`Unable to load kitchen lines for simulation: ${kitchenLinesError.message}`);
+  }
+
+  const salesAccountLineIds = (kitchenLines ?? [])
+    .map((line) => String((line as { sales_account_line_id: string }).sales_account_line_id))
+    .filter(Boolean);
+
+  let linesById = new Map<
+    string,
+    { product_id: string; selected_modifiers_snapshot: Record<string, unknown>[] }
+  >();
+  if (salesAccountLineIds.length > 0) {
+    const { data: accountLines, error: accountLinesError } = await supabase
+      .from("sales_account_lines")
+      .select("id, product_id, selected_modifiers_snapshot")
+      .eq("tenant_id", tenantId)
+      .in("id", salesAccountLineIds);
+    if (accountLinesError) {
+      throw new Error(`Unable to load sales account lines for simulation: ${accountLinesError.message}`);
+    }
+    linesById = new Map(
+      (accountLines ?? []).map((line) => [
+        String((line as { id: string }).id),
+        {
+          product_id: String((line as { product_id: string }).product_id),
+          selected_modifiers_snapshot:
+            (((line as { selected_modifiers_snapshot: Record<string, unknown>[] | null })
+              .selected_modifiers_snapshot as Record<string, unknown>[] | null) ?? []),
+        },
+      ]),
+    );
+  }
+
+  const dispatchItems = (kitchenLines ?? [])
+    .map((kitchenLine) => {
+      const salesAccountLineId = String(
+        (kitchenLine as { sales_account_line_id: string }).sales_account_line_id,
+      );
+      const linked = linesById.get(salesAccountLineId);
+      if (!linked) return null;
+      const sourceLabel =
+        String((kitchenLine as { product_name_snapshot?: string }).product_name_snapshot ?? "").trim() ||
+        linked.product_id;
+
+      return {
+        kitchenTicketLineId: String((kitchenLine as { id: string }).id),
+        salesAccountLineId,
+        ticketAction: (kitchenLine as { ticket_action: "add" | "adjust" | "void" }).ticket_action,
+        quantityDelta: Number((kitchenLine as { quantity_delta: number }).quantity_delta ?? 0),
+        productId: linked.product_id,
+        selectedModifiersSnapshot: linked.selected_modifiers_snapshot,
+        sourceLabel,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry != null);
+
+  return {
+    kitchenBatchId: batch.id,
+    salesAccountId: batch.sales_account_id,
+    triggerType: batch.trigger_type,
+    batchStatus: batch.batch_status,
+    dispatchItems,
+  };
 }
