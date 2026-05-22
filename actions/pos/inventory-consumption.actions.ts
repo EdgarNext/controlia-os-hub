@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { resolveSalesPosPageActor } from "@/lib/auth/module-page-access";
 import {
   simulateKitchenDispatchInventoryConsumption,
@@ -52,7 +53,7 @@ export async function simulateInventoryConsumptionForKitchenDispatchAction(formD
       kitchenBatchId,
     });
     revalidateInventoryPath(tenant.tenantSlug);
-    const status = result.created ? "created" : "existing";
+    const status = result.created ? (result.linesInserted <= 0 ? "no_binding" : "created") : "existing";
     const params = new URLSearchParams({
       simStatus: status,
       simEventId: result.eventId,
@@ -61,6 +62,9 @@ export async function simulateInventoryConsumptionForKitchenDispatchAction(formD
     });
     redirect(`/${tenant.tenantSlug}/pos/inventory?${params.toString()}`);
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     const params = new URLSearchParams({
       simStatus: "error",
       simBatchId: kitchenBatchId,

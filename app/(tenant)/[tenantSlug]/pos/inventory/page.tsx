@@ -17,10 +17,13 @@ import {
   hasModulePageAccess,
   resolveSalesPosPageContext,
 } from "@/lib/auth/module-page-access";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   getPosInventorySimulationEventDetail,
   getRecipeVersionPosConsumptionReadiness,
+  listRecentPaidSalesWithKitchenDispatchesForSimulation,
   listPosInventorySimulationEvents,
+  listRecentKitchenDispatchesForSimulation,
   getPosInventorySettings,
   getReadinessMap,
   type InventoryItemForRuleSelect,
@@ -63,6 +66,7 @@ export default async function PosInventoryPage({ params, searchParams }: PagePro
   const { tenantSlug } = await params;
   const resolvedSearchParams = (await searchParams) ?? {};
   const tenant = await resolveSalesPosPageContext(tenantSlug, "products", "read");
+  const adminClient = getSupabaseAdminClient();
   const accessMap = await getCurrentTenantModulePageAccessMap(tenant.tenantId, "sales_pos");
   const canManage = hasModulePageAccess(accessMap.products ?? "none", "manage");
 
@@ -76,9 +80,14 @@ export default async function PosInventoryPage({ params, searchParams }: PagePro
     listMatchers(tenant.tenantId),
     getReadinessMap(tenant.tenantId),
   ]);
-  const simulationEvents = await listPosInventorySimulationEvents(tenant.tenantId, 25);
+  const [simulationEvents, recentDispatches] = await Promise.all([
+    listPosInventorySimulationEvents(tenant.tenantId, 25, adminClient),
+    listRecentKitchenDispatchesForSimulation(tenant.tenantId, 25, adminClient),
+  ]);
   const simulationDetails = await Promise.all(
-    simulationEvents.slice(0, 10).map((event) => getPosInventorySimulationEventDetail(tenant.tenantId, event.event_id)),
+    simulationEvents
+      .slice(0, 10)
+      .map((event) => getPosInventorySimulationEventDetail(tenant.tenantId, event.event_id, adminClient)),
   );
   const simulationDetailsByEvent = new Map(
     simulationDetails
@@ -139,6 +148,15 @@ export default async function PosInventoryPage({ params, searchParams }: PagePro
   const simBatchId = getSingleSearchParam(resolvedSearchParams, "simBatchId");
   const simLines = getSingleSearchParam(resolvedSearchParams, "simLines");
   const simMessage = getSingleSearchParam(resolvedSearchParams, "simMessage");
+  const eventIdFromQuery = getSingleSearchParam(resolvedSearchParams, "eventId");
+  const q = getSingleSearchParam(resolvedSearchParams, "q");
+  const canSimulateFromList = canManage && Boolean(settings?.enabled) && settings?.mode === "simulation";
+  const recentPaidSales = await listRecentPaidSalesWithKitchenDispatchesForSimulation(
+    tenant.tenantId,
+    30,
+    q,
+    adminClient,
+  );
 
   return (
     <div className="space-y-6">
@@ -451,7 +469,241 @@ export default async function PosInventoryPage({ params, searchParams }: PagePro
       </Card>
 
       <Card className="space-y-3">
-        <h2 className="text-lg font-semibold">5) Simulación manual por kitchen dispatch</h2>
+        <h2 className="text-lg font-semibold">5) Ventas cerradas recientes y cocina</h2>
+        <p className="text-sm text-muted">
+          Correlación por venta pagada para ubicar rápidamente si la cuenta tiene dispatch lógico de cocina y estado de simulación.
+        </p>
+
+        <form method="get" className="grid gap-2 md:grid-cols-[1fr_auto]">
+          <input
+            name="q"
+            defaultValue={q ?? ""}
+            placeholder="Buscar por folio o sales_account_id"
+            className="w-full rounded border px-2 py-1 text-sm"
+          />
+          <button className="rounded border px-3 py-2 text-sm font-medium">Buscar</button>
+        </form>
+
+        <div className="overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-muted">
+                <th>Venta</th>
+                <th>Cierre</th>
+                <th>Productos</th>
+                <th>Dispatch cocina</th>
+                <th>Simulación</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentPaidSales.map((sale) => {
+                const hasEvent = Boolean(sale.existing_event_id);
+                const hasBatch = sale.has_kitchen_batch;
+                const hasLines = sale.has_kitchen_lines;
+                const hasBinding = sale.has_product_with_active_binding;
+                const canRun = canSimulateFromList && hasBatch && hasLines && hasBinding && !hasEvent;
+                const status = !hasBatch
+                  ? "sin dispatch"
+                  : !hasLines
+                    ? "batch sin líneas"
+                    : !hasBinding
+                      ? "sin binding"
+                      : hasEvent
+                        ? sale.existing_event_status === "error"
+                          ? "error"
+                          : "ya simulado"
+                        : "pendiente de simular";
+                const statusClass =
+                  status === "error"
+                    ? "text-red-700"
+                    : status === "pendiente de simular"
+                      ? "text-amber-700"
+                      : status === "ya simulado"
+                        ? "text-emerald-700"
+                        : "text-muted";
+                const batchShort = sale.kitchen_batch_id ? sale.kitchen_batch_id.slice(0, 8) : null;
+                const closeTime = sale.closed_at;
+                return (
+                  <tr key={sale.sales_account_id} className="border-t">
+                    <td>
+                      <p className="font-medium">{sale.folio_text ?? `#${sale.folio_number ?? "-"}`}</p>
+                      <p className="text-xs text-muted">{sale.sales_account_id}</p>
+                    </td>
+                    <td>{closeTime ? new Date(closeTime).toLocaleString("es-MX") : <span className="text-muted">-</span>}</td>
+                    <td>
+                      {sale.product_names.length > 0 ? sale.product_names.join(", ") : <span className="text-muted">-</span>}
+                      {sale.modifiers_detected.length > 0 ? (
+                        <p className="text-xs text-muted">{sale.modifiers_detected.join(", ")}</p>
+                      ) : null}
+                    </td>
+                    <td>
+                      {sale.kitchen_batch_id ? (
+                        <>
+                          <code>{batchShort}</code>
+                          <p className="text-xs text-muted">{sale.kitchen_batch_id}</p>
+                          <p className="text-xs text-muted">
+                            líneas {sale.kitchen_line_count} · {sale.kitchen_batch_status ?? "n/a"}
+                          </p>
+                        </>
+                      ) : (
+                        <span className="text-muted">Sin dispatch</span>
+                      )}
+                    </td>
+                    <td>
+                      <span className={statusClass}>{status}</span>
+                      {sale.existing_event_id ? (
+                        <p className="text-xs text-muted">
+                          event {sale.existing_event_id.slice(0, 8)} · {sale.existing_event_mode ?? "n/a"}
+                        </p>
+                      ) : null}
+                    </td>
+                    <td>
+                      {sale.existing_event_id ? (
+                        <a
+                          href={`/${tenant.tenantSlug}/pos/inventory?eventId=${sale.existing_event_id}#simulation-events`}
+                          className="text-primary hover:underline"
+                        >
+                          Ver detalle
+                        </a>
+                      ) : hasBatch ? (
+                        <form action={simulateInventoryConsumptionForKitchenDispatchAction} className="flex items-center gap-2">
+                          <input type="hidden" name="tenantSlug" value={tenant.tenantSlug} />
+                          <input type="hidden" name="kitchenBatchId" value={sale.kitchen_batch_id ?? ""} />
+                          <button
+                            className="rounded border px-2 py-1 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={!canRun}
+                            title={
+                              !canSimulateFromList
+                                ? settings?.enabled
+                                  ? "modo != simulation"
+                                  : "settings disabled"
+                                : !hasLines
+                                  ? "batch sin líneas"
+                                  : !hasBinding
+                                    ? "sin binding activo"
+                                    : "Simular dispatch"
+                            }
+                          >
+                            Simular
+                          </button>
+                        </form>
+                      ) : (
+                        <span className="text-muted">Sin dispatch</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="text-lg font-semibold">6) Dispatches recientes</h2>
+        <p className="text-sm text-muted">
+          Lista tenant-scoped de kitchen dispatches recientes para validar simulación sin capturar UUID manual.
+        </p>
+        <div className="overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-muted">
+                <th>Fecha</th>
+                <th>Batch</th>
+                <th>Productos</th>
+                <th>Modificadores</th>
+                <th>Estado</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentDispatches.map((dispatch) => {
+                const shortBatch = dispatch.kitchen_batch_id.slice(0, 8);
+                const hasEvent = Boolean(dispatch.existing_event_id);
+                const hasBinding = dispatch.has_product_with_active_binding;
+                const statusLabel = hasEvent
+                  ? dispatch.existing_event_status === "error"
+                    ? "error"
+                    : "ya simulado"
+                  : hasBinding
+                    ? "pendiente de simular"
+                    : "sin binding";
+                const statusClass =
+                  statusLabel === "error"
+                    ? "text-red-700"
+                    : statusLabel === "pendiente de simular"
+                      ? "text-amber-700"
+                      : statusLabel === "sin binding"
+                        ? "text-muted"
+                        : "text-emerald-700";
+                const disabledReason = !canSimulateFromList
+                  ? settings?.enabled
+                    ? "modo != simulation"
+                    : "settings disabled"
+                  : hasEvent
+                    ? "ya simulado"
+                    : !hasBinding
+                      ? "sin binding activo"
+                      : null;
+
+                return (
+                  <tr key={dispatch.kitchen_batch_id} className="border-t">
+                    <td>{new Date(dispatch.created_at).toLocaleString("es-MX")}</td>
+                    <td>
+                      <code>{shortBatch}</code>
+                      <p className="text-xs text-muted">{dispatch.kitchen_batch_id}</p>
+                    </td>
+                    <td>
+                      {dispatch.product_names.length > 0 ? dispatch.product_names.join(", ") : <span className="text-muted">-</span>}
+                    </td>
+                    <td>
+                      {dispatch.modifiers_detected.length > 0 ? (
+                        dispatch.modifiers_detected.join(", ")
+                      ) : (
+                        <span className="text-muted">sin modificadores</span>
+                      )}
+                    </td>
+                    <td>
+                      <span className={statusClass}>{statusLabel}</span>
+                      {dispatch.existing_event_id ? (
+                        <p className="text-xs text-muted">
+                          event {dispatch.existing_event_id.slice(0, 8)} · {dispatch.existing_event_mode ?? "n/a"}
+                        </p>
+                      ) : null}
+                    </td>
+                    <td>
+                      {dispatch.existing_event_id ? (
+                        <a
+                          href={`/${tenant.tenantSlug}/pos/inventory?eventId=${dispatch.existing_event_id}#simulation-events`}
+                          className="text-primary hover:underline"
+                        >
+                          Ver detalle
+                        </a>
+                      ) : (
+                        <form action={simulateInventoryConsumptionForKitchenDispatchAction} className="flex items-center gap-2">
+                          <input type="hidden" name="tenantSlug" value={tenant.tenantSlug} />
+                          <input type="hidden" name="kitchenBatchId" value={dispatch.kitchen_batch_id} />
+                          <button
+                            className="rounded border px-2 py-1 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={Boolean(disabledReason)}
+                            title={disabledReason ?? "Simular dispatch"}
+                          >
+                            Simular
+                          </button>
+                        </form>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="text-lg font-semibold">7) Simulación manual por kitchen dispatch</h2>
         <p className="text-sm text-muted">
           Ejecuta cálculo simulado para un `kitchen_ticket_batch.id` específico. No crea movimientos reales.
         </p>
@@ -487,13 +739,16 @@ export default async function PosInventoryPage({ params, searchParams }: PagePro
             {simStatus === "existing"
               ? `Idempotencia aplicada: ya existía evento para batch ${simBatchId ?? "n/a"} · event ${simEventId ?? "n/a"} · líneas ${simLines ?? "0"}.`
               : null}
+            {simStatus === "no_binding"
+              ? `Simulación registrada para batch ${simBatchId ?? "n/a"}, pero sin productos con binding activo (0 líneas de consumo).`
+              : null}
             {simStatus === "error" ? `Error al simular batch ${simBatchId ?? "n/a"}: ${simMessage ?? "Sin detalle."}` : null}
           </div>
         ) : null}
       </Card>
 
-      <Card className="space-y-3">
-        <h2 className="text-lg font-semibold">6) Simulaciones de consumo</h2>
+      <Card className="space-y-3" id="simulation-events">
+        <h2 className="text-lg font-semibold">8) Simulaciones de consumo</h2>
         <p className="text-sm text-muted">
           Vista de preview/logs tenant-scoped. Simulación: no descuenta inventario real ni crea movimientos.
         </p>
@@ -523,17 +778,41 @@ export default async function PosInventoryPage({ params, searchParams }: PagePro
           <div className="space-y-2">
             {simulationEvents.map((event) => {
               const detail = simulationDetailsByEvent.get(event.event_id);
+              const isHighlighted =
+                event.event_id === simEventId || event.event_id === eventIdFromQuery;
+              const shouldOpen = isHighlighted;
               const skippedPreview = event.skipped_items
                 .slice(0, 3)
                 .map((item) => `${item.productId} (${item.reason})`)
                 .join(", ");
+              const ingredientSummary = new Map<
+                string,
+                { ingredient: string; unit: string; quantity: number }
+              >();
+              for (const line of detail?.lines ?? []) {
+                if (!line.inventory_item_id || line.quantity <= 0) continue;
+                const ingredient = line.inventory_item_name ?? line.inventory_item_id;
+                const unit = line.unit_code ?? line.unit_id ?? "";
+                const key = `${ingredient}::${unit}`;
+                const current = ingredientSummary.get(key) ?? { ingredient, unit, quantity: 0 };
+                current.quantity += line.quantity;
+                ingredientSummary.set(key, current);
+              }
               return (
-                <details key={event.event_id} className="rounded border p-3">
+                <details
+                  key={event.event_id}
+                  className={`rounded border p-3 ${isHighlighted ? "border-emerald-400 bg-emerald-50/40" : ""}`}
+                  id={`event-${event.event_id}`}
+                  open={shouldOpen}
+                >
                   <summary className="cursor-pointer list-none">
                     <div className="flex flex-wrap items-center gap-2 text-sm">
                       <span className="font-semibold">{event.status}</span>
                       <span className="text-muted">· {new Date(event.created_at).toLocaleString("es-MX")}</span>
-                      <span className="text-muted">· batch {event.kitchen_batch_id ?? event.source_id}</span>
+                      <span className="text-muted">
+                        · batch {(event.kitchen_batch_id ?? event.source_id).slice(0, 8)}
+                      </span>
+                      <span className="text-muted">· account {event.sales_account_folio_text ?? event.sales_account_id ?? "-"}</span>
                       <span className="text-muted">· líneas {event.line_count}</span>
                       <span className="text-muted">· warnings {event.warning_count}</span>
                     </div>
@@ -541,6 +820,9 @@ export default async function PosInventoryPage({ params, searchParams }: PagePro
                       {event.product_names.length > 0
                         ? `Productos: ${event.product_names.join(", ")}`
                         : "Sin productos resueltos"}
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-emerald-800">
+                      Simulación: no descuenta inventario
                     </p>
                   </summary>
 
@@ -572,6 +854,32 @@ export default async function PosInventoryPage({ params, searchParams }: PagePro
                       </p>
                     ) : null}
 
+                    {ingredientSummary.size > 0 ? (
+                      <div className="overflow-auto">
+                        <p className="mb-1 text-xs uppercase tracking-[0.12em] text-muted">
+                          Resumen por ingrediente
+                        </p>
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-muted">
+                              <th>Ingrediente</th>
+                              <th>Cantidad total</th>
+                              <th>Unidad</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Array.from(ingredientSummary.values()).map((row) => (
+                              <tr key={`${row.ingredient}-${row.unit}`} className="border-t">
+                                <td>{row.ingredient}</td>
+                                <td>{Number(row.quantity.toFixed(4))}</td>
+                                <td>{row.unit || "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
+
                     <div className="overflow-auto">
                       <table className="w-full text-sm">
                         <thead>
@@ -596,7 +904,7 @@ export default async function PosInventoryPage({ params, searchParams }: PagePro
                               <td>{line.modifier_rule_name ?? line.modifier_rule_id ?? "-"}</td>
                               <td>{line.source_modifier_text ?? "-"}</td>
                               <td>{line.warning_message ?? "-"}</td>
-                              <td>{line.movement_id ?? "null"}</td>
+                              <td>{line.movement_id ?? "sin movimiento real"}</td>
                             </tr>
                           ))}
                         </tbody>

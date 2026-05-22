@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { listKitchenRecipeReadiness } from "@/lib/kitchen/recipes/readiness";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -414,6 +415,7 @@ export type PosInventorySimulationEventRow = {
   source_id: string;
   kitchen_batch_id: string | null;
   sales_account_id: string | null;
+  sales_account_folio_text: string | null;
   idempotency_key: string;
   error_message: string | null;
   metadata: Record<string, unknown>;
@@ -452,6 +454,51 @@ export type PosInventorySimulationEventDetail = {
   lines: PosInventorySimulationEventLineRow[];
 };
 
+export type RecentKitchenDispatchForSimulationRow = {
+  kitchen_batch_id: string;
+  created_at: string;
+  sales_account_id: string;
+  trigger_type: "account_opened" | "line_added" | "line_updated" | "line_voided" | "manual_reprint";
+  batch_status: "pending" | "sent" | "confirmed" | "failed" | "canceled";
+  line_count: number;
+  product_names: string[];
+  modifiers_detected: string[];
+  has_product_with_active_binding: boolean;
+  existing_event_id: string | null;
+  existing_event_status: string | null;
+  existing_event_mode: string | null;
+  existing_event_idempotency_key: string | null;
+};
+
+export type RecentPaidSaleWithKitchenDispatchForSimulationRow = {
+  sales_account_id: string;
+  folio_text: string | null;
+  folio_number: number | null;
+  status: string;
+  closed_at: string | null;
+  total_cents: number;
+  product_names: string[];
+  modifiers_detected: string[];
+  kitchen_batch_id: string | null;
+  kitchen_batch_created_at: string | null;
+  kitchen_batch_trigger_type:
+    | "account_opened"
+    | "line_added"
+    | "line_updated"
+    | "line_voided"
+    | "manual_reprint"
+    | null;
+  kitchen_batch_status: "pending" | "sent" | "confirmed" | "failed" | "canceled" | null;
+  kitchen_line_count: number;
+  has_kitchen_batch: boolean;
+  has_kitchen_lines: boolean;
+  has_product_with_active_binding: boolean;
+  existing_event_id: string | null;
+  existing_event_status: string | null;
+  existing_event_mode: string | null;
+  existing_event_idempotency_key: string | null;
+};
+
 type PosConsumptionEventSelectRow = {
   id: string;
   created_at: string;
@@ -466,6 +513,11 @@ type PosConsumptionEventSelectRow = {
   idempotency_key: string;
   error_message: string | null;
   metadata: Record<string, unknown> | null;
+};
+
+type SalesAccountFolioSelectRow = {
+  id: string;
+  folio_text: string | null;
 };
 
 type PosConsumptionLineSelectRow = {
@@ -486,6 +538,39 @@ type PosConsumptionLineSelectRow = {
   movement_id: string | null;
 };
 
+type KitchenBatchSelectRow = {
+  id: string;
+  created_at: string;
+  sales_account_id: string;
+  trigger_type: "account_opened" | "line_added" | "line_updated" | "line_voided" | "manual_reprint";
+  batch_status: "pending" | "sent" | "confirmed" | "failed" | "canceled";
+};
+
+type KitchenBatchLineSelectRow = {
+  kitchen_ticket_batch_id: string;
+  sales_account_line_id: string;
+};
+
+type SalesAccountLineSelectRow = {
+  id: string;
+  sales_account_id: string;
+  product_id: string;
+  selected_modifiers_snapshot: Record<string, unknown>[] | null;
+};
+
+type BindingSelectActiveRow = {
+  product_id: string;
+};
+
+type SalesAccountSelectRow = {
+  id: string;
+  status: string;
+  folio_text: string | null;
+  folio_number: number | null;
+  closed_at: string | null;
+  total_cents: number | null;
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -499,6 +584,24 @@ function asArray(value: unknown): unknown[] {
 
 function toStringSafe(value: unknown): string {
   return typeof value === "string" ? value : String(value ?? "");
+}
+
+function normalizeModifierPreviewText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractModifierPreviewText(snapshot: Record<string, unknown>): string | null {
+  return (
+    normalizeModifierPreviewText(snapshot.modifier_option_name) ??
+    normalizeModifierPreviewText(snapshot.modifierOptionName) ??
+    normalizeModifierPreviewText(snapshot.name) ??
+    normalizeModifierPreviewText(snapshot.value) ??
+    normalizeModifierPreviewText(snapshot.text) ??
+    normalizeModifierPreviewText(snapshot.modifier_option_id) ??
+    normalizeModifierPreviewText(snapshot.modifierOptionId)
+  );
 }
 
 function parseSkippedItems(metadata: Record<string, unknown>): Array<{ productId: string; reason: string }> {
@@ -522,11 +625,389 @@ function parseUnmatchedModifiers(
     .filter((entry) => entry.sourceModifierText.length > 0);
 }
 
+export async function listRecentKitchenDispatchesForSimulation(
+  tenantId: string,
+  limit = 20,
+  client?: SupabaseClient,
+): Promise<RecentKitchenDispatchForSimulationRow[]> {
+  const supabase = client ?? (await getSupabaseServerClient());
+  const safeLimit = Math.max(1, Math.min(limit, 100));
+  const { data: batches, error: batchesError } = await supabase
+    .from("kitchen_ticket_batches")
+    .select("id, created_at, sales_account_id, trigger_type, batch_status")
+    .eq("tenant_id", tenantId)
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+  if (batchesError) {
+    throw new Error(`Unable to load recent kitchen batches for simulation: ${batchesError.message}`);
+  }
+
+  const batchRows = (batches ?? []) as KitchenBatchSelectRow[];
+  const batchIds = batchRows.map((row) => row.id);
+  if (batchIds.length <= 0) return [];
+
+  const { data: kitchenLines, error: linesError } = await supabase
+    .from("kitchen_ticket_lines")
+    .select("kitchen_ticket_batch_id, sales_account_line_id")
+    .eq("tenant_id", tenantId)
+    .in("kitchen_ticket_batch_id", batchIds);
+  if (linesError) {
+    throw new Error(`Unable to load recent kitchen batch lines for simulation: ${linesError.message}`);
+  }
+  const lineRows = (kitchenLines ?? []) as KitchenBatchLineSelectRow[];
+  const salesAccountLineIds = Array.from(new Set(lineRows.map((line) => line.sales_account_line_id)));
+
+  const { data: accountLines, error: accountLinesError } = salesAccountLineIds.length
+    ? await supabase
+        .from("sales_account_lines")
+        .select("id, product_id, selected_modifiers_snapshot")
+        .eq("tenant_id", tenantId)
+        .in("id", salesAccountLineIds)
+    : { data: [], error: null };
+  if (accountLinesError) {
+    throw new Error(`Unable to load sales account lines for dispatch simulation preview: ${accountLinesError.message}`);
+  }
+  const accountLineRows = (accountLines ?? []) as SalesAccountLineSelectRow[];
+  const accountLineById = new Map(accountLineRows.map((row) => [row.id, row]));
+  const productIds = Array.from(new Set(accountLineRows.map((row) => row.product_id)));
+
+  const [products, activeBindings, events] = await Promise.all([
+    productIds.length
+      ? supabase.from("products").select("id, name").eq("tenant_id", tenantId).in("id", productIds)
+      : Promise.resolve({ data: [], error: null }),
+    productIds.length
+      ? supabase
+          .from("sales_pos_product_recipe_bindings")
+          .select("product_id")
+          .eq("tenant_id", tenantId)
+          .eq("is_active", true)
+          .eq("consumption_policy", "kitchen_dispatch")
+          .in("product_id", productIds)
+      : Promise.resolve({ data: [], error: null }),
+    supabase
+      .from("sales_pos_inventory_consumption_events")
+      .select("id, kitchen_batch_id, idempotency_key, status, mode, created_at")
+      .eq("tenant_id", tenantId)
+      .in("kitchen_batch_id", batchIds),
+  ]);
+
+  if (products.error) throw new Error(`Unable to load products for dispatch simulation preview: ${products.error.message}`);
+  if (activeBindings.error) {
+    throw new Error(
+      `Unable to load active recipe bindings for dispatch simulation preview: ${activeBindings.error.message}`,
+    );
+  }
+  if (events.error) throw new Error(`Unable to load simulation events for dispatch preview: ${events.error.message}`);
+
+  const productNameById = new Map(
+    (products.data ?? []).map((row) => [String((row as { id: string }).id), String((row as { name: string }).name)]),
+  );
+  const boundProductIds = new Set(
+    ((activeBindings.data ?? []) as BindingSelectActiveRow[]).map((row) => String(row.product_id)),
+  );
+  const eventByBatchId = new Map<
+    string,
+    { id: string; idempotency_key: string | null; status: string; mode: string; created_at: string }
+  >();
+  for (const event of events.data ?? []) {
+    const typed = event as {
+      id: string;
+      kitchen_batch_id: string;
+      idempotency_key: string | null;
+      status: string;
+      mode: string;
+      created_at: string;
+    };
+    const current = eventByBatchId.get(String(typed.kitchen_batch_id));
+    if (!current || new Date(typed.created_at).getTime() > new Date(current.created_at).getTime()) {
+      eventByBatchId.set(String(typed.kitchen_batch_id), {
+        id: typed.id,
+        idempotency_key: typed.idempotency_key,
+        status: typed.status,
+        mode: typed.mode,
+        created_at: typed.created_at,
+      });
+    }
+  }
+
+  const linesByBatch = new Map<string, KitchenBatchLineSelectRow[]>();
+  for (const line of lineRows) {
+    const group = linesByBatch.get(line.kitchen_ticket_batch_id) ?? [];
+    group.push(line);
+    linesByBatch.set(line.kitchen_ticket_batch_id, group);
+  }
+
+  return batchRows.map((batch) => {
+    const batchLines = linesByBatch.get(batch.id) ?? [];
+    const productNames = new Set<string>();
+    const modifiersDetected = new Set<string>();
+    let hasBoundProduct = false;
+
+    for (const line of batchLines) {
+      const accountLine = accountLineById.get(line.sales_account_line_id);
+      if (!accountLine) continue;
+      if (boundProductIds.has(accountLine.product_id)) hasBoundProduct = true;
+      const productName = productNameById.get(accountLine.product_id);
+      if (productName) productNames.add(productName);
+
+      for (const modifier of accountLine.selected_modifiers_snapshot ?? []) {
+        const text = extractModifierPreviewText(asRecord(modifier));
+        if (text) modifiersDetected.add(text);
+      }
+    }
+
+    const existingEvent = eventByBatchId.get(batch.id);
+    return {
+      kitchen_batch_id: batch.id,
+      created_at: batch.created_at,
+      sales_account_id: batch.sales_account_id,
+      trigger_type: batch.trigger_type,
+      batch_status: batch.batch_status,
+      line_count: batchLines.length,
+      product_names: Array.from(productNames),
+      modifiers_detected: Array.from(modifiersDetected),
+      has_product_with_active_binding: hasBoundProduct,
+      existing_event_id: existingEvent?.id ?? null,
+      existing_event_status: existingEvent?.status ?? null,
+      existing_event_mode: existingEvent?.mode ?? null,
+      existing_event_idempotency_key: existingEvent?.idempotency_key ?? null,
+    };
+  });
+}
+
+export async function listRecentPaidSalesWithKitchenDispatchesForSimulation(
+  tenantId: string,
+  limit = 25,
+  query?: string | null,
+  client?: SupabaseClient,
+): Promise<RecentPaidSaleWithKitchenDispatchForSimulationRow[]> {
+  const supabase = client ?? (await getSupabaseServerClient());
+  const safeLimit = Math.max(1, Math.min(limit, 100));
+  const expandedLimit = Math.max(25, Math.min(safeLimit * 4, 200));
+  const normalizedQuery = (query ?? "").trim().toLowerCase();
+
+  const { data: salesAccounts, error: salesAccountsError } = await supabase
+    .from("sales_accounts")
+    .select("id, status, folio_text, folio_number, closed_at, total_cents")
+    .eq("tenant_id", tenantId)
+    .eq("status", "PAID")
+    .order("closed_at", { ascending: false, nullsFirst: false })
+    .order("updated_at", { ascending: false })
+    .limit(expandedLimit);
+  if (salesAccountsError) {
+    throw new Error(
+      `Unable to load recent paid sales for kitchen dispatch correlation: ${salesAccountsError.message}`,
+    );
+  }
+
+  let salesAccountRows = (salesAccounts ?? []) as SalesAccountSelectRow[];
+  if (normalizedQuery.length > 0) {
+    salesAccountRows = salesAccountRows.filter((row) => {
+      const haystack = `${row.id} ${row.folio_text ?? ""} ${row.folio_number ?? ""}`.toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }
+  salesAccountRows = salesAccountRows.slice(0, safeLimit);
+
+  const salesAccountIds = salesAccountRows.map((row) => row.id);
+  if (salesAccountIds.length <= 0) return [];
+
+  const [accountLinesResult, kitchenBatchesResult] = await Promise.all([
+    supabase
+      .from("sales_account_lines")
+      .select("id, sales_account_id, product_id, selected_modifiers_snapshot")
+      .eq("tenant_id", tenantId)
+      .in("sales_account_id", salesAccountIds)
+      .eq("line_status", "active"),
+    supabase
+      .from("kitchen_ticket_batches")
+      .select("id, created_at, sales_account_id, trigger_type, batch_status")
+      .eq("tenant_id", tenantId)
+      .in("sales_account_id", salesAccountIds)
+      .order("created_at", { ascending: false }),
+  ]);
+  if (accountLinesResult.error) {
+    throw new Error(
+      `Unable to load account lines for paid sales dispatch correlation: ${accountLinesResult.error.message}`,
+    );
+  }
+  if (kitchenBatchesResult.error) {
+    throw new Error(
+      `Unable to load kitchen batches for paid sales dispatch correlation: ${kitchenBatchesResult.error.message}`,
+    );
+  }
+
+  const accountLines = (accountLinesResult.data ?? []) as SalesAccountLineSelectRow[];
+  const accountLinesByAccount = new Map<string, SalesAccountLineSelectRow[]>();
+  for (const line of accountLines) {
+    const group = accountLinesByAccount.get(line.sales_account_id) ?? [];
+    group.push(line);
+    accountLinesByAccount.set(line.sales_account_id, group);
+  }
+
+  const allBatches = (kitchenBatchesResult.data ?? []) as KitchenBatchSelectRow[];
+  const latestBatchByAccount = new Map<string, KitchenBatchSelectRow>();
+  for (const batch of allBatches) {
+    const current = latestBatchByAccount.get(batch.sales_account_id);
+    if (!current || new Date(batch.created_at).getTime() > new Date(current.created_at).getTime()) {
+      latestBatchByAccount.set(batch.sales_account_id, batch);
+    }
+  }
+
+  const batchIds = Array.from(new Set(Array.from(latestBatchByAccount.values()).map((batch) => batch.id)));
+  const { data: kitchenLines, error: kitchenLinesError } = batchIds.length
+    ? await supabase
+        .from("kitchen_ticket_lines")
+        .select("kitchen_ticket_batch_id, sales_account_line_id")
+        .eq("tenant_id", tenantId)
+        .in("kitchen_ticket_batch_id", batchIds)
+    : { data: [], error: null };
+  if (kitchenLinesError) {
+    throw new Error(
+      `Unable to load kitchen lines for paid sales dispatch correlation: ${kitchenLinesError.message}`,
+    );
+  }
+  const kitchenLineRows = (kitchenLines ?? []) as KitchenBatchLineSelectRow[];
+  const kitchenLinesByBatch = new Map<string, KitchenBatchLineSelectRow[]>();
+  for (const line of kitchenLineRows) {
+    const group = kitchenLinesByBatch.get(line.kitchen_ticket_batch_id) ?? [];
+    group.push(line);
+    kitchenLinesByBatch.set(line.kitchen_ticket_batch_id, group);
+  }
+
+  const productIds = Array.from(new Set(accountLines.map((line) => line.product_id)));
+  const [productsResult, activeBindingsResult, eventsResult] = await Promise.all([
+    productIds.length
+      ? supabase.from("products").select("id, name").eq("tenant_id", tenantId).in("id", productIds)
+      : Promise.resolve({ data: [], error: null }),
+    productIds.length
+      ? supabase
+          .from("sales_pos_product_recipe_bindings")
+          .select("product_id")
+          .eq("tenant_id", tenantId)
+          .eq("is_active", true)
+          .eq("consumption_policy", "kitchen_dispatch")
+          .in("product_id", productIds)
+      : Promise.resolve({ data: [], error: null }),
+    batchIds.length
+      ? supabase
+          .from("sales_pos_inventory_consumption_events")
+          .select("id, kitchen_batch_id, idempotency_key, status, mode, created_at")
+          .eq("tenant_id", tenantId)
+          .eq("mode", "simulation")
+          .in("kitchen_batch_id", batchIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (productsResult.error) {
+    throw new Error(
+      `Unable to load products for paid sales dispatch correlation: ${productsResult.error.message}`,
+    );
+  }
+  if (activeBindingsResult.error) {
+    throw new Error(
+      `Unable to load active bindings for paid sales dispatch correlation: ${activeBindingsResult.error.message}`,
+    );
+  }
+  if (eventsResult.error) {
+    throw new Error(
+      `Unable to load simulation events for paid sales dispatch correlation: ${eventsResult.error.message}`,
+    );
+  }
+
+  const productNameById = new Map(
+    (productsResult.data ?? []).map((row) => [
+      String((row as { id: string }).id),
+      String((row as { name: string }).name),
+    ]),
+  );
+  const boundProductIds = new Set(
+    ((activeBindingsResult.data ?? []) as BindingSelectActiveRow[]).map((row) => String(row.product_id)),
+  );
+  const eventByBatchId = new Map<
+    string,
+    { id: string; idempotency_key: string | null; status: string; mode: string; created_at: string }
+  >();
+  for (const event of eventsResult.data ?? []) {
+    const typed = event as {
+      id: string;
+      kitchen_batch_id: string;
+      idempotency_key: string | null;
+      status: string;
+      mode: string;
+      created_at: string;
+    };
+    const current = eventByBatchId.get(String(typed.kitchen_batch_id));
+    if (!current || new Date(typed.created_at).getTime() > new Date(current.created_at).getTime()) {
+      eventByBatchId.set(String(typed.kitchen_batch_id), {
+        id: typed.id,
+        idempotency_key: typed.idempotency_key,
+        status: typed.status,
+        mode: typed.mode,
+        created_at: typed.created_at,
+      });
+    }
+  }
+
+  const accountLineById = new Map(accountLines.map((line) => [line.id, line]));
+
+  return salesAccountRows.map((account) => {
+    const accountBaseLines = accountLinesByAccount.get(account.id) ?? [];
+    const batch = latestBatchByAccount.get(account.id) ?? null;
+    const batchLines = batch ? kitchenLinesByBatch.get(batch.id) ?? [] : [];
+    const hasKitchenBatch = Boolean(batch);
+    const hasKitchenLines = batchLines.length > 0;
+    const linesForPreview = hasKitchenLines
+      ? batchLines
+          .map((line) => accountLineById.get(line.sales_account_line_id))
+          .filter((line): line is SalesAccountLineSelectRow => Boolean(line))
+      : accountBaseLines;
+
+    const productNames = new Set<string>();
+    const modifiersDetected = new Set<string>();
+    let hasBoundProduct = false;
+    for (const line of linesForPreview) {
+      if (boundProductIds.has(line.product_id)) hasBoundProduct = true;
+      const productName = productNameById.get(line.product_id);
+      if (productName) productNames.add(productName);
+
+      for (const modifier of line.selected_modifiers_snapshot ?? []) {
+        const text = extractModifierPreviewText(asRecord(modifier));
+        if (text) modifiersDetected.add(text);
+      }
+    }
+
+    const existingEvent = batch ? eventByBatchId.get(batch.id) : undefined;
+    return {
+      sales_account_id: account.id,
+      folio_text: account.folio_text ?? null,
+      folio_number: account.folio_number ?? null,
+      status: account.status,
+      closed_at: account.closed_at ?? null,
+      total_cents: Number(account.total_cents ?? 0),
+      product_names: Array.from(productNames),
+      modifiers_detected: Array.from(modifiersDetected),
+      kitchen_batch_id: batch?.id ?? null,
+      kitchen_batch_created_at: batch?.created_at ?? null,
+      kitchen_batch_trigger_type: batch?.trigger_type ?? null,
+      kitchen_batch_status: batch?.batch_status ?? null,
+      kitchen_line_count: batchLines.length,
+      has_kitchen_batch: hasKitchenBatch,
+      has_kitchen_lines: hasKitchenLines,
+      has_product_with_active_binding: hasBoundProduct,
+      existing_event_id: existingEvent?.id ?? null,
+      existing_event_status: existingEvent?.status ?? null,
+      existing_event_mode: existingEvent?.mode ?? null,
+      existing_event_idempotency_key: existingEvent?.idempotency_key ?? null,
+    };
+  });
+}
+
 export async function listPosInventorySimulationEvents(
   tenantId: string,
   limit = 20,
+  client?: SupabaseClient,
 ): Promise<PosInventorySimulationEventRow[]> {
-  const supabase = await getSupabaseServerClient();
+  const supabase = client ?? (await getSupabaseServerClient());
   const { data: events, error: eventsError } = await supabase
     .from("sales_pos_inventory_consumption_events")
     .select(
@@ -563,11 +1044,27 @@ export async function listPosInventorySimulationEvents(
 
   const allLines = Array.from(lineByEvent.values()).flat();
   const productIds = Array.from(new Set(allLines.map((line) => line.product_id).filter(Boolean) as string[]));
+  const salesAccountIds = Array.from(
+    new Set(eventRows.map((event) => event.sales_account_id).filter(Boolean) as string[]),
+  );
   const { data: products, error: productsError } = productIds.length
     ? await supabase.from("products").select("id, name").eq("tenant_id", tenantId).in("id", productIds)
     : { data: [], error: null };
+  const { data: salesAccounts, error: salesAccountsError } = salesAccountIds.length
+    ? await supabase
+        .from("sales_accounts")
+        .select("id, folio_text")
+        .eq("tenant_id", tenantId)
+        .in("id", salesAccountIds)
+    : { data: [], error: null };
   if (productsError) throw new Error(`Unable to load POS simulation products summary: ${productsError.message}`);
+  if (salesAccountsError) {
+    throw new Error(`Unable to load POS simulation sales account summary: ${salesAccountsError.message}`);
+  }
   const productNameById = new Map((products ?? []).map((row) => [String((row as { id: string }).id), String((row as { name: string }).name)]));
+  const folioBySalesAccountId = new Map(
+    ((salesAccounts ?? []) as SalesAccountFolioSelectRow[]).map((row) => [row.id, row.folio_text ?? null]),
+  );
 
   return eventRows.map((event) => {
     const metadata = asRecord(event.metadata);
@@ -597,6 +1094,8 @@ export async function listPosInventorySimulationEvents(
       source_id: event.source_id,
       kitchen_batch_id: event.kitchen_batch_id,
       sales_account_id: event.sales_account_id,
+      sales_account_folio_text:
+        event.sales_account_id != null ? folioBySalesAccountId.get(event.sales_account_id) ?? null : null,
       idempotency_key: event.idempotency_key,
       error_message: event.error_message,
       metadata,
@@ -615,10 +1114,11 @@ export async function listPosInventorySimulationEvents(
 export async function getPosInventorySimulationEventDetail(
   tenantId: string,
   eventId: string,
+  client?: SupabaseClient,
 ): Promise<PosInventorySimulationEventDetail> {
-  const supabase = await getSupabaseServerClient();
+  const supabase = client ?? (await getSupabaseServerClient());
   const [events, lines] = await Promise.all([
-    listPosInventorySimulationEvents(tenantId, 100),
+    listPosInventorySimulationEvents(tenantId, 100, supabase),
     supabase
       .from("sales_pos_inventory_consumption_lines")
       .select(
