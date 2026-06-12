@@ -2,7 +2,7 @@ import type {
   RetailPosRuntimeOperator,
   RetailPosRuntimeProbeDiagnostics,
   RetailPosRuntimeOperatorsPayload,
-} from "../../../shared/types/retail-pos";
+} from "@/shared/types/retail-pos";
 import { listPosUsersForTenant } from "@/lib/pos/users";
 import {
   assertRetailPosDeviceRole,

@@ -8,7 +8,7 @@ import type {
   RetailPosCashShiftCloseSummaryResponse,
   RetailPosCurrentCashShiftResponse,
   RetailPosDaySummaryResponse,
-} from "../../../shared/types/retail-pos";
+} from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   assertRetailPosDeviceRole,

@@ -1,4 +1,4 @@
-import type { RetailPosCatalogImportProductInput } from "../../../shared/types/retail-pos";
+import type { RetailPosCatalogImportProductInput } from "@/shared/types/retail-pos";
 
 export const RETAIL_POS_CATALOG_IMPORT_CANONICAL_PRODUCT_HEADERS = [
   "name",

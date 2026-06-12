@@ -4,7 +4,7 @@ import type {
   RetailPosOrderStatus,
   RetailPosPaymentMethod,
   RetailPosQuantityString,
-} from "../../shared/types/retail-pos";
+} from "@/shared/types/retail-pos";
 
 export type RetailPosCategoryFormValues = {
   name: string;

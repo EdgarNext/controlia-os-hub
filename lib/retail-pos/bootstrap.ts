@@ -7,7 +7,7 @@ import type {
   RetailPosCashierState,
   RetailPosCatalogDeviceSettings,
   RetailPosDeviceRole,
-} from "../../../shared/types/retail-pos";
+} from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveRetailPosTenant } from "./auth";
 import { getOpenRetailPosCashShiftForDevice } from "./cash-shifts";

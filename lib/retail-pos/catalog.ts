@@ -11,7 +11,7 @@ import type {
   RetailPosProduct,
   RetailPosQuickCreateProductRequest,
   RetailPosQuickCreateProductResponse,
-} from "../../../shared/types/retail-pos";
+} from "@/shared/types/retail-pos";
 import { RetailPosRuntimeError } from "./errors";
 import {
   assertRetailPosDeviceRole,

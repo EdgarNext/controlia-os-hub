@@ -5,7 +5,7 @@ import type {
   RetailPosTicketEventResponse,
   RetailPosTicketEventType,
   RetailPosTicketType,
-} from "../../../shared/types/retail-pos";
+} from "@/shared/types/retail-pos";
 import {
   assertRetailPosDeviceRole,
   resolveRetailPosRuntimeActor,

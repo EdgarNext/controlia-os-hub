@@ -11,7 +11,7 @@ import {
   setRuntimeAuthCacheEntry,
 } from "./runtime-auth-cache";
 import { runSupabaseReadWithRetry } from "./runtime-supabase-retry";
-import type { RetailPosDeviceRole } from "../../../shared/types/retail-pos";
+import type { RetailPosDeviceRole } from "@/shared/types/retail-pos";
 import { RetailPosRuntimeError } from "./errors";
 
 type TenantRow = {

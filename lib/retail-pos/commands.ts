@@ -1,7 +1,7 @@
 import type {
   RetailPosCommandResult,
   RetailPosCommandType,
-} from "../../../shared/types/retail-pos";
+} from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { RetailPosRuntimeError } from "./errors";
 
