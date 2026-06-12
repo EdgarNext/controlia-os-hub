@@ -29,7 +29,16 @@ type InventoryItemInteractiveRow = {
     purchase_unit_code: string | null;
   } | null;
   stateTags: Array<
-    "completo" | "sin_opcion_compra" | "sin_precio_proveedor" | "sin_proveedor" | "costo_0" | "unidad_dudosa" | "test_sandbox"
+    | "completo"
+    | "sin_categoria"
+    | "sin_opcion_compra"
+    | "sin_precio_proveedor"
+    | "sin_proveedor"
+    | "costo_0"
+    | "unidad_dudosa"
+    | "unidad_base_inconsistente"
+    | "costo_unitario_incongruente"
+    | "test_sandbox"
   >;
 };
 
@@ -285,6 +294,8 @@ export function InventoryItemsInteractive({
                               ? "success"
                               : tag === "costo_0"
                                 ? "danger"
+                                : tag === "unidad_base_inconsistente" || tag === "costo_unitario_incongruente"
+                                  ? "danger"
                                 : tag === "test_sandbox"
                                   ? "warning"
                                   : "primary";
@@ -293,12 +304,18 @@ export function InventoryItemsInteractive({
                               ? "Completo"
                               : tag === "sin_opcion_compra"
                                 ? "Sin opción compra"
+                                : tag === "sin_categoria"
+                                  ? "Sin categoría"
                                 : tag === "sin_precio_proveedor"
                                   ? "Sin precio proveedor"
                                   : tag === "sin_proveedor"
                                     ? "Sin proveedor"
                                     : tag === "costo_0"
                                       ? "Costo 0"
+                                      : tag === "unidad_base_inconsistente"
+                                        ? "Unidad base inconsistente"
+                                        : tag === "costo_unitario_incongruente"
+                                          ? "Costo incongruente"
                                       : tag === "test_sandbox"
                                         ? "TEST/sandbox"
                                         : "Unidad dudosa";

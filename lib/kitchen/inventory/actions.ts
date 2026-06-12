@@ -61,6 +61,7 @@ function revalidateKitchenInventoryPaths(tenantSlug: string) {
   revalidatePath(`/${tenantSlug}/kitchen`);
   revalidatePath(`/${tenantSlug}/kitchen/inventory`);
   revalidatePath(`/${tenantSlug}/kitchen/inventory/items`);
+  revalidatePath(`/${tenantSlug}/kitchen/inventory/data-quality`);
   revalidatePath(`/${tenantSlug}/kitchen/inventory/movements`);
   revalidatePath(`/${tenantSlug}/kitchen/reports`);
 }
@@ -978,6 +979,472 @@ export async function setCurrentSupplierPriceAction(
     return { ok: false, message: error instanceof Error ? error.message : "No se pudo actualizar precio current." };
   }
 }
+
+export async function saveKitchenInventoryQuickFixAction(
+  _previousState: KitchenInventoryActionState,
+  formData: FormData,
+): Promise<KitchenInventoryActionState> {
+  try {
+    const tenantSlug = toTrimmedString(formData.get("tenantSlug")).toLowerCase();
+    const itemId = toTrimmedString(formData.get("itemId"));
+    const categoryId = toTrimmedString(formData.get("categoryId"));
+    const supplierId = toTrimmedString(formData.get("defaultSupplierId"));
+    const currentUnitCost = toNonNegativeNumber(formData.get("currentUnitCost"), "El costo unitario");
+    const defaultPurchaseOptionId = toTrimmedString(formData.get("defaultPurchaseOptionId"));
+    const pricePerPurchaseUnitRaw = toTrimmedString(formData.get("pricePerPurchaseUnit"));
+    const createPurchaseOption = toTrimmedString(formData.get("createPurchaseOption")) === "on";
+    const createPurchaseUnitId = toTrimmedString(formData.get("createPurchaseUnitId"));
+    const createQuantityPerPurchaseUnitRaw = toTrimmedString(formData.get("createQuantityPerPurchaseUnit"));
+    const createMinPurchaseQuantityRaw = toTrimmedString(formData.get("createMinPurchaseQuantity"));
+    const createPurchaseMultipleRaw = toTrimmedString(formData.get("createPurchaseMultiple"));
+    const createNotes = toTrimmedString(formData.get("createPurchaseOptionNotes"));
+    const createIsDefault = toTrimmedString(formData.get("createPurchaseOptionIsDefault")) === "on";
+    const reactivateCompatibleOptionId = toTrimmedString(formData.get("reactivateCompatibleOption"));
+    const confirmReplaceCurrentPrice = toTrimmedString(formData.get("confirmReplaceCurrentPrice")) === "on";
+
+    if (!tenantSlug || !itemId) {
+      return { ok: false, message: "Tenant e insumo son obligatorios." };
+    }
+
+    const { tenant, user } = await resolveKitchenInventoryManage(tenantSlug);
+    await assertTenantScopedReference("kitchen_inventory_items", tenant.tenantId, itemId, "Insumo");
+    if (categoryId) {
+      await assertTenantScopedReference("kitchen_inventory_categories", tenant.tenantId, categoryId, "Categoría");
+    }
+    if (supplierId) {
+      await assertTenantScopedReference("kitchen_inventory_suppliers", tenant.tenantId, supplierId, "Proveedor");
+    }
+    if (defaultPurchaseOptionId) {
+      await assertTenantScopedReference(
+        "kitchen_inventory_purchase_options",
+        tenant.tenantId,
+        defaultPurchaseOptionId,
+        "Opción de compra",
+      );
+    }
+    if (createPurchaseOption && createPurchaseUnitId) {
+      await assertTenantScopedReference("kitchen_inventory_units", tenant.tenantId, createPurchaseUnitId, "Unidad de compra");
+    }
+
+    const supabase = await getSupabaseServerClient();
+
+    const { data: itemRow, error: itemError } = await supabase
+      .from("kitchen_inventory_items")
+      .select("id,default_unit_id,default_supplier_id")
+      .eq("tenant_id", tenant.tenantId)
+      .eq("id", itemId)
+      .maybeSingle();
+    if (itemError || !itemRow) {
+      throw new Error("No se pudo cargar el insumo.");
+    }
+
+    let selectedPurchaseOption:
+      | {
+          id: string;
+          item_id: string;
+          supplier_id: string | null;
+          purchase_unit_id: string;
+          is_active: boolean;
+          is_default: boolean;
+        }
+      | null = null;
+
+    if (defaultPurchaseOptionId) {
+      const { data: optionRow, error: optionError } = await supabase
+        .from("kitchen_inventory_purchase_options")
+        .select("id,item_id,supplier_id,purchase_unit_id,is_active,is_default")
+        .eq("tenant_id", tenant.tenantId)
+        .eq("id", defaultPurchaseOptionId)
+        .maybeSingle();
+      if (optionError || !optionRow) {
+        throw new Error("Opción de compra inválida para el tenant.");
+      }
+      if (optionRow.item_id !== itemId) {
+        throw new Error("La opción de compra no pertenece al insumo seleccionado.");
+      }
+      if (!optionRow.is_active) {
+        throw new Error("La opción de compra debe estar activa para usarse como default.");
+      }
+      selectedPurchaseOption = optionRow;
+    }
+
+    const resolvedSupplierId = supplierId || null;
+    if (selectedPurchaseOption?.supplier_id && resolvedSupplierId && selectedPurchaseOption.supplier_id !== resolvedSupplierId) {
+      throw new Error("La opción de compra no coincide con el proveedor default seleccionado.");
+    }
+
+    const { error: itemUpdateError } = await supabase
+      .from("kitchen_inventory_items")
+      .update({
+        category_id: categoryId || null,
+        default_supplier_id: resolvedSupplierId,
+        current_unit_cost: currentUnitCost,
+      })
+      .eq("tenant_id", tenant.tenantId)
+      .eq("id", itemId);
+    if (itemUpdateError) {
+      throw new Error(`No se pudo actualizar datos básicos del insumo: ${itemUpdateError.message}`);
+    }
+
+    if (selectedPurchaseOption) {
+      let resetDefault = supabase
+        .from("kitchen_inventory_purchase_options")
+        .update({ is_default: false })
+        .eq("tenant_id", tenant.tenantId)
+        .eq("item_id", itemId)
+        .eq("is_active", true);
+      if (selectedPurchaseOption.supplier_id) {
+        resetDefault = resetDefault.eq("supplier_id", selectedPurchaseOption.supplier_id);
+      } else {
+        resetDefault = resetDefault.is("supplier_id", null);
+      }
+      const { error: resetDefaultError } = await resetDefault;
+      if (resetDefaultError) {
+        throw new Error(`No se pudo limpiar opción de compra default previa: ${resetDefaultError.message}`);
+      }
+
+      const { error: setDefaultError } = await supabase
+        .from("kitchen_inventory_purchase_options")
+        .update({ is_default: true })
+        .eq("tenant_id", tenant.tenantId)
+        .eq("id", selectedPurchaseOption.id);
+      if (setDefaultError) {
+        throw new Error(`No se pudo actualizar opción de compra default: ${setDefaultError.message}`);
+      }
+    }
+
+    if (createPurchaseOption) {
+      if (!resolvedSupplierId) {
+        throw new Error("Para crear presentación de compra, primero define proveedor default.");
+      }
+      if (!itemRow.default_unit_id) {
+        throw new Error("No se encontró unidad base del insumo para crear presentación de compra.");
+      }
+      if (!createPurchaseUnitId) {
+        throw new Error("Selecciona unidad de compra para crear la presentación.");
+      }
+
+      const quantityPerPurchaseUnit = toPositiveNumber(
+        createQuantityPerPurchaseUnitRaw,
+        "Cantidad por unidad de compra",
+      );
+      const minPurchaseQuantity = toPositiveNumber(
+        createMinPurchaseQuantityRaw || "1",
+        "Mínimo de compra",
+      );
+      const purchaseMultiple = toPositiveNumber(
+        createPurchaseMultipleRaw || "1",
+        "Múltiplo de compra",
+      );
+
+      const { data: compatibleRows, error: compatibleError } = await supabase
+        .from("kitchen_inventory_purchase_options")
+        .select("id,is_active,is_default")
+        .eq("tenant_id", tenant.tenantId)
+        .eq("item_id", itemId)
+        .eq("supplier_id", resolvedSupplierId)
+        .eq("purchase_unit_id", createPurchaseUnitId)
+        .eq("inventory_unit_id", itemRow.default_unit_id)
+        .eq("quantity_per_purchase_unit", quantityPerPurchaseUnit)
+        .eq("min_purchase_quantity", minPurchaseQuantity)
+        .eq("purchase_multiple", purchaseMultiple)
+        .order("is_default", { ascending: false })
+        .order("created_at", { ascending: false });
+
+      if (compatibleError) {
+        throw new Error(`No se pudo validar presentación de compra compatible: ${compatibleError.message}`);
+      }
+
+      const activeCompatible = (compatibleRows ?? []).find((row) => row.is_active);
+      const inactiveCompatible = (compatibleRows ?? []).find((row) => !row.is_active);
+
+      if (!activeCompatible) {
+        if (inactiveCompatible) {
+          if (!reactivateCompatibleOptionId || reactivateCompatibleOptionId !== inactiveCompatible.id) {
+            throw new Error("Existe una presentación compatible inactiva. Confirma reactivarla desde el drawer.");
+          }
+          const { error: reactivateError } = await supabase
+            .from("kitchen_inventory_purchase_options")
+            .update({ is_active: true })
+            .eq("tenant_id", tenant.tenantId)
+            .eq("id", inactiveCompatible.id);
+          if (reactivateError) {
+            throw new Error(`No se pudo reactivar presentación compatible: ${reactivateError.message}`);
+          }
+          selectedPurchaseOption = {
+            ...inactiveCompatible,
+            item_id: itemId,
+            supplier_id: resolvedSupplierId,
+            purchase_unit_id: createPurchaseUnitId,
+          };
+          if (createIsDefault) {
+            const { error: resetDefaultError } = await supabase
+              .from("kitchen_inventory_purchase_options")
+              .update({ is_default: false })
+              .eq("tenant_id", tenant.tenantId)
+              .eq("item_id", itemId)
+              .eq("supplier_id", resolvedSupplierId)
+              .eq("is_active", true);
+            if (resetDefaultError) {
+              throw new Error(`No se pudo limpiar presentación default previa: ${resetDefaultError.message}`);
+            }
+            const { error: setDefaultError } = await supabase
+              .from("kitchen_inventory_purchase_options")
+              .update({ is_default: true })
+              .eq("tenant_id", tenant.tenantId)
+              .eq("id", inactiveCompatible.id);
+            if (setDefaultError) {
+              throw new Error(`No se pudo marcar presentación default reactivada: ${setDefaultError.message}`);
+            }
+          }
+        } else {
+          if (createIsDefault) {
+            const { error: resetDefaultError } = await supabase
+              .from("kitchen_inventory_purchase_options")
+            .update({ is_default: false })
+            .eq("tenant_id", tenant.tenantId)
+            .eq("item_id", itemId)
+            .eq("supplier_id", resolvedSupplierId)
+            .eq("is_active", true);
+          if (resetDefaultError) {
+            throw new Error(`No se pudo limpiar presentación default previa: ${resetDefaultError.message}`);
+          }
+        }
+
+        const { data: createdOption, error: createOptionError } = await supabase
+          .from("kitchen_inventory_purchase_options")
+          .insert({
+            tenant_id: tenant.tenantId,
+            item_id: itemId,
+            supplier_id: resolvedSupplierId,
+            purchase_unit_id: createPurchaseUnitId,
+            inventory_unit_id: itemRow.default_unit_id,
+            quantity_per_purchase_unit: quantityPerPurchaseUnit,
+            min_purchase_quantity: minPurchaseQuantity,
+            purchase_multiple: purchaseMultiple,
+            is_default: createIsDefault,
+            notes: createNotes || null,
+            created_by: user.id,
+          })
+          .select("id,item_id,supplier_id,purchase_unit_id,is_active,is_default")
+          .single();
+        if (createOptionError || !createdOption) {
+          throw new Error(`No se pudo crear presentación de compra: ${createOptionError?.message}`);
+        }
+        selectedPurchaseOption = createdOption;
+        }
+      } else {
+        selectedPurchaseOption = {
+          ...activeCompatible,
+          item_id: itemId,
+          supplier_id: resolvedSupplierId,
+          purchase_unit_id: createPurchaseUnitId,
+        };
+        if (createIsDefault) {
+          const { error: resetDefaultError } = await supabase
+            .from("kitchen_inventory_purchase_options")
+            .update({ is_default: false })
+            .eq("tenant_id", tenant.tenantId)
+            .eq("item_id", itemId)
+            .eq("supplier_id", resolvedSupplierId)
+            .eq("is_active", true);
+          if (resetDefaultError) {
+            throw new Error(`No se pudo limpiar presentación default previa: ${resetDefaultError.message}`);
+          }
+          const { error: setDefaultError } = await supabase
+            .from("kitchen_inventory_purchase_options")
+            .update({ is_default: true })
+            .eq("tenant_id", tenant.tenantId)
+            .eq("id", activeCompatible.id);
+          if (setDefaultError) {
+            throw new Error(`No se pudo marcar presentación default: ${setDefaultError.message}`);
+          }
+        }
+      }
+    }
+
+    if (pricePerPurchaseUnitRaw) {
+      if (!selectedPurchaseOption) {
+        throw new Error("Para guardar precio vigente, primero selecciona opción de compra default.");
+      }
+      if (!resolvedSupplierId) {
+        throw new Error("Para guardar precio vigente, primero define proveedor default.");
+      }
+      const pricePerPurchaseUnit = toNonNegativeNumber(pricePerPurchaseUnitRaw, "El precio proveedor");
+
+      const { data: previousCurrentRows, error: previousCurrentError } = await supabase
+        .from("kitchen_inventory_supplier_prices")
+        .select("id")
+        .eq("tenant_id", tenant.tenantId)
+        .eq("item_id", itemId)
+        .eq("supplier_id", resolvedSupplierId)
+        .eq("purchase_unit_id", selectedPurchaseOption.purchase_unit_id)
+        .eq("is_current", true);
+      if (previousCurrentError) {
+        throw new Error(`No se pudo validar precio current previo: ${previousCurrentError.message}`);
+      }
+      if ((previousCurrentRows ?? []).length > 0 && !confirmReplaceCurrentPrice) {
+        throw new Error("Confirma reemplazar el precio vigente para continuar.");
+      }
+
+      const { error: resetCurrentError } = await supabase
+        .from("kitchen_inventory_supplier_prices")
+        .update({ is_current: false })
+        .eq("tenant_id", tenant.tenantId)
+        .eq("item_id", itemId)
+        .eq("supplier_id", resolvedSupplierId)
+        .eq("purchase_unit_id", selectedPurchaseOption.purchase_unit_id)
+        .eq("is_current", true);
+      if (resetCurrentError) {
+        throw new Error(`No se pudo limpiar precio proveedor current previo: ${resetCurrentError.message}`);
+      }
+
+      const { error: insertPriceError } = await supabase
+        .from("kitchen_inventory_supplier_prices")
+        .insert({
+          tenant_id: tenant.tenantId,
+          item_id: itemId,
+          supplier_id: resolvedSupplierId,
+          purchase_option_id: selectedPurchaseOption.id,
+          purchase_unit_id: selectedPurchaseOption.purchase_unit_id,
+          price_per_purchase_unit: pricePerPurchaseUnit,
+          source_type: "manual",
+          source_ref: "quick_fix_drawer",
+          is_current: true,
+          notes: "Actualizado desde Data Quality (corrección rápida).",
+          created_by: user.id,
+        });
+      if (insertPriceError) {
+        throw new Error(`No se pudo guardar precio proveedor current: ${insertPriceError.message}`);
+      }
+    }
+
+    revalidateKitchenInventoryPaths(tenant.tenantSlug);
+    revalidatePath(`/${tenant.tenantSlug}/kitchen/events/requisitions`);
+    revalidatePath(`/${tenant.tenantSlug}/kitchen/inventory/presentaciones-precios`);
+    return { ok: true, message: "Corrección rápida guardada." };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "No se pudo guardar la corrección rápida." };
+  }
+}
+
+export async function normalizeKitchenInventoryItemUnitAction(
+  _previousState: KitchenInventoryActionState,
+  formData: FormData,
+): Promise<KitchenInventoryActionState> {
+  try {
+    const tenantSlug = toTrimmedString(formData.get("tenantSlug")).toLowerCase();
+    const itemId = toTrimmedString(formData.get("itemId"));
+    const nextDefaultUnitId = toTrimmedString(formData.get("nextDefaultUnitId"));
+    const nextCurrentUnitCostRaw = toTrimmedString(formData.get("nextCurrentUnitCost"));
+    const alignDefaultPurchaseOption = toTrimmedString(formData.get("alignDefaultPurchaseOption")) === "on";
+    const forceHistoricalConfirm = toTrimmedString(formData.get("confirmHistoricalImpact")) === "on";
+    const forcePhrase = toTrimmedString(formData.get("confirmHistoricalPhrase"));
+
+    if (!tenantSlug || !itemId || !nextDefaultUnitId) {
+      return { ok: false, message: "Tenant, insumo y nueva unidad base son obligatorios." };
+    }
+
+    const { tenant } = await resolveKitchenInventoryManage(tenantSlug);
+    await assertTenantScopedReference("kitchen_inventory_items", tenant.tenantId, itemId, "Insumo");
+    await assertTenantScopedReference("kitchen_inventory_units", tenant.tenantId, nextDefaultUnitId, "Nueva unidad base");
+
+    const supabase = await getSupabaseServerClient();
+    const [{ data: itemRow, error: itemError }, { data: defaultOption, error: optionError }, { data: currentPrice, error: priceError }] =
+      await Promise.all([
+        supabase
+          .from("kitchen_inventory_items")
+          .select("id,default_unit_id,current_unit_cost")
+          .eq("tenant_id", tenant.tenantId)
+          .eq("id", itemId)
+          .maybeSingle(),
+        supabase
+          .from("kitchen_inventory_purchase_options")
+          .select("id,item_id,inventory_unit_id,quantity_per_purchase_unit,is_active,is_default")
+          .eq("tenant_id", tenant.tenantId)
+          .eq("item_id", itemId)
+          .eq("is_active", true)
+          .eq("is_default", true)
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("kitchen_inventory_supplier_prices")
+          .select("id,item_id,price_per_purchase_unit,purchase_option_id,is_current")
+          .eq("tenant_id", tenant.tenantId)
+          .eq("item_id", itemId)
+          .eq("is_current", true)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+    if (itemError || !itemRow) throw new Error("No se pudo cargar el insumo a normalizar.");
+    if (optionError) throw new Error(`No se pudo cargar opción default: ${optionError.message}`);
+    if (priceError) throw new Error(`No se pudo cargar precio current: ${priceError.message}`);
+
+    const [{ count: balanceCount, error: balanceError }, { count: movementCount, error: movementError }, { count: recipeLineCount, error: recipeError }] =
+      await Promise.all([
+        supabase.from("kitchen_inventory_balances").select("*", { count: "exact", head: true }).eq("tenant_id", tenant.tenantId).eq("item_id", itemId),
+        supabase.from("kitchen_inventory_movements").select("*", { count: "exact", head: true }).eq("tenant_id", tenant.tenantId).eq("item_id", itemId),
+        supabase.from("kitchen_recipe_lines").select("*", { count: "exact", head: true }).eq("tenant_id", tenant.tenantId).eq("item_id", itemId),
+      ]);
+    if (balanceError) throw new Error(`No se pudo validar balances: ${balanceError.message}`);
+    if (movementError) throw new Error(`No se pudo validar movimientos: ${movementError.message}`);
+    if (recipeError) throw new Error(`No se pudo validar recetas: ${recipeError.message}`);
+
+    const hasHistoricalImpact = (balanceCount ?? 0) > 0 || (movementCount ?? 0) > 0 || (recipeLineCount ?? 0) > 0;
+    if (hasHistoricalImpact) {
+      if (!forceHistoricalConfirm) {
+        throw new Error("Confirma impacto histórico para cambiar unidad base.");
+      }
+      if (forcePhrase !== "NORMALIZAR UNIDAD") {
+        throw new Error("Escribe la frase exacta NORMALIZAR UNIDAD para continuar.");
+      }
+    }
+
+    let nextCurrentUnitCost: number | null = null;
+    if (nextCurrentUnitCostRaw) {
+      nextCurrentUnitCost = toNonNegativeNumber(nextCurrentUnitCostRaw, "Costo unitario nuevo");
+    } else if (
+      currentPrice &&
+      defaultOption &&
+      defaultOption.quantity_per_purchase_unit != null &&
+      Number(defaultOption.quantity_per_purchase_unit) > 0
+    ) {
+      nextCurrentUnitCost = Number(currentPrice.price_per_purchase_unit) / Number(defaultOption.quantity_per_purchase_unit);
+    }
+
+    const itemPayload: { default_unit_id: string; current_unit_cost?: number } = {
+      default_unit_id: nextDefaultUnitId,
+    };
+    if (nextCurrentUnitCost != null) itemPayload.current_unit_cost = nextCurrentUnitCost;
+
+    const { error: updateItemError } = await supabase
+      .from("kitchen_inventory_items")
+      .update(itemPayload)
+      .eq("tenant_id", tenant.tenantId)
+      .eq("id", itemId);
+    if (updateItemError) throw new Error(`No se pudo actualizar unidad base del insumo: ${updateItemError.message}`);
+
+    if (alignDefaultPurchaseOption && defaultOption) {
+      const { error: alignOptionError } = await supabase
+        .from("kitchen_inventory_purchase_options")
+        .update({ inventory_unit_id: nextDefaultUnitId })
+        .eq("tenant_id", tenant.tenantId)
+        .eq("id", defaultOption.id)
+        .eq("item_id", itemId);
+      if (alignOptionError) {
+        throw new Error(`No se pudo alinear unidad inventario de opción default: ${alignOptionError.message}`);
+      }
+    }
+
+    revalidateKitchenInventoryPaths(tenant.tenantSlug);
+    revalidatePath(`/${tenant.tenantSlug}/kitchen/inventory/presentaciones-precios`);
+    return { ok: true, message: "Unidad base normalizada desde Data Quality." };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "No se pudo normalizar unidad base." };
+  }
+}
+
 
 export async function deactivateSupplierPriceAction(
   _previousState: KitchenInventoryActionState,

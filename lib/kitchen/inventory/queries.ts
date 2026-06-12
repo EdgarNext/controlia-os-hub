@@ -11,6 +11,9 @@ import type {
   KitchenInventoryUnit,
   KitchenInventoryItemOperationalRow,
   KitchenInventoryItemOperationalState,
+  KitchenInventoryDataQualityData,
+  KitchenInventoryDataQualityQueue,
+  KitchenInventoryDataQualityRow,
 } from "./types";
 import { isKitchenUnitSuspicious } from "@/lib/kitchen/formatters";
 
@@ -26,20 +29,85 @@ type InventoryOperationalBaseData = {
   locations: KitchenInventoryLocation[];
   stockRules: Array<{ item_id: string; location_id: string | null; min_quantity: number | null }>;
   currentSupplierPrices: Array<{
+    id: string;
     item_id: string;
+    supplier_id: string;
+    purchase_option_id: string | null;
     price_per_purchase_unit: number;
     purchase_unit_id: string;
     kitchen_inventory_units: { code: string | null } | { code: string | null }[] | null;
   }>;
-  defaultPurchaseOptions: Array<{ item_id: string }>;
+  defaultPurchaseOptions: Array<{
+    id: string;
+    item_id: string;
+    supplier_id: string | null;
+    purchase_unit_id: string;
+    inventory_unit_id: string;
+    quantity_per_purchase_unit: number;
+    is_default: boolean;
+    is_active: boolean;
+    purchase_unit: { code: string | null } | { code: string | null }[] | null;
+    inventory_unit: { code: string | null } | { code: string | null }[] | null;
+  }>;
+  movementItemIds: string[];
+  movementCountByItem: Map<string, number>;
+  balanceCountByItem: Map<string, number>;
+  recipeLineCountByItem: Map<string, number>;
 };
+
+function buildKitchenInventoryStateTags(input: {
+  categoryId: string | null;
+  unitCode: string | null;
+  hasDefaultSupplier: boolean;
+  hasDefaultPurchaseOption: boolean;
+  hasCurrentSupplierPrice: boolean;
+  currentUnitCost: number;
+  isAllowedZeroCost: boolean;
+  isBaseUnitInconsistent: boolean;
+  isUnitCostIncongruent: boolean;
+}): KitchenInventoryItemOperationalState[] {
+  const stateTags: KitchenInventoryItemOperationalState[] = [];
+  if (!input.categoryId) stateTags.push("sin_categoria");
+  if (isKitchenUnitSuspicious(input.unitCode) || input.unitCode === "paquete" || input.unitCode === "caja") {
+    stateTags.push(input.unitCode === "tkg" ? "test_sandbox" : "unidad_dudosa");
+  }
+  if (!input.hasDefaultSupplier) stateTags.push("sin_proveedor");
+  if (!input.hasDefaultPurchaseOption) stateTags.push("sin_opcion_compra");
+  if (!input.hasCurrentSupplierPrice) stateTags.push("sin_precio_proveedor");
+  if (input.currentUnitCost <= 0 && !input.isAllowedZeroCost) stateTags.push("costo_0");
+  if (input.isBaseUnitInconsistent) stateTags.push("unidad_base_inconsistente");
+  if (input.isUnitCostIncongruent) stateTags.push("costo_unitario_incongruente");
+  if (stateTags.length === 0) stateTags.push("completo");
+  return stateTags;
+}
+
+function computeKitchenInventoryCleanupPriorityScore(input: {
+  stateTags: KitchenInventoryItemOperationalState[];
+  hasBalance: boolean;
+}): number {
+  const points = new Map<KitchenInventoryItemOperationalState, number>([
+    ["costo_0", 4],
+    ["costo_unitario_incongruente", 4],
+    ["unidad_base_inconsistente", 4],
+    ["sin_precio_proveedor", 3],
+    ["sin_opcion_compra", 3],
+    ["sin_proveedor", 2],
+    ["sin_categoria", 2],
+    ["unidad_dudosa", 2],
+    ["test_sandbox", 4],
+    ["completo", 0],
+  ]);
+
+  const base = input.stateTags.reduce((sum, tag) => sum + (points.get(tag) ?? 0), 0);
+  return base + (input.hasBalance ? 2 : 0);
+}
 
 async function loadInventoryOperationalBaseData(
   tenantId: string,
   filters?: KitchenInventoryItemFilters,
 ): Promise<InventoryOperationalBaseData> {
   const supabase = await getSupabaseServerClient();
-  const [items, balances, locations, stockRulesRes, currentPricesRes, defaultOptionsRes] = await Promise.all([
+  const [items, balances, locations, stockRulesRes, currentPricesRes, defaultOptionsRes, movementItemsRes] = await Promise.all([
     listKitchenInventoryItems(tenantId, filters),
     listKitchenInventoryBalances(tenantId),
     listKitchenInventoryLocations(tenantId),
@@ -51,16 +119,20 @@ async function loadInventoryOperationalBaseData(
     supabase
       .from("kitchen_inventory_supplier_prices")
       .select(
-        "item_id, price_per_purchase_unit, purchase_unit_id, kitchen_inventory_units:kitchen_inventory_units!kitchen_inventory_supplier_prices_tenant_purchase_unit_fkey(code)",
+        "id, item_id, supplier_id, purchase_option_id, price_per_purchase_unit, purchase_unit_id, kitchen_inventory_units:kitchen_inventory_units!kitchen_inventory_supplier_prices_tenant_purchase_unit_fkey(code)",
       )
       .eq("tenant_id", tenantId)
       .eq("is_current", true),
     supabase
       .from("kitchen_inventory_purchase_options")
-      .select("item_id")
+      .select("id, item_id, supplier_id, purchase_unit_id, inventory_unit_id, quantity_per_purchase_unit, is_default, is_active, purchase_unit:kitchen_inventory_units!kitchen_inventory_purchase_options_tenant_purchase_unit_fkey(code), inventory_unit:kitchen_inventory_units!kitchen_inventory_purchase_options_tenant_inventory_unit_fkey(code)")
       .eq("tenant_id", tenantId)
       .eq("is_active", true)
       .eq("is_default", true),
+    supabase
+      .from("kitchen_inventory_movements")
+      .select("item_id")
+      .eq("tenant_id", tenantId),
   ]);
 
   if (stockRulesRes.error) throw new Error(`No fue posible listar reglas de stock: ${stockRulesRes.error.message}`);
@@ -70,19 +142,45 @@ async function loadInventoryOperationalBaseData(
   if (defaultOptionsRes.error) {
     throw new Error(`No fue posible listar opciones de compra default: ${defaultOptionsRes.error.message}`);
   }
+  if (movementItemsRes.error) {
+    throw new Error(`No fue posible listar referencias de movimientos: ${movementItemsRes.error.message}`);
+  }
+
+  const movementCountByItem = new Map<string, number>();
+  for (const row of movementItemsRes.data ?? []) {
+    const itemId = String(row.item_id);
+    movementCountByItem.set(itemId, (movementCountByItem.get(itemId) ?? 0) + 1);
+  }
+
+  const balanceCountByItem = new Map<string, number>();
+  for (const row of balances) {
+    balanceCountByItem.set(row.item_id, (balanceCountByItem.get(row.item_id) ?? 0) + 1);
+  }
+
+  const { data: recipeLineCounts, error: recipeLineCountsError } = await supabase
+    .from("kitchen_recipe_lines")
+    .select("item_id")
+    .eq("tenant_id", tenantId);
+  if (recipeLineCountsError) {
+    throw new Error(`No fue posible listar referencias de recetas: ${recipeLineCountsError.message}`);
+  }
+  const recipeLineCountByItem = new Map<string, number>();
+  for (const row of recipeLineCounts ?? []) {
+    const itemId = String(row.item_id);
+    recipeLineCountByItem.set(itemId, (recipeLineCountByItem.get(itemId) ?? 0) + 1);
+  }
 
   return {
     items,
     balances,
     locations,
     stockRules: (stockRulesRes.data ?? []) as Array<{ item_id: string; location_id: string | null; min_quantity: number | null }>,
-    currentSupplierPrices: (currentPricesRes.data ?? []) as Array<{
-      item_id: string;
-      price_per_purchase_unit: number;
-      purchase_unit_id: string;
-      kitchen_inventory_units: { code: string | null } | { code: string | null }[] | null;
-    }>,
-    defaultPurchaseOptions: (defaultOptionsRes.data ?? []) as Array<{ item_id: string }>,
+    currentSupplierPrices: (currentPricesRes.data ?? []) as InventoryOperationalBaseData["currentSupplierPrices"],
+    defaultPurchaseOptions: (defaultOptionsRes.data ?? []) as InventoryOperationalBaseData["defaultPurchaseOptions"],
+    movementItemIds: [...new Set((movementItemsRes.data ?? []).map((row) => String(row.item_id)))],
+    movementCountByItem,
+    balanceCountByItem,
+    recipeLineCountByItem,
   };
 }
 
@@ -270,9 +368,28 @@ export async function listKitchenInventoryItemOperationalRows(
     balancesByItem.set(balance.item_id, bucket);
   }
 
-  const defaultPoByItem = new Map<string, boolean>();
+  const defaultPoByItem = new Map<string, KitchenInventoryPurchaseOption>();
   for (const option of defaultPurchaseOptions) {
-    defaultPoByItem.set(option.item_id, true);
+    const purchaseUnitRaw = Array.isArray(option.purchase_unit) ? (option.purchase_unit[0] ?? null) : (option.purchase_unit ?? null);
+    const inventoryUnitRaw = Array.isArray(option.inventory_unit) ? (option.inventory_unit[0] ?? null) : (option.inventory_unit ?? null);
+    defaultPoByItem.set(option.item_id, {
+      id: option.id,
+      tenant_id: tenantId,
+      item_id: option.item_id,
+      supplier_id: option.supplier_id,
+      purchase_unit_id: option.purchase_unit_id,
+      inventory_unit_id: option.inventory_unit_id,
+      quantity_per_purchase_unit: Number(option.quantity_per_purchase_unit ?? 0),
+      min_purchase_quantity: 1,
+      purchase_multiple: 1,
+      is_default: option.is_default,
+      is_active: option.is_active,
+      notes: null,
+      created_at: "",
+      updated_at: "",
+      purchase_unit: purchaseUnitRaw?.code ? { id: "", code: purchaseUnitRaw.code, name: purchaseUnitRaw.code } : null,
+      inventory_unit: inventoryUnitRaw?.code ? { id: "", code: inventoryUnitRaw.code, name: inventoryUnitRaw.code } : null,
+    });
   }
 
   const currentPriceByItem = new Map<string, boolean>();
@@ -317,22 +434,36 @@ export async function listKitchenInventoryItemOperationalRows(
       ),
     ] as string[];
     const unitCode = item.kitchen_inventory_units?.code ?? null;
-    const hasDefaultPurchaseOption = defaultPoByItem.get(item.id) === true;
+    const defaultPurchaseOption = defaultPoByItem.get(item.id) ?? null;
+    const hasDefaultPurchaseOption = defaultPurchaseOption != null;
     const hasCurrentSupplierPrice = currentPriceByItem.get(item.id) === true;
-    const defaultPurchaseOption = null;
     const currentSupplierPrice = currentPriceRowByItem.get(item.id) ?? null;
     const currentUnitCost = Number(item.current_unit_cost ?? 0);
     const isAllowedZeroCost = item.normalized_name === "agua";
+    const defaultInventoryUnitId = defaultPurchaseOption?.inventory_unit_id ?? null;
+    const isBaseUnitInconsistent = Boolean(
+      defaultInventoryUnitId &&
+        item.default_unit_id &&
+        defaultInventoryUnitId !== item.default_unit_id,
+    );
+    const qtyPerPurchase = Number(defaultPurchaseOption?.quantity_per_purchase_unit ?? 0);
+    const supplierPrice = Number(currentSupplierPrice?.price_per_purchase_unit ?? 0);
+    const derivedUnitCost =
+      currentSupplierPrice && qtyPerPurchase > 0 ? supplierPrice / qtyPerPurchase : null;
+    const isUnitCostIncongruent =
+      derivedUnitCost != null && Math.abs(derivedUnitCost - currentUnitCost) > 0.01;
 
-    const stateTags: KitchenInventoryItemOperationalState[] = [];
-    if (isKitchenUnitSuspicious(unitCode) || unitCode === "paquete" || unitCode === "caja") {
-      stateTags.push(unitCode === "tkg" ? "test_sandbox" : "unidad_dudosa");
-    }
-    if (!item.default_supplier_id) stateTags.push("sin_proveedor");
-    if (!hasDefaultPurchaseOption) stateTags.push("sin_opcion_compra");
-    if (!hasCurrentSupplierPrice) stateTags.push("sin_precio_proveedor");
-    if (currentUnitCost <= 0 && !isAllowedZeroCost) stateTags.push("costo_0");
-    if (stateTags.length === 0) stateTags.push("completo");
+    const stateTags = buildKitchenInventoryStateTags({
+      categoryId: item.category_id,
+      unitCode,
+      hasDefaultSupplier: Boolean(item.default_supplier_id),
+      hasDefaultPurchaseOption,
+      hasCurrentSupplierPrice,
+      currentUnitCost,
+      isAllowedZeroCost,
+      isBaseUnitInconsistent,
+      isUnitCostIncongruent,
+    });
 
     return {
       item,
@@ -401,15 +532,17 @@ export async function getKitchenInventoryItemsInteractiveData(tenantId: string) 
     const currentUnitCost = Number(item.current_unit_cost ?? 0);
     const isAllowedZeroCost = item.normalized_name === "agua";
 
-    const stateTags: KitchenInventoryItemOperationalState[] = [];
-    if (isKitchenUnitSuspicious(unitCode) || unitCode === "paquete" || unitCode === "caja") {
-      stateTags.push(unitCode === "tkg" ? "test_sandbox" : "unidad_dudosa");
-    }
-    if (!item.default_supplier_id) stateTags.push("sin_proveedor");
-    if (!hasDefaultPurchaseOption) stateTags.push("sin_opcion_compra");
-    if (!hasCurrentSupplierPrice) stateTags.push("sin_precio_proveedor");
-    if (currentUnitCost <= 0 && !isAllowedZeroCost) stateTags.push("costo_0");
-    if (stateTags.length === 0) stateTags.push("completo");
+    const stateTags = buildKitchenInventoryStateTags({
+      categoryId: item.category_id,
+      unitCode,
+      hasDefaultSupplier: Boolean(item.default_supplier_id),
+      hasDefaultPurchaseOption,
+      hasCurrentSupplierPrice,
+      currentUnitCost,
+      isAllowedZeroCost,
+      isBaseUnitInconsistent: false,
+      isUnitCostIncongruent: false,
+    });
 
     return {
       item,
@@ -478,6 +611,149 @@ export async function getKitchenInventoryItemsInteractiveData(tenantId: string) 
       suppliers: suppliers.map((supplier) => ({ id: supplier.id, name: supplier.name })),
     },
   };
+}
+
+export async function getKitchenInventoryDataQualityData(tenantId: string): Promise<KitchenInventoryDataQualityData> {
+  const [operationalRows, baseData] = await Promise.all([
+    listKitchenInventoryItemOperationalRows(tenantId),
+    loadInventoryOperationalBaseData(tenantId),
+  ]);
+  const movementItemIdSet = new Set(baseData.movementItemIds);
+  const defaultOptionByItem = new Map(baseData.defaultPurchaseOptions.map((option) => [option.item_id, option]));
+  const currentPriceByItem = new Map(baseData.currentSupplierPrices.map((price) => [price.item_id, price]));
+  const rows: KitchenInventoryDataQualityRow[] = operationalRows.filter((row) => row.item.is_active).map((row) => {
+    const hasBalance = Number(row.totalBalance) > 0;
+    const hasMovements = movementItemIdSet.has(row.item.id);
+    const defaultOption = defaultOptionByItem.get(row.item.id) ?? null;
+    const currentPrice = currentPriceByItem.get(row.item.id) ?? null;
+    const purchaseUnitRaw = defaultOption
+      ? Array.isArray(defaultOption.purchase_unit)
+        ? (defaultOption.purchase_unit[0] ?? null)
+        : (defaultOption.purchase_unit ?? null)
+      : null;
+    const inventoryUnitRaw = defaultOption
+      ? Array.isArray(defaultOption.inventory_unit)
+        ? (defaultOption.inventory_unit[0] ?? null)
+        : (defaultOption.inventory_unit ?? null)
+      : null;
+    const defaultInventoryUnitId = defaultOption?.inventory_unit_id ?? null;
+    const isBaseUnitInconsistent = Boolean(defaultInventoryUnitId && row.item.default_unit_id && defaultInventoryUnitId !== row.item.default_unit_id);
+    const qtyPerPurchase = Number(defaultOption?.quantity_per_purchase_unit ?? 0);
+    const derivedUnitCost = currentPrice && qtyPerPurchase > 0 ? Number(currentPrice.price_per_purchase_unit ?? 0) / qtyPerPurchase : null;
+    const unitCostDifference = derivedUnitCost != null ? Math.abs(derivedUnitCost - Number(row.currentUnitCost ?? 0)) : null;
+    const isUnitCostIncongruent = unitCostDifference != null && unitCostDifference > 0.01;
+    const recipeLinesCount = baseData.recipeLineCountByItem.get(row.item.id) ?? 0;
+    const stateTagSet = new Set<KitchenInventoryItemOperationalState>(row.stateTags.filter((tag) => tag !== "completo"));
+    if (isBaseUnitInconsistent) stateTagSet.add("unidad_base_inconsistente");
+    if (isUnitCostIncongruent) stateTagSet.add("costo_unitario_incongruente");
+    const stateTags = stateTagSet.size > 0 ? Array.from(stateTagSet) : (["completo"] as KitchenInventoryItemOperationalState[]);
+    return {
+      ...row,
+      stateTags,
+      hasBalance,
+      hasMovements,
+      movementsCount: baseData.movementCountByItem.get(row.item.id) ?? 0,
+      balancesCount: baseData.balanceCountByItem.get(row.item.id) ?? 0,
+      recipeLinesCount,
+      hasRecipeLines: recipeLinesCount > 0,
+      defaultPurchaseOptionLite: defaultOption
+        ? {
+            id: defaultOption.id,
+            supplier_id: defaultOption.supplier_id,
+            purchase_unit_id: defaultOption.purchase_unit_id,
+            inventory_unit_id: defaultOption.inventory_unit_id,
+            quantity_per_purchase_unit: Number(defaultOption.quantity_per_purchase_unit ?? 0),
+            is_default: defaultOption.is_default,
+            is_active: defaultOption.is_active,
+            purchase_unit_code: purchaseUnitRaw?.code ?? null,
+            inventory_unit_code: inventoryUnitRaw?.code ?? null,
+          }
+        : null,
+      currentSupplierPriceLite: currentPrice
+        ? {
+            id: currentPrice.id,
+            supplier_id: currentPrice.supplier_id,
+            purchase_option_id: currentPrice.purchase_option_id,
+            purchase_unit_id: currentPrice.purchase_unit_id,
+            price_per_purchase_unit: Number(currentPrice.price_per_purchase_unit ?? 0),
+            is_current: true,
+          }
+        : null,
+      recommendedUnitId: defaultOption?.inventory_unit_id ?? null,
+      recommendedUnitCode: inventoryUnitRaw?.code ?? null,
+      derivedUnitCost,
+      unitCostDifference,
+      isBaseUnitInconsistent,
+      isUnitCostIncongruent,
+      cleanupPriorityScore: computeKitchenInventoryCleanupPriorityScore({
+        stateTags,
+        hasBalance,
+      }),
+    };
+  });
+
+  const summary = rows.reduce(
+    (acc, row) => {
+      const tags = new Set(row.stateTags);
+      acc.activeItems += 1;
+      if (tags.has("completo")) acc.completeItems += 1;
+      if (!tags.has("completo")) acc.itemsWithIssues += 1;
+      if (tags.has("sin_categoria")) acc.withoutCategory += 1;
+      if (tags.has("sin_proveedor")) acc.withoutDefaultSupplier += 1;
+      if (tags.has("costo_0")) acc.zeroOrNullCost += 1;
+      if (tags.has("sin_opcion_compra")) acc.withoutDefaultPurchaseOption += 1;
+      if (tags.has("sin_precio_proveedor")) acc.withoutCurrentSupplierPrice += 1;
+      if (tags.has("unidad_dudosa")) acc.suspiciousUnit += 1;
+      if (row.isBaseUnitInconsistent) acc.baseUnitInconsistent += 1;
+      if (row.isUnitCostIncongruent) acc.unitCostIncongruent += 1;
+      if (tags.has("test_sandbox")) acc.testSandbox += 1;
+      if (row.hasBalance) acc.withBalance += 1;
+      if (!row.hasBalance) acc.withoutBalance += 1;
+      return acc;
+    },
+    {
+      activeItems: 0,
+      completeItems: 0,
+      itemsWithIssues: 0,
+      withoutCategory: 0,
+      withoutDefaultSupplier: 0,
+      zeroOrNullCost: 0,
+      withoutDefaultPurchaseOption: 0,
+      withoutCurrentSupplierPrice: 0,
+      suspiciousUnit: 0,
+      baseUnitInconsistent: 0,
+      unitCostIncongruent: 0,
+      testSandbox: 0,
+      withBalance: 0,
+      withoutBalance: 0,
+    },
+  );
+
+  return { summary, rows };
+}
+
+export function filterKitchenInventoryDataQualityRows(
+  rows: KitchenInventoryDataQualityRow[],
+  queue: KitchenInventoryDataQualityQueue,
+): KitchenInventoryDataQualityRow[] {
+  return rows.filter((row) => {
+    const tags = new Set(row.stateTags);
+    if (queue === "todos") return true;
+    if (queue === "todos_con_problemas") return !tags.has("completo");
+    if (queue === "completos") return tags.has("completo");
+    if (queue === "sin_categoria") return tags.has("sin_categoria");
+    if (queue === "sin_proveedor") return tags.has("sin_proveedor");
+    if (queue === "costo_0") return tags.has("costo_0");
+    if (queue === "sin_purchase_option") return tags.has("sin_opcion_compra");
+    if (queue === "sin_supplier_price") return tags.has("sin_precio_proveedor");
+    if (queue === "unidad_dudosa") return tags.has("unidad_dudosa");
+    if (queue === "unidad_base_inconsistente") return row.isBaseUnitInconsistent;
+    if (queue === "costo_unitario_incongruente") return row.isUnitCostIncongruent;
+    if (queue === "test_sandbox") return tags.has("test_sandbox");
+    if (queue === "con_balance") return row.hasBalance;
+    if (queue === "sin_balance") return !row.hasBalance;
+    return true;
+  });
 }
 
 export async function listPurchaseOptions(tenantId: string): Promise<KitchenInventoryPurchaseOption[]> {

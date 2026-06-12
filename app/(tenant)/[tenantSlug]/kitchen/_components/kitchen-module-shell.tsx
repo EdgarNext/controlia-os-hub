@@ -9,6 +9,7 @@ type KitchenModuleShellProps = {
 const NAV_ITEMS = [
   { label: "Inventario", href: "inventory" },
   { label: "Insumos", href: "inventory/items" },
+  { label: "Data Quality", href: "inventory/data-quality" },
   { label: "Recetas", href: "recipes" },
   { label: "Costeo", href: "recipes/costing" },
   { label: "Catering", href: "events" },

@@ -1,0 +1,44 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getRetailPosDaySummary } from "@/lib/retail-pos/cash-shifts";
+import { RetailPosRuntimeError } from "@/lib/retail-pos/errors";
+
+type RouteParams = { tenantSlug: string };
+
+function jsonError(status: number, message: string) {
+  return NextResponse.json({ ok: false, error: message }, { status });
+}
+
+function getOptionalSearchParam(request: NextRequest, key: string) {
+  const value = request.nextUrl.searchParams.get(key)?.trim();
+  return value ? value : null;
+}
+
+function getOptionalHeader(request: NextRequest, key: string) {
+  const value = request.headers.get(key)?.trim();
+  return value ? value : null;
+}
+
+export async function GET(request: NextRequest, context: { params: Promise<RouteParams> }) {
+  try {
+    const { tenantSlug } = await context.params;
+    const payload = await getRetailPosDaySummary({
+      tenantSlug,
+      deviceRecordId: getOptionalSearchParam(request, "device_id"),
+      deviceId:
+        getOptionalSearchParam(request, "deviceId") ??
+        getOptionalHeader(request, "x-retail-pos-device-id"),
+      deviceSecret:
+        getOptionalSearchParam(request, "deviceSecret") ??
+        getOptionalHeader(request, "x-retail-pos-device-secret"),
+    });
+
+    return NextResponse.json(payload);
+  } catch (error) {
+    if (error instanceof RetailPosRuntimeError) {
+      return jsonError(error.status, error.message);
+    }
+
+    const message = error instanceof Error ? error.message : "Unexpected retail_pos day summary error.";
+    return jsonError(500, message);
+  }
+}
