@@ -22,23 +22,6 @@ import {
   normalizeRetailPosQuantity,
 } from "./quantity";
 
-type ProductRow = {
-  id: string;
-  tenant_id: string;
-  category_id: string | null;
-  name: string;
-  brand: string | null;
-  sku: string | null;
-  barcode: string | null;
-  unit_price_cents: number;
-  sales_unit_code: string;
-  sales_unit_label: string;
-  allow_decimal_quantity: boolean;
-  has_variants: boolean;
-  is_active: boolean;
-  deleted_at: string | null;
-};
-
 type VariantRow = {
   id: string;
   tenant_id: string;
@@ -130,6 +113,14 @@ function asArray<T>(value: T[] | null | undefined) {
 function ensureNonNegativeInteger(value: unknown, field: string) {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new RetailPosRuntimeError(400, `${field} must be a non-negative integer.`);
+  }
+
+  return value;
+}
+
+function ensurePositiveInteger(value: unknown, field: string) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new RetailPosRuntimeError(400, `${field} must be a positive integer.`);
   }
 
   return value;
@@ -488,18 +479,40 @@ async function resolveLineSnapshots(input: {
     }
 
     const quantity = ensureCanonicalQuantity(line.quantity);
-    if (!product.allow_decimal_quantity) {
+    const snapshotAllowsDecimal =
+      typeof line.allow_decimal_quantity === "boolean"
+        ? line.allow_decimal_quantity
+        : product.allow_decimal_quantity;
+
+    if (!snapshotAllowsDecimal) {
       ensureWholeQuantity(quantity);
     }
 
     const discountCents = ensureNonNegativeInteger(line.discount_cents, "discount_cents");
-    const expectedUnitPriceCents = variant?.unit_price_cents ?? product.unit_price_cents;
-    const providedUnitPriceCents = ensureNonNegativeInteger(line.unit_price_cents, "unit_price_cents");
+    const currentCatalogUnitPriceCents = variant?.unit_price_cents ?? product.unit_price_cents;
+    const providedUnitPriceCents = ensurePositiveInteger(line.unit_price_cents, "unit_price_cents");
+    const snapshotProductName = asTrimmedString(line.product_name) ?? product.name;
+    const snapshotVariantName =
+      variant?.id ? asTrimmedString(line.variant_name) ?? variant.name : asTrimmedString(line.variant_name);
+    const snapshotSku = asTrimmedString(line.sku) ?? variant?.sku ?? product.sku;
+    const snapshotBarcode = asTrimmedString(line.barcode) ?? variant?.barcode ?? product.barcode;
+    const snapshotSalesUnitCode = asTrimmedString(line.sales_unit_code) ?? product.sales_unit_code;
+    const snapshotSalesUnitLabel = asTrimmedString(line.sales_unit_label) ?? product.sales_unit_label;
 
-    if (providedUnitPriceCents !== expectedUnitPriceCents) {
-      throw new RetailPosRuntimeError(
-        400,
-        `unit_price_cents for product ${product.id}${variant ? ` variant ${variant.id}` : ""} does not match current catalog price.`,
+    if (!snapshotSalesUnitCode || !snapshotSalesUnitLabel || !snapshotProductName) {
+      throw new RetailPosRuntimeError(400, `Line ${lineNumber} must include a valid commercial snapshot.`);
+    }
+
+    if (providedUnitPriceCents !== currentCatalogUnitPriceCents) {
+      console.warn(
+        `[retail-pos][orders][snapshot_price_mismatch] ${JSON.stringify({
+          tenant_id: input.tenantId,
+          product_id: product.id,
+          product_variant_id: variant?.id ?? null,
+          line_number: lineNumber,
+          snapshot_unit_price_cents: providedUnitPriceCents,
+          current_catalog_unit_price_cents: currentCatalogUnitPriceCents,
+        })}`,
       );
     }
 
@@ -509,14 +522,14 @@ async function resolveLineSnapshots(input: {
       product_variant_id: variant?.id ?? null,
       quantity,
       discount_cents: discountCents,
-      product_name: product.name,
-      variant_name: variant?.name ?? null,
-      sku: variant?.sku ?? product.sku,
-      barcode: variant?.barcode ?? product.barcode,
-      sales_unit_code: product.sales_unit_code,
-      sales_unit_label: product.sales_unit_label,
-      allow_decimal_quantity: product.allow_decimal_quantity,
-      unit_price_cents: expectedUnitPriceCents,
+      product_name: snapshotProductName,
+      variant_name: snapshotVariantName ?? null,
+      sku: snapshotSku,
+      barcode: snapshotBarcode,
+      sales_unit_code: snapshotSalesUnitCode,
+      sales_unit_label: snapshotSalesUnitLabel,
+      allow_decimal_quantity: snapshotAllowsDecimal,
+      unit_price_cents: providedUnitPriceCents,
     };
   });
 }

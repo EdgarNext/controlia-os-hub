@@ -9,6 +9,7 @@ export const RETAIL_POS_PAYMENT_METHODS = ["cash", "card"] as const;
 export const RETAIL_POS_DEVICE_ROLES = [
   "order_station",
   "cashier_station",
+  "backoffice_station",
 ] as const;
 
 export const RETAIL_POS_CASH_SHIFT_STATUSES = [
@@ -272,10 +273,62 @@ export type RetailPosCatalogItem = {
   variant_updated_at: string | null;
 };
 
+export type RetailPosCatalogSyncMetadata = {
+  latest_change_id: number | null;
+};
+
+export type RetailPosCatalogChangeOperation =
+  | "insert"
+  | "update"
+  | "deactivate"
+  | "delete";
+
+export type RetailPosCatalogChangeProduct = {
+  id: string;
+  tenant_id: string;
+  category_id: string | null;
+  name: string;
+  brand: string | null;
+  sku: string | null;
+  barcode: string | null;
+  unit_price_cents: number;
+  sales_unit_code: string;
+  sales_unit_label: string;
+  allow_decimal_quantity: boolean;
+  has_variants: boolean;
+  is_active: boolean;
+  deleted_at: string | null;
+  updated_at: string;
+  supplier_id: string | null;
+};
+
+export type RetailPosCatalogChange = {
+  change_id: number;
+  entity_type: "product";
+  entity_id: string;
+  operation: RetailPosCatalogChangeOperation;
+  changed_fields: string[];
+  changed_at: string;
+  product: RetailPosCatalogChangeProduct | null;
+  catalog_items?: RetailPosCatalogItem[];
+};
+
 export type RetailPosCatalogPayload = {
   categories: RetailPosCatalogCategory[];
   items: RetailPosCatalogItem[];
   device_settings: RetailPosCatalogDeviceSettings | null;
+  synced_at: string;
+  catalog_sync?: RetailPosCatalogSyncMetadata;
+};
+
+export type RetailPosCatalogChangesPayload = {
+  changes: RetailPosCatalogChange[];
+  from_change_id: number;
+  to_change_id: number | null;
+  latest_change_id: number | null;
+  has_more: boolean;
+  full_snapshot_required: boolean;
+  limit: number;
   synced_at: string;
 };
 
@@ -356,6 +409,78 @@ export type RetailPosCatalogImportProductInput = {
   is_active: boolean;
 };
 
+export type RetailPosBackofficeCatalogProduct = {
+  product_id: string;
+  variant_id: string | null;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  brand: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  sales_unit_code: string;
+  sales_unit_label: string;
+  allow_decimal_quantity: boolean;
+  price_cents: number;
+  cost_cents: number | null;
+  is_active: boolean;
+  has_variants: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type RetailPosBackofficeCatalogProductsResponse = {
+  ok: true;
+  items: RetailPosBackofficeCatalogProduct[];
+  next_cursor: string | null;
+};
+
+export type RetailPosBackofficeCatalogProductDetailResponse = {
+  ok: true;
+  product: RetailPosBackofficeCatalogProduct;
+};
+
+export type UpdateRetailPosBackofficeProductRequest = {
+  name?: string;
+  sku?: string | null;
+  barcode?: string | null;
+  brand?: string | null;
+  category_id?: string | null;
+  sales_unit_code?: string;
+  sales_unit_label?: string;
+  allow_decimal_quantity?: boolean;
+  price_cents?: number;
+  cost_cents?: number | null;
+  supplier_id?: string | null;
+  is_active?: boolean;
+};
+
+export type RetailPosBackofficeSupplier = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RetailPosBackofficeSuppliersResponse = {
+  ok: true;
+  items: RetailPosBackofficeSupplier[];
+};
+
+export type CreateRetailPosBackofficeSupplierRequest = {
+  name: string;
+};
+
+export type CreateRetailPosBackofficeSupplierResponse = {
+  ok: true;
+  supplier: RetailPosBackofficeSupplier;
+  created: boolean;
+};
+
 export type CreateRetailPosOrderLineInput = {
   line_number: number;
   product_id: string;
@@ -363,6 +488,13 @@ export type CreateRetailPosOrderLineInput = {
   quantity: RetailPosQuantityString;
   unit_price_cents: number;
   discount_cents: number;
+  product_name?: string | null;
+  variant_name?: string | null;
+  sku?: string | null;
+  barcode?: string | null;
+  sales_unit_code?: string | null;
+  sales_unit_label?: string | null;
+  allow_decimal_quantity?: boolean | null;
 };
 
 export type CreateRetailPosOrderRequest = {

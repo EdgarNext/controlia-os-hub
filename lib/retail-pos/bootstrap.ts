@@ -68,7 +68,11 @@ function timingSafeSecretEquals(expectedHash: string, computedHash: string) {
 function assertSupportedDeviceRole(
   deviceRole: string,
 ): asserts deviceRole is RetailPosDeviceRole {
-  if (deviceRole !== "order_station" && deviceRole !== "cashier_station") {
+  if (
+    deviceRole !== "order_station" &&
+    deviceRole !== "cashier_station" &&
+    deviceRole !== "backoffice_station"
+  ) {
     throw new RetailPosRuntimeError(403, "POS device role is not supported for retail_pos bootstrap.");
   }
 }
@@ -84,6 +88,10 @@ function buildCapabilities(deviceRole: RetailPosDeviceRole): RetailPosCapability
       "payments.collect",
       "tickets.print.payment",
     ];
+  }
+
+  if (deviceRole === "backoffice_station") {
+    return ["catalog.read"];
   }
 
   return [
