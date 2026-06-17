@@ -506,6 +506,8 @@ export type CateringPlanOperationalSummary = {
   received_total_cost: number;
   consumed_total_cost: number;
   waste_total_cost: number;
+  estimated_shortage_cost: number;
+  operational_status_label: string;
   variance_received_vs_required: number;
   variance_consumed_vs_received: number;
 };

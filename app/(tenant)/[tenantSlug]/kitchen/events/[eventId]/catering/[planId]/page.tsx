@@ -194,10 +194,13 @@ async function PlanOperationalSummarySection({
           <KitchenMetricCard label="Recibido" value={`$${Number(operationalSummary.received_total_cost).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2})}`} />
           <KitchenMetricCard label="Consumido" value={`$${Number(operationalSummary.consumed_total_cost).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2})}`} />
           <KitchenMetricCard label="Merma" value={`$${Number(operationalSummary.waste_total_cost).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2})}`} />
-          <KitchenMetricCard label="Faltantes" value={operationalSummary.shortage_count} tone={Number(operationalSummary.shortage_count) > 0 ? "warning" : "default"} />
-          <KitchenMetricCard label="Var. recibido vs requerido" value={Number(operationalSummary.variance_received_vs_required).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})} />
-          <KitchenMetricCard label="Var. consumido vs recibido" value={Number(operationalSummary.variance_consumed_vs_received).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})} />
+          <KitchenMetricCard label="Insumos con faltante" value={operationalSummary.shortage_count} tone={Number(operationalSummary.shortage_count) > 0 ? "warning" : "default"} />
+          <KitchenMetricCard label="Costo faltante estimado" value={`$${Number(operationalSummary.estimated_shortage_cost).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2})}`} tone={Number(operationalSummary.estimated_shortage_cost) > 0 ? "warning" : "default"} />
+          <KitchenMetricCard label="Estado operativo" value={operationalSummary.operational_status_label} tone={operationalSummary.operational_status_label === "En planeación" || operationalSummary.operational_status_label === "Consumo registrado" || operationalSummary.operational_status_label === "Listo para consumo" ? "default" : "warning"} />
         </div>
+        <p className="mt-3 text-xs text-muted">
+          Las diferencias de cantidades se muestran por insumo y unidad para evitar mezclar kg, litros y piezas.
+        </p>
       </section>
     </>
   );
@@ -485,34 +488,49 @@ async function PlanItemFlowSection({
             <thead>
               <tr className="text-left text-muted">
                 <th className="px-2 py-1">Insumo</th>
+                <th className="px-2 py-1">Unidad</th>
                 <th className="px-2 py-1">Requerido</th>
                 <th className="px-2 py-1">Faltante</th>
                 <th className="px-2 py-1">Pedido</th>
                 <th className="px-2 py-1">Recibido</th>
                 <th className="px-2 py-1">Consumido</th>
                 <th className="px-2 py-1">Merma</th>
+                <th className="px-2 py-1">Pendiente recibir</th>
+                <th className="px-2 py-1">Pendiente consumir</th>
                 <th className="px-2 py-1">Sobrante</th>
+                <th className="px-2 py-1">Costo requerido</th>
                 <th className="px-2 py-1">Balance actual</th>
                 <th className="px-2 py-1">Estado</th>
               </tr>
             </thead>
             <tbody>
-              {itemFlow.map((row) => (
-                <tr key={`${row.item_id}:${row.unit_id}`} className="border-t border-border transition-colors hover:bg-surface-2/50">
-                  <td className="px-2 py-1 text-foreground">{row.item_name ?? row.item_id.slice(0, 8)} ({row.unit_code ?? "ud"})</td>
-                  <td className="px-2 py-1 text-foreground">{row.required_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
-                  <td className="px-2 py-1 text-warning">{row.shortage_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
-                  <td className="px-2 py-1 text-foreground">{row.requisition_requested_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
-                  <td className="px-2 py-1 text-foreground">{row.received_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
-                  <td className="px-2 py-1 text-foreground">{row.consumed_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
-                  <td className="px-2 py-1 text-warning">{row.waste_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
-                  <td className="px-2 py-1 text-foreground">{row.leftover_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
-                  <td className="px-2 py-1 text-muted">{row.current_balance.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
-                  <td className="px-2 py-1 text-muted"><KitchenStatusBadge status={row.status} /></td>
-                </tr>
-              ))}
+              {itemFlow.map((row) => {
+                const pendingReceive = Math.max(row.required_quantity - row.received_quantity, 0);
+                const pendingConsume = Math.max(row.received_quantity - (row.consumed_quantity + row.waste_quantity), 0);
+                return (
+                  <tr key={`${row.item_id}:${row.unit_id}`} className="border-t border-border transition-colors hover:bg-surface-2/50">
+                    <td className="px-2 py-1 text-foreground">{row.item_name ?? row.item_id.slice(0, 8)}</td>
+                    <td className="px-2 py-1 text-muted">{row.unit_code ?? "ud"}</td>
+                    <td className="px-2 py-1 text-foreground">{row.required_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-warning">{row.shortage_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-foreground">{row.requisition_requested_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-foreground">{row.received_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-foreground">{row.consumed_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-warning">{row.waste_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-warning">{pendingReceive.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-foreground">{pendingConsume.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-foreground">{row.leftover_quantity.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-foreground">${row.estimated_required_cost.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                    <td className="px-2 py-1 text-muted">{row.current_balance.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+                    <td className="px-2 py-1 text-muted"><KitchenStatusBadge status={row.status} /></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          <p className="mt-2 text-xs text-muted">
+            Las diferencias y pendientes se muestran por insumo y unidad. No se agregan kg, litros y piezas en una sola cifra.
+          </p>
         </div>
       )}
     </section>

@@ -1,6 +1,8 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { listKitchenRecipeLines, getKitchenRecipeVersionById } from "./queries";
 import type { KitchenRecipeCostResult, KitchenRecipeCostWarning } from "./types";
+import { classifyKitchenRecipeUnitCost } from "./cost-classification";
+import { loadKitchenRecipeItemCostSupport } from "./costing-support";
 
 type ConversionMap = Map<string, number>;
 
@@ -18,6 +20,33 @@ async function loadConversionMap(tenantId: string): Promise<ConversionMap> {
     map.set(`${row.from_unit_id}:${row.to_unit_id}`, Number(row.factor));
   }
   return map;
+}
+
+function formatRecipeContext(recipeName: string | null | undefined): string {
+  return recipeName ? ` en la receta ${recipeName}` : "";
+}
+
+function buildMissingCostMessage(input: {
+  itemName: string;
+  recipeName?: string | null;
+  reason: "missing_current_cost" | "undocumented_zero_cost" | "negative_cost";
+  hasActivePurchaseOption: boolean;
+  hasCurrentSupplierPrice: boolean;
+}): string {
+  const recipeContext = formatRecipeContext(input.recipeName);
+
+  if (input.reason === "undocumented_zero_cost") {
+    return `El insumo ${input.itemName}${recipeContext} tiene costo 0 pero no está documentado como zero-cost operativo.`;
+  }
+
+  if (input.reason === "negative_cost") {
+    return `El insumo ${input.itemName}${recipeContext} tiene un costo unitario negativo y debe corregirse.`;
+  }
+
+  const details: string[] = ["falta current_unit_cost"];
+  if (!input.hasActivePurchaseOption) details.push("falta purchase option activa");
+  if (!input.hasCurrentSupplierPrice) details.push("falta supplier price current");
+  return `El insumo ${input.itemName}${recipeContext} no tiene costo unitario vigente: ${details.join("; ")}.`;
 }
 
 function convertQuantity(
@@ -65,8 +94,16 @@ export async function calculateKitchenRecipeVersionCost(
     }
 
     const lines = await listKitchenRecipeLines(tenantId, versionId);
+    const itemCostSupport = await loadKitchenRecipeItemCostSupport(
+      tenantId,
+      lines
+        .filter((line) => line.line_type === "inventory_item")
+        .map((line) => line.item_id ?? "")
+        .filter(Boolean),
+    );
     const warnings: KitchenRecipeCostWarning[] = [];
     const breakdown: KitchenRecipeCostResult["lines"] = [];
+    const recipeName = version.kitchen_recipe_recipes?.name ?? null;
 
     if (lines.length === 0) {
       warnings.push({ type: "empty_recipe", message: "La receta no tiene líneas de ingredientes." });
@@ -77,33 +114,85 @@ export async function calculateKitchenRecipeVersionCost(
     for (const line of lines) {
       const lineUnit = line.kitchen_inventory_units?.code ?? "ud";
       let lineCost = 0;
+      let unitCostApplied: number | null = null;
       let warning: string | undefined;
 
       if (line.line_type === "inventory_item") {
         const item = line.kitchen_inventory_items;
         if (!item) {
-          warnings.push({ type: "missing_cost", lineId: line.id, message: "La línea no tiene insumo asociado." });
+          warnings.push({
+            type: "missing_cost",
+            lineId: line.id,
+            message: `La línea no tiene insumo asociado${formatRecipeContext(recipeName)}.`,
+          });
           warning = "Insumo no disponible";
         } else {
-          const itemCost = Number(item.current_unit_cost ?? 0);
+          const itemCost = item.current_unit_cost == null ? null : Number(item.current_unit_cost);
           const convertedQuantity = convertQuantity(Number(line.quantity), line.unit_id, item.default_unit_id, conversions);
+          const costClassification = classifyKitchenRecipeUnitCost({
+            itemName: item.name,
+            currentUnitCost: item.current_unit_cost,
+          });
+          const costSupport = itemCostSupport.get(item.id) ?? {
+            hasActivePurchaseOption: false,
+            hasCurrentSupplierPrice: false,
+            hasZeroSupplierPrice: false,
+          };
+          const singleLineUnitInDefaultUnit = convertQuantity(1, line.unit_id, item.default_unit_id, conversions);
 
           if (convertedQuantity == null) {
             warnings.push({
               type: "missing_conversion",
               lineId: line.id,
-              message: `No hay conversión de unidad para ${item.name}.`,
+              message: `No hay conversión de unidad para ${item.name}${formatRecipeContext(recipeName)}.`,
             });
             warning = "Falta conversión de unidad";
-          } else if (itemCost <= 0) {
+          } else if (costClassification === "missing_current_cost") {
             warnings.push({
               type: "missing_cost",
               lineId: line.id,
-              message: `El insumo ${item.name} no tiene costo unitario vigente.`,
+              message: buildMissingCostMessage({
+                itemName: item.name,
+                recipeName,
+                reason: "missing_current_cost",
+                hasActivePurchaseOption: costSupport.hasActivePurchaseOption,
+                hasCurrentSupplierPrice: costSupport.hasCurrentSupplierPrice,
+              }),
             });
             warning = "Sin costo unitario";
+          } else if (costClassification === "negative_cost") {
+            warnings.push({
+              type: "missing_cost",
+              lineId: line.id,
+              message: buildMissingCostMessage({
+                itemName: item.name,
+                recipeName,
+                reason: "negative_cost",
+                hasActivePurchaseOption: costSupport.hasActivePurchaseOption,
+                hasCurrentSupplierPrice: costSupport.hasCurrentSupplierPrice,
+              }),
+            });
+            warning = "Costo unitario inválido";
+          } else if (costClassification === "undocumented_zero_cost") {
+            warnings.push({
+              type: "missing_cost",
+              lineId: line.id,
+              message: buildMissingCostMessage({
+                itemName: item.name,
+                recipeName,
+                reason: "undocumented_zero_cost",
+                hasActivePurchaseOption: costSupport.hasActivePurchaseOption,
+                hasCurrentSupplierPrice: costSupport.hasCurrentSupplierPrice,
+              }),
+            });
+            warning = "Costo 0 sin documentación";
+          } else if (costClassification === "documented_zero_cost") {
+            lineCost = 0;
+            unitCostApplied = singleLineUnitInDefaultUnit == null ? null : 0;
           } else {
-            lineCost = convertedQuantity * itemCost * (1 + Number(line.waste_percent) / 100);
+            lineCost = convertedQuantity * Number(itemCost) * (1 + Number(line.waste_percent) / 100);
+            unitCostApplied =
+              singleLineUnitInDefaultUnit == null || itemCost == null ? null : singleLineUnitInDefaultUnit * Number(itemCost);
           }
         }
       }
@@ -134,6 +223,10 @@ export async function calculateKitchenRecipeVersionCost(
               warning = "Falta conversión de sub-receta";
             } else {
               lineCost = convertedQuantity * subCostPerYield * (1 + Number(line.waste_percent) / 100);
+              const singleLineUnitInYieldUnit = subVersion.yield_unit_id
+                ? convertQuantity(1, line.unit_id, subVersion.yield_unit_id, conversions)
+                : 1;
+              unitCostApplied = singleLineUnitInYieldUnit == null ? null : singleLineUnitInYieldUnit * subCostPerYield;
             }
           }
         }
@@ -150,6 +243,8 @@ export async function calculateKitchenRecipeVersionCost(
         quantity: Number(line.quantity),
         unitCode: lineUnit,
         lineCost,
+        unitCostApplied,
+        unitCostUnitCode: lineUnit,
         warning,
       });
     }

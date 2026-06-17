@@ -1711,7 +1711,7 @@ export async function getCateringPlanOperationalSummary(
   const [plan, recipes, requirements, requisitions, receipts, consumptionRecords, consumptionLines] = await Promise.all([
     supabase.from("event_catering_plans").select("id,event_id,status,estimated_total_cost").eq("tenant_id", tenant.tenantId).eq("id", planId).maybeSingle(),
     supabase.from("event_catering_plan_recipes").select("id").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
-    supabase.from("event_catering_requirements").select("required_quantity,shortage_quantity").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
+    supabase.from("event_catering_requirements").select("required_quantity,shortage_quantity,estimated_unit_cost").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
     supabase.from("event_catering_requisitions").select("id,status,estimated_total_cost").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
     supabase
       .from("event_catering_purchase_receipts")
@@ -1756,6 +1756,29 @@ export async function getCateringPlanOperationalSummary(
   const totalReceivedQty = 0;
   const totalConsumedQty = consumptionLineRows.reduce((acc, row) => acc + Number(row.consumed_quantity ?? 0), 0);
   const totalWasteQty = consumptionLineRows.reduce((acc, row) => acc + Number(row.waste_quantity ?? 0), 0);
+  const shortageCount = requirementRows.filter((row) => Number(row.shortage_quantity ?? 0) > 0).length;
+  const estimatedShortageCost = requirementRows.reduce((acc, row) => {
+    const shortage = Number(row.shortage_quantity ?? 0);
+    const unitCost = Number((row as { estimated_unit_cost?: number | null }).estimated_unit_cost ?? 0);
+    return acc + shortage * unitCost;
+  }, 0);
+  const approvedRequisitionCount = requisitionRows.filter((row) => row.status === "approved").length;
+  const draftRequisitionCount = requisitionRows.filter((row) => row.status === "draft").length;
+  const receivedReceiptCount = receivedReceiptRows.length;
+  const draftReceiptCount = receiptRows.filter((row) => row.status === "draft").length;
+  const confirmedConsumptionCount = consumptionRows.filter((row) => row.status === "confirmed").length;
+
+  const operationalStatusLabel = (() => {
+    if (confirmedConsumptionCount > 0) return "Consumo registrado";
+    if (receivedReceiptCount > 0 && shortageCount <= 0) return "Listo para consumo";
+    if (receivedReceiptCount > 0 && shortageCount > 0) return "Recepción pendiente";
+    if (approvedRequisitionCount > 0) return "Recepción pendiente";
+    if (draftReceiptCount > 0) return "Recepción pendiente";
+    if (draftRequisitionCount > 0) return "Requisición en borrador";
+    if (shortageCount > 0) return "Pendiente de requisición";
+    if (requirementRows.length > 0) return "En planeación";
+    return "En planeación";
+  })();
 
   return {
     plan_id: plan.data.id,
@@ -1765,15 +1788,15 @@ export async function getCateringPlanOperationalSummary(
     plan_status: plan.data.status,
     recipe_count: (recipes.data ?? []).length,
     requirement_count: requirementRows.length,
-    shortage_count: requirementRows.filter((row) => Number(row.shortage_quantity ?? 0) > 0).length,
+    shortage_count: shortageCount,
     requisition_count: requisitionRows.length,
-    approved_requisition_count: requisitionRows.filter((row) => row.status === "approved").length,
+    approved_requisition_count: approvedRequisitionCount,
     receipt_count: receiptRows.length,
-    draft_receipt_count: receiptRows.filter((row) => row.status === "draft").length,
-    received_receipt_count: receivedReceiptRows.length,
+    draft_receipt_count: draftReceiptCount,
+    received_receipt_count: receivedReceiptCount,
     canceled_receipt_count: receiptRows.filter((row) => row.status === "canceled").length,
     consumption_count: consumptionRows.length,
-    confirmed_consumption_count: consumptionRows.filter((row) => row.status === "confirmed").length,
+    confirmed_consumption_count: confirmedConsumptionCount,
     estimated_plan_cost: Number(plan.data.estimated_total_cost ?? 0),
     requisition_total: requisitionRows.reduce((acc, row) => acc + Number(row.estimated_total_cost ?? 0), 0),
     received_total_cost: receivedReceiptRows.reduce((acc, row) => acc + Number(row.total_received_cost ?? 0), 0),
@@ -1785,6 +1808,8 @@ export async function getCateringPlanOperationalSummary(
       (acc, row) => acc + Number(row.waste_quantity ?? 0) * Number(row.unit_cost ?? 0),
       0,
     ),
+    estimated_shortage_cost: Number(estimatedShortageCost.toFixed(4)),
+    operational_status_label: operationalStatusLabel,
     variance_received_vs_required: Number((totalReceivedQty - totalRequired).toFixed(4)),
     variance_consumed_vs_received: Number((totalConsumedQty + totalWasteQty - totalReceivedQty).toFixed(4)),
   };

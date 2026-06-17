@@ -29,6 +29,7 @@ export type KitchenRecipeVersion = {
   updated_at: string;
   activated_at: string | null;
   kitchen_inventory_units?: { id: string; code: string; name: string } | null;
+  kitchen_recipe_recipes?: { id: string; name: string } | null;
 };
 
 export type KitchenRecipeLine = {
@@ -61,6 +62,8 @@ export type KitchenRecipeCostBreakdownLine = {
   quantity: number;
   unitCode: string;
   lineCost: number;
+  unitCostApplied: number | null;
+  unitCostUnitCode: string | null;
   warning?: string;
 };
 

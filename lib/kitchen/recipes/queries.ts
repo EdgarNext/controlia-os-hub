@@ -47,7 +47,7 @@ export async function getKitchenRecipeVersionById(tenantId: string, versionId: s
   const supabase = await getSupabaseServerClient();
   const { data, error } = await supabase
     .from("kitchen_recipe_versions")
-    .select("id, tenant_id, recipe_id, version_number, status, yield_quantity, yield_unit_id, servings, instructions, notes, created_at, updated_at, activated_at, kitchen_inventory_units:kitchen_inventory_units!kitchen_recipe_versions_yield_unit_id_fkey(id, code, name)")
+    .select("id, tenant_id, recipe_id, version_number, status, yield_quantity, yield_unit_id, servings, instructions, notes, created_at, updated_at, activated_at, kitchen_inventory_units:kitchen_inventory_units!kitchen_recipe_versions_yield_unit_id_fkey(id, code, name), kitchen_recipe_recipes:kitchen_recipe_recipes!kitchen_recipe_versions_tenant_recipe_fkey(id, name)")
     .eq("tenant_id", tenantId)
     .eq("id", versionId)
     .maybeSingle();
@@ -59,6 +59,9 @@ export async function getKitchenRecipeVersionById(tenantId: string, versionId: s
     kitchen_inventory_units: Array.isArray(row.kitchen_inventory_units)
       ? ((row.kitchen_inventory_units[0] ?? null) as KitchenRecipeVersion["kitchen_inventory_units"])
       : ((row.kitchen_inventory_units ?? null) as KitchenRecipeVersion["kitchen_inventory_units"]),
+    kitchen_recipe_recipes: Array.isArray(row.kitchen_recipe_recipes)
+      ? ((row.kitchen_recipe_recipes[0] ?? null) as KitchenRecipeVersion["kitchen_recipe_recipes"])
+      : ((row.kitchen_recipe_recipes ?? null) as KitchenRecipeVersion["kitchen_recipe_recipes"]),
   };
 }
 
@@ -208,4 +211,25 @@ export async function listKitchenRecipeLatestSnapshotsByRecipeIds(
     .order("created_at", { ascending: false });
   if (error) throw new Error(`No fue posible listar snapshots de costo por receta: ${error.message}`);
   return data ?? [];
+}
+
+export async function getKitchenRecipeUsageCountAsSubRecipe(tenantId: string, recipeId: string): Promise<number> {
+  const supabase = await getSupabaseServerClient();
+  const { data: versions, error: versionsError } = await supabase
+    .from("kitchen_recipe_versions")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("recipe_id", recipeId);
+  if (versionsError) throw new Error(`No fue posible cargar versiones para tipo de receta: ${versionsError.message}`);
+
+  const versionIds = (versions ?? []).map((version) => version.id);
+  if (versionIds.length === 0) return 0;
+
+  const { count, error } = await supabase
+    .from("kitchen_recipe_lines")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .in("sub_recipe_version_id", versionIds);
+  if (error) throw new Error(`No fue posible inferir uso como sub-receta: ${error.message}`);
+  return Number(count ?? 0);
 }

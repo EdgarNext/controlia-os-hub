@@ -32,7 +32,9 @@ function classifyReadiness(input: {
   if (input.pendingCount > 0) {
     return { readiness_status: "pending_ingredients", readiness_reason: "Tiene ingredientes pendientes de capturar" };
   }
-  if ((input.totalCost ?? 0) <= 0) return { readiness_status: "missing_cost", readiness_reason: "Sin costo calculable" };
+  if (input.totalCost == null || Number.isNaN(Number(input.totalCost))) {
+    return { readiness_status: "missing_cost", readiness_reason: "Sin costo calculable" };
+  }
   if (input.warningCount > 0) return { readiness_status: "costing_warnings", readiness_reason: "Tiene warnings de costeo" };
   return { readiness_status: "ready", readiness_reason: "Lista para eventos" };
 }

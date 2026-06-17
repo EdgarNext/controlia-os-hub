@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { SelectField } from "@/components/ui/select-field";
-import { formatKitchenUnitOptionLabel } from "@/lib/kitchen/formatters";
+import { formatKitchenUnit, formatKitchenUnitOptionLabel } from "@/lib/kitchen/formatters";
 import {
   activateKitchenRecipeVersionAction,
   addKitchenRecipeLineAction,
@@ -269,33 +269,37 @@ export function SaveKitchenRecipeSnapshotForm({
 export function RecipeLineList({
   tenantSlug,
   recipeId,
-  baseServings,
+  baseYieldQuantity,
   quantityPerUnitLabel,
   versionStatus,
   canManage,
   lines,
   units,
+  costLinesById,
 }: {
   tenantSlug: string;
   recipeId: string;
-  baseServings: number;
+  baseYieldQuantity: number;
   quantityPerUnitLabel: string;
   versionStatus: KitchenRecipeVersion["status"];
   canManage: boolean;
   lines: KitchenRecipeLine[];
   units: KitchenInventoryUnit[];
+  costLinesById: Map<string, { unitCostApplied: number | null; unitCostUnitCode: string | null; lineCost: number; warning?: string }>;
 }) {
-  const canEditLines = canManage && versionStatus === "draft" && baseServings > 0;
+  const canEditLines = canManage && versionStatus === "draft" && baseYieldQuantity > 0;
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[860px] text-left text-sm">
+      <table className="w-full min-w-[1080px] text-left text-sm">
         <thead className="text-xs uppercase tracking-[0.08em] text-muted">
           <tr>
             <th className="py-2">Tipo</th>
             <th className="py-2">Nombre</th>
             <th className="py-2">{quantityPerUnitLabel}</th>
             <th className="py-2">Unidad</th>
+            <th className="py-2">Costo unitario aplicado</th>
+            <th className="py-2">Costo en receta</th>
             <th className="py-2">Merma</th>
             <th className="py-2">Acciones</th>
           </tr>
@@ -303,13 +307,36 @@ export function RecipeLineList({
         <tbody>
           {lines.map((line) => {
             const totalQuantity = Number(line.quantity);
-            const perUnitQuantity = baseServings > 0 ? totalQuantity / baseServings : totalQuantity;
+            const perUnitQuantity = baseYieldQuantity > 0 ? totalQuantity / baseYieldQuantity : totalQuantity;
+            const costLine = costLinesById.get(line.id);
+            const appliedUnitCost = costLine?.unitCostApplied;
+            const appliedUnitCode = costLine?.unitCostUnitCode;
+            const costWarning = costLine?.warning;
             return (
               <tr key={line.id} className="border-t border-border align-top">
                 <td className="py-2">{line.line_type === "inventory_item" ? "Insumo" : "Sub-receta"}</td>
                 <td className="py-2">{line.line_type === "inventory_item" ? (line.kitchen_inventory_items?.name ?? "Insumo") : (line.sub_recipe_version?.kitchen_recipe_recipes?.name ?? "Sub-receta")}</td>
                 <td className="py-2">{Number(perUnitQuantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
                 <td className="py-2">{(line.kitchen_inventory_units?.code ?? "ud").toLowerCase()}</td>
+                <td className="py-2">
+                  {costWarning ? (
+                    <span className="text-warning">{costWarning === "Falta conversión de unidad" || costWarning === "Falta conversión de sub-receta" ? "Falta conversión/costo" : "No calculable"}</span>
+                  ) : appliedUnitCost == null ? (
+                    <span className="text-muted">No calculable</span>
+                  ) : (
+                    `$${appliedUnitCost.toLocaleString("es-MX", {
+                      minimumFractionDigits: appliedUnitCost === 0 ? 2 : 2,
+                      maximumFractionDigits: appliedUnitCost !== 0 && Math.abs(appliedUnitCost) < 0.01 ? 6 : 4,
+                    })}/${formatKitchenUnit(appliedUnitCode)}`
+                  )}
+                </td>
+                <td className="py-2">
+                  {costWarning ? (
+                    <span className="text-warning">{costWarning === "Falta conversión de unidad" || costWarning === "Falta conversión de sub-receta" ? "Falta conversión/costo" : "No calculable"}</span>
+                  ) : (
+                    `$${Number(costLine?.lineCost ?? 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+                  )}
+                </td>
                 <td className="py-2">{Number(line.waste_percent).toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%</td>
                 <td className="py-2 space-y-2">
                   {canEditLines ? (

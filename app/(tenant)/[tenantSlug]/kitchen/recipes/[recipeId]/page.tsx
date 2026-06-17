@@ -4,6 +4,7 @@ import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/
 import { calculateKitchenRecipeVersionCost } from "@/lib/kitchen/recipes/costing";
 import {
   getKitchenRecipe,
+  getKitchenRecipeUsageCountAsSubRecipe,
   listKitchenRecipeVersions,
   listKitchenRecipeIngredientItems,
   listKitchenRecipeLines,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/kitchen/recipes/queries";
 import { getKitchenRecipeReadiness } from "@/lib/kitchen/recipes/readiness";
 import { listPendingImportRowsForRecipe } from "@/lib/kitchen/recipes/import-queries";
+import { formatKitchenUnit, formatQuantityWithUnit } from "@/lib/kitchen/formatters";
 import {
   ActivateKitchenRecipeVersionForm,
   AddKitchenRecipeLineForm,
@@ -58,6 +60,7 @@ export default async function KitchenRecipeDetailPage({ params }: KitchenRecipeD
   const unitsPromise = listKitchenRecipeUnits(result.tenant.tenantId);
   const subRecipesPromise = listKitchenSubRecipeCandidates(result.tenant.tenantId, recipe.id);
   const costResultPromise = calculateKitchenRecipeVersionCost(result.tenant.tenantId, version.id);
+  const usageCountPromise = getKitchenRecipeUsageCountAsSubRecipe(result.tenant.tenantId, recipe.id);
   const pendingImportRowsPromise = listPendingImportRowsForRecipe(result.tenant.tenantId, recipe.id);
   const readinessPromise = getKitchenRecipeReadiness(result.tenant.tenantId, recipe.id);
 
@@ -76,7 +79,11 @@ export default async function KitchenRecipeDetailPage({ params }: KitchenRecipeD
           versionStatus={version.status}
           canManage={canManage}
           costResultPromise={costResultPromise}
+          usageCountPromise={usageCountPromise}
           readinessPromise={readinessPromise}
+          yieldQuantity={Number(version.yield_quantity ?? 0)}
+          yieldUnitCode={version.kitchen_inventory_units?.code?.toLowerCase() ?? null}
+          servings={Number(version.servings ?? 0)}
         />
       </Suspense>
 
@@ -97,10 +104,12 @@ export default async function KitchenRecipeDetailPage({ params }: KitchenRecipeD
           recipeId={recipe.id}
           canManage={canManage}
           versionStatus={version.status}
-          baseServings={Number(version.servings ?? 0)}
+          baseYieldQuantity={Number(version.yield_quantity ?? 0)}
           yieldUnitCode={version.kitchen_inventory_units?.code?.toLowerCase() ?? null}
           linesPromise={linesPromise}
+          costResultPromise={costResultPromise}
           unitsPromise={unitsPromise}
+          servings={Number(version.servings ?? 0)}
         />
       </Suspense>
 
@@ -126,7 +135,11 @@ async function RecipeOverviewSection({
   versionStatus,
   canManage,
   costResultPromise,
+  usageCountPromise,
   readinessPromise,
+  yieldQuantity,
+  yieldUnitCode,
+  servings,
 }: {
   tenantSlug: string;
   recipeId: string;
@@ -134,10 +147,17 @@ async function RecipeOverviewSection({
   versionStatus: "draft" | "active" | "archived";
   canManage: boolean;
   costResultPromise: ReturnType<typeof calculateKitchenRecipeVersionCost>;
+  usageCountPromise: ReturnType<typeof getKitchenRecipeUsageCountAsSubRecipe>;
   readinessPromise: ReturnType<typeof getKitchenRecipeReadiness>;
+  yieldQuantity: number;
+  yieldUnitCode: string | null;
+  servings: number;
 }) {
-  const [costResult, readiness] = await Promise.all([costResultPromise, readinessPromise]);
+  const [costResult, readiness, usageCount] = await Promise.all([costResultPromise, readinessPromise, usageCountPromise]);
   const isReady = readiness?.readiness_status === "ready";
+  const basis = buildRecipeCostPresentation({ yieldQuantity, yieldUnitCode, servings, costResult });
+  const recipeTypeLabel = usageCount > 0 ? "Sub-receta / preparación interna" : "Receta final";
+  const statusLabel = costResult.warnings.length > 0 ? "Con problemas" : "Completo";
 
   return (
     <>
@@ -146,28 +166,27 @@ async function RecipeOverviewSection({
           <span className={`inline-flex rounded-full px-2 py-0.5 text-xs ${isReady ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
             {isReady ? "Lista para eventos" : "Pendiente de completar"}
           </span>
+          <span className="inline-flex rounded-full bg-surface-2 px-2 py-0.5 text-xs text-foreground">{recipeTypeLabel}</span>
           <span className="text-xs text-muted">{readiness?.readiness_reason ?? "Sin estado de readiness"}</span>
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-            <p className="text-xs text-muted">Costo del rendimiento base</p>
+            <p className="text-xs text-muted">{basis.primaryCostLabel}</p>
             <p className="text-lg font-semibold text-foreground">
-              ${costResult.totalCost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              ${basis.primaryCostValue.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
           </div>
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-            <p className="text-xs text-muted">Costo por unidad de rendimiento</p>
-            <p className="text-lg font-semibold text-foreground">
-              {costResult.costPerServing == null
-                ? "—"
-                : `$${costResult.costPerServing.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-            </p>
+            <p className="text-xs text-muted">{basis.secondaryLabel}</p>
+            <p className="text-lg font-semibold text-foreground">{basis.secondaryValue}</p>
           </div>
           <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-            <p className="text-xs text-muted">Warnings de costeo</p>
-            <p className="text-lg font-semibold text-foreground">{costResult.warnings.length}</p>
+            <p className="text-xs text-muted">Estado de costeo</p>
+            <p className={`text-lg font-semibold ${costResult.warnings.length > 0 ? "text-warning" : "text-success"}`}>{statusLabel}</p>
+            <p className="mt-1 text-xs text-muted">{basis.baseCalculationText}</p>
           </div>
         </div>
+        {usageCount > 0 ? <p className="mt-2 text-xs text-muted">Tipo inferido por uso real como sub-receta en otras recetas.</p> : null}
 
         {canManage ? (
           <div className="mt-3 flex flex-wrap gap-2">
@@ -260,39 +279,38 @@ async function RecipeLinesSection({
   recipeId,
   canManage,
   versionStatus,
-  baseServings,
+  baseYieldQuantity,
   yieldUnitCode,
   linesPromise,
+  costResultPromise,
   unitsPromise,
+  servings,
 }: {
   tenantSlug: string;
   recipeId: string;
   canManage: boolean;
   versionStatus: string;
-  baseServings: number;
+  baseYieldQuantity: number;
   yieldUnitCode: string | null;
   linesPromise: ReturnType<typeof listKitchenRecipeLines>;
+  costResultPromise: ReturnType<typeof calculateKitchenRecipeVersionCost>;
   unitsPromise: ReturnType<typeof listKitchenRecipeUnits>;
+  servings: number;
 }) {
-  const [lines, units] = await Promise.all([linesPromise, unitsPromise]);
+  const [lines, units, costResult] = await Promise.all([linesPromise, unitsPromise, costResultPromise]);
 
   if (lines.length === 0) {
     return <StatePanel kind="empty" title="Sin ingredientes" message="Agrega líneas de insumos o sub-recetas para costear esta receta." />;
   }
 
-  const quantityPerUnitLabel = (() => {
-    if (yieldUnitCode?.includes("charol")) return "Cantidad por charola";
-    if (yieldUnitCode === "l" || yieldUnitCode === "ml") return "Cantidad por litro";
-    if (yieldUnitCode === "pza") return "Cantidad por pieza";
-    if (baseServings > 0) return "Cantidad por persona";
-    return "Cantidad por unidad de rendimiento";
-  })();
+  const basis = buildRecipeCostPresentation({ yieldQuantity: baseYieldQuantity, yieldUnitCode, servings });
+  const costLinesById = new Map(costResult.lines.map((line) => [line.lineId, line]));
 
   return (
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
       <h2 className="text-sm font-semibold text-foreground">Ingredientes y sub-recetas</h2>
       <p className="mt-1 text-xs text-muted">
-        La receta se edita por unidad mínima de rendimiento. Internamente se guarda cantidad total para el rendimiento base.
+        Las cantidades se muestran por la base de cálculo de esta receta. Ejemplo: por litro, por porción, por charola o por pieza.
       </p>
       <div className="mt-2">
         <RecipeLineList
@@ -300,10 +318,11 @@ async function RecipeLinesSection({
           recipeId={recipeId}
           canManage={canManage}
           lines={lines}
-          baseServings={baseServings}
-          quantityPerUnitLabel={quantityPerUnitLabel}
+          baseYieldQuantity={baseYieldQuantity}
+          quantityPerUnitLabel={basis.quantityPerUnitLabel}
           versionStatus={versionStatus as "draft" | "active" | "archived"}
           units={units}
+          costLinesById={costLinesById}
         />
       </div>
     </section>
@@ -352,4 +371,72 @@ function RecipeOverviewFallback({ canManage }: { canManage: boolean }) {
       {canManage ? <KitchenActionRowSkeleton actions={3} /> : null}
     </div>
   );
+}
+
+function buildRecipeCostPresentation({
+  yieldQuantity,
+  yieldUnitCode,
+  servings,
+  costResult,
+}: {
+  yieldQuantity: number;
+  yieldUnitCode: string | null;
+  servings: number;
+  costResult?: Awaited<ReturnType<typeof calculateKitchenRecipeVersionCost>>;
+}) {
+  const normalizedUnitCode = yieldUnitCode?.toLowerCase() ?? null;
+  const hasUnit = Boolean(normalizedUnitCode);
+  const hasServings = Number.isFinite(servings) && servings > 0;
+  const isServingBased = !hasUnit && hasServings;
+  const basisQuantity = isServingBased ? servings : yieldQuantity;
+  const isSingleUnit = Number.isFinite(basisQuantity) && Math.abs(basisQuantity - 1) < 0.0001;
+  const noun = resolveRecipeBasisNoun(normalizedUnitCode, servings);
+  const formattedBasisText = hasUnit
+    ? formatQuantityWithUnit(yieldQuantity, normalizedUnitCode, 4)
+    : hasServings
+      ? `${servings.toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${servings === 1 ? "porción" : "porciones"}`
+      : "Lote";
+
+  return {
+    primaryCostLabel: hasUnit
+      ? (isSingleUnit ? `Costo por ${noun}` : `Costo para ${formattedBasisText}`)
+      : isServingBased
+        ? (isSingleUnit ? "Costo por porción" : `Costo para ${formattedBasisText}`)
+      : "Costo del lote",
+    secondaryLabel: isSingleUnit ? "Base de cálculo" : hasUnit ? `Costo por ${noun}` : isServingBased ? "Costo por porción" : "Base de cálculo",
+    secondaryValue: isSingleUnit
+      ? formattedBasisText
+      : hasUnit
+        ? (costResult?.costPerYieldUnit == null
+            ? "—"
+            : `$${costResult.costPerYieldUnit.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+        : isServingBased
+          ? (costResult?.costPerServing == null
+              ? "—"
+              : `$${costResult.costPerServing.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+        : formattedBasisText,
+    quantityPerUnitLabel: hasUnit
+      ? `Cantidad por ${noun}`
+      : hasServings
+        ? "Cantidad por porción"
+        : "Cantidad por unidad de rendimiento",
+    baseCalculationText: `Base de cálculo: ${formattedBasisText}`,
+    noun,
+    primaryCostValue:
+      isSingleUnit && hasUnit && costResult?.costPerYieldUnit != null
+        ? costResult.costPerYieldUnit
+        : isSingleUnit && isServingBased && costResult?.costPerServing != null
+          ? costResult.costPerServing
+          : (costResult?.totalCost ?? 0),
+  };
+}
+
+function resolveRecipeBasisNoun(yieldUnitCode: string | null, servings: number): string {
+  if (yieldUnitCode?.includes("charol")) return "charola";
+  if (yieldUnitCode === "l") return "litro";
+  if (yieldUnitCode === "ml") return "ml";
+  if (yieldUnitCode === "pza") return "pieza";
+  if (yieldUnitCode) return formatKitchenUnit(yieldUnitCode);
+  if (servings > 0) return "porción";
+  return "lote";
 }

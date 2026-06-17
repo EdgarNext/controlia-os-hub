@@ -191,7 +191,7 @@ export async function updateKitchenRecipeLineAction(
 
     const { data: version, error: versionError } = await supabase
       .from("kitchen_recipe_versions")
-      .select("id,status,servings")
+      .select("id,status,yield_quantity")
       .eq("tenant_id", tenant.tenantId)
       .eq("id", line.recipe_version_id)
       .maybeSingle();
@@ -201,12 +201,12 @@ export async function updateKitchenRecipeLineAction(
       return { ok: false, message: "Solo se pueden editar líneas en versión draft." };
     }
 
-    const baseServings = Number(version.servings ?? 0);
-    if (!Number.isFinite(baseServings) || baseServings <= 0) {
-      return { ok: false, message: "La versión no tiene base de rendimiento válida (servings)." };
+    const baseYieldQuantity = Number(version.yield_quantity ?? 0);
+    if (!Number.isFinite(baseYieldQuantity) || baseYieldQuantity <= 0) {
+      return { ok: false, message: "La versión no tiene base de rendimiento válida (yield_quantity)." };
     }
 
-    const storedQuantity = perUnitQuantity * baseServings;
+    const storedQuantity = perUnitQuantity * baseYieldQuantity;
     if (!Number.isFinite(storedQuantity) || storedQuantity < 0) {
       return { ok: false, message: "Cantidad total inválida." };
     }
