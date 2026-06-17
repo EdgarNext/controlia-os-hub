@@ -6,6 +6,13 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { listKitchenRecipeReadiness } from "@/lib/kitchen/recipes/readiness";
 import { toPositiveCateringNumber } from "./normalizers";
 import { calculateCateringRequirements } from "./requirements";
+import {
+  classifyRequisitionLineProcurement,
+  classifyConsumptionLineStockBehavior,
+  isOperationalZeroCostWaterItemName,
+  resolveRequisitionLineEffectiveUnitPrice,
+  resolveRequisitionLineFinancialTotal,
+} from "./procurement-classification";
 
 function toText(value: FormDataEntryValue | null): string {
   return String(value ?? "").trim();
@@ -37,36 +44,6 @@ function toReversalType(value: string): "receipt" | "consumption" {
 function toReversalTargetType(value: string): "receipt_line" | "consumption_line" {
   if (value === "receipt_line" || value === "consumption_line") return value;
   throw new Error("Tipo de target de reversa inválido.");
-}
-
-function resolveLineBestTotal(line: {
-  approved_total_cost?: number | null;
-  quoted_total_cost?: number | null;
-  preliminary_total_cost?: number | null;
-  estimated_total_cost?: number | null;
-}) {
-  const approvedTotal = Number(line.approved_total_cost ?? 0);
-  if (approvedTotal > 0) return approvedTotal;
-  const quotedTotal = Number(line.quoted_total_cost ?? 0);
-  if (quotedTotal > 0) return quotedTotal;
-  const preliminaryTotal = Number(line.preliminary_total_cost ?? 0);
-  if (preliminaryTotal > 0) return preliminaryTotal;
-  return Number(line.estimated_total_cost ?? 0);
-}
-
-function resolveLineBestUnitPrice(line: {
-  approved_unit_price?: number | null;
-  quoted_unit_price?: number | null;
-  preliminary_unit_price?: number | null;
-  estimated_unit_cost?: number | null;
-}) {
-  const approvedUnitPrice = Number(line.approved_unit_price ?? 0);
-  if (approvedUnitPrice > 0) return approvedUnitPrice;
-  const quotedUnitPrice = Number(line.quoted_unit_price ?? 0);
-  if (quotedUnitPrice > 0) return quotedUnitPrice;
-  const preliminaryUnitPrice = Number(line.preliminary_unit_price ?? 0);
-  if (preliminaryUnitPrice > 0) return preliminaryUnitPrice;
-  return Number(line.estimated_unit_cost ?? 0);
 }
 
 function resolveEmbeddedEventId(value: unknown): string | undefined {
@@ -197,7 +174,7 @@ async function recalculateRequisitionTotal(
     .eq("tenant_id", tenantId)
     .eq("requisition_id", requisitionId);
   if (rowsError) throw new Error(`No se pudo recalcular total de requisición: ${rowsError.message}`);
-  const requisitionTotal = round4((rows ?? []).reduce((acc, row) => acc + resolveLineBestTotal(row), 0));
+  const requisitionTotal = round4((rows ?? []).reduce((acc, row) => acc + resolveRequisitionLineFinancialTotal(row), 0));
   const { error: updateReqError } = await supabase
     .from("event_catering_requisitions")
     .update({ estimated_total_cost: requisitionTotal })
@@ -1174,11 +1151,19 @@ export async function generateCateringRequisitionFromShortagesAction(formData: F
   const itemIds = [...new Set(shortages.map((row) => row.item_id))];
   const { data: itemsData, error: itemsError } = await supabase
     .from("kitchen_inventory_items")
-    .select("id,default_supplier_id")
+    .select("id,name,default_supplier_id")
     .eq("tenant_id", tenant.tenantId)
     .in("id", itemIds);
   if (itemsError) throw new Error(`No fue posible cargar proveedores por defecto de insumos: ${itemsError.message}`);
   const supplierByItem = new Map((itemsData ?? []).map((row) => [row.id, row.default_supplier_id]));
+  const itemNameByItem = new Map((itemsData ?? []).map((row) => [row.id, row.name]));
+  const purchasableShortages = shortages.filter((row) => !isOperationalZeroCostWaterItemName(itemNameByItem.get(row.item_id)));
+
+  if (purchasableShortages.length === 0) {
+    revalidateCateringPaths(tenant.tenantSlug, plan.event_id, plan.id);
+    revalidatePath(`/${tenant.tenantSlug}/kitchen/events/plans`);
+    return;
+  }
 
   const { data: purchaseOptions, error: purchaseOptionsError } = await supabase
     .from("kitchen_inventory_purchase_options")
@@ -1222,7 +1207,7 @@ export async function generateCateringRequisitionFromShortagesAction(formData: F
   if (existingDraftError) throw new Error(`No fue posible buscar requisición draft existente: ${existingDraftError.message}`);
 
   const estimatedTotalCost = round4(
-    shortages.reduce(
+    purchasableShortages.reduce(
       (acc, row) => acc + Number(row.shortage_quantity ?? 0) * Number(row.estimated_unit_cost ?? 0),
       0,
     ),
@@ -1263,7 +1248,7 @@ export async function generateCateringRequisitionFromShortagesAction(formData: F
     requisitionId = createdReq.id;
   }
 
-  const rows = shortages.map((row) => {
+  const rows = purchasableShortages.map((row) => {
     const requested = Number(row.shortage_quantity ?? 0);
     const unitCost = Number(row.estimated_unit_cost ?? 0);
     const purchaseOption = purchaseOptionByItem.get(row.item_id);
@@ -1908,7 +1893,7 @@ export async function createPurchaseReceiptFromRequisitionAction(formData: FormD
     supabase
       .from("event_catering_requisition_lines")
       .select(
-        "id,item_id,unit_id,supplier_id,requested_quantity,requested_purchase_quantity,expected_inventory_quantity,approved_unit_price,approved_total_cost,quoted_unit_price,quoted_total_cost,preliminary_unit_price,preliminary_total_cost,estimated_unit_cost,estimated_total_cost,purchase_unit_id",
+        "id,item_id,unit_id,supplier_id,requested_quantity,requested_purchase_quantity,expected_inventory_quantity,approved_unit_price,approved_total_cost,quoted_unit_price,quoted_total_cost,preliminary_unit_price,preliminary_total_cost,estimated_unit_cost,estimated_total_cost,purchase_unit_id,kitchen_inventory_items:kitchen_inventory_items!event_catering_requisition_lines_tenant_item_fkey(name)",
       )
       .eq("tenant_id", tenant.tenantId)
       .eq("requisition_id", requisition.id),
@@ -1927,23 +1912,26 @@ export async function createPurchaseReceiptFromRequisitionAction(formData: FormD
   }
   const defaultLocationId = locations[0].id;
 
-  const invalidLine = lines.find((line) => {
-    const requestedQuantity = Number(line.requested_quantity ?? 0);
-    const expectedInventoryQuantity = Number(line.expected_inventory_quantity ?? requestedQuantity);
-    const lineExpectedTotal = resolveLineBestTotal(line);
-    const fallbackUnitPrice = resolveLineBestUnitPrice(line);
-    const fallbackPurchaseQuantity = Number(line.requested_purchase_quantity ?? 0);
-    const fallbackTotal = fallbackPurchaseQuantity > 0 ? fallbackPurchaseQuantity * fallbackUnitPrice : 0;
-    return !line.item_id || !line.unit_id || requestedQuantity <= 0 || expectedInventoryQuantity <= 0 || Math.max(lineExpectedTotal, fallbackTotal) <= 0;
-  });
-  if (invalidLine) {
-    throw new Error("La requisición tiene líneas sin insumo, unidad, cantidad recibible o precio válido. Corrige la requisición antes de crear recepción.");
+  const classifiedLines = lines.map((line) => ({
+    ...line,
+    procurement_status: classifyRequisitionLineProcurement(line),
+  }));
+  const receivableLines = classifiedLines.filter((line) => line.procurement_status === "receivable_with_price");
+  const blockingLines = classifiedLines.filter(
+    (line) => line.procurement_status === "missing_price" || line.procurement_status === "review_needed",
+  );
+
+  if (receivableLines.length === 0) {
+    throw new Error("No hay líneas recibibles para crear recepción.");
+  }
+  if (blockingLines.length > 0) {
+    throw new Error("Falta precio para una línea comprable; captura cotización antes de recibir.");
   }
 
-  const receiptLines = lines.map((line) => {
+  const receiptLines = receivableLines.map((line) => {
     const receivedQuantity = Number(line.expected_inventory_quantity ?? line.requested_quantity ?? 0);
-    const explicitLineTotal = resolveLineBestTotal(line);
-    const fallbackUnitPrice = resolveLineBestUnitPrice(line);
+    const explicitLineTotal = resolveRequisitionLineFinancialTotal(line);
+    const fallbackUnitPrice = resolveRequisitionLineEffectiveUnitPrice(line);
     const purchaseQuantityBase = Number(line.requested_purchase_quantity ?? 0);
     const fallbackLineTotal = purchaseQuantityBase > 0 ? purchaseQuantityBase * fallbackUnitPrice : 0;
     const lineExpectedTotal = round4(explicitLineTotal > 0 ? explicitLineTotal : fallbackLineTotal);
@@ -1976,7 +1964,7 @@ export async function createPurchaseReceiptFromRequisitionAction(formData: FormD
 
   const uniqueSupplierIds = Array.from(
     new Set(
-      lines
+      receivableLines
         .map((line) => line.supplier_id)
         .filter((supplierId): supplierId is string => supplierId != null),
     ),
@@ -2470,7 +2458,7 @@ export async function createConsumptionDraftFromPlanAction(formData: FormData): 
 
   const { data: requirements, error: reqError } = await supabase
     .from("event_catering_requirements")
-    .select("id,item_id,unit_id,required_quantity,available_quantity,estimated_unit_cost")
+    .select("id,item_id,unit_id,required_quantity,available_quantity,estimated_unit_cost,kitchen_inventory_items:kitchen_inventory_items!event_catering_requirements_tenant_item_fkey(name)")
     .eq("tenant_id", tenant.tenantId)
     .eq("plan_id", plan.id);
   if (reqError) throw new Error(`No fue posible cargar requerimientos del plan: ${reqError.message}`);
@@ -2493,6 +2481,8 @@ export async function createConsumptionDraftFromPlanAction(formData: FormData): 
   const rows = requirements.map((row) => {
     const plannedQuantity = Number(row.required_quantity ?? 0);
     const unitCost = Number(row.estimated_unit_cost ?? 0);
+    const stockStatus = classifyConsumptionLineStockBehavior(row);
+    const isOperationalZeroCostNonConsumable = stockStatus === "operational_zero_cost_non_consumable";
     return {
       tenant_id: tenant.tenantId,
       consumption_record_id: created.id,
@@ -2501,13 +2491,13 @@ export async function createConsumptionDraftFromPlanAction(formData: FormData): 
       location_id: null,
       unit_id: row.unit_id,
       planned_quantity: round4(plannedQuantity),
-      consumed_quantity: round4(plannedQuantity),
+      consumed_quantity: isOperationalZeroCostNonConsumable ? 0 : round4(plannedQuantity),
       waste_quantity: 0,
       leftover_quantity: 0,
-      available_quantity: round4(Number(row.available_quantity ?? 0)),
-      unit_cost: round4(unitCost),
-      total_cost: round4(plannedQuantity * unitCost),
-      notes: null,
+      available_quantity: isOperationalZeroCostNonConsumable ? 0 : round4(Number(row.available_quantity ?? 0)),
+      unit_cost: isOperationalZeroCostNonConsumable ? 0 : round4(unitCost),
+      total_cost: isOperationalZeroCostNonConsumable ? 0 : round4(plannedQuantity * unitCost),
+      notes: isOperationalZeroCostNonConsumable ? "operational_zero_cost_non_consumable" : null,
       created_by: user.id,
     };
   });
@@ -2553,7 +2543,7 @@ export async function regenerateConsumptionDraftFromPlanAction(formData: FormDat
 
   const { data: requirements, error: reqError } = await supabase
     .from("event_catering_requirements")
-    .select("id,item_id,unit_id,required_quantity,available_quantity,estimated_unit_cost")
+    .select("id,item_id,unit_id,required_quantity,available_quantity,estimated_unit_cost,kitchen_inventory_items:kitchen_inventory_items!event_catering_requirements_tenant_item_fkey(name)")
     .eq("tenant_id", tenant.tenantId)
     .eq("plan_id", plan.id);
   if (reqError) throw new Error(`No fue posible cargar requerimientos del plan: ${reqError.message}`);
@@ -2569,6 +2559,8 @@ export async function regenerateConsumptionDraftFromPlanAction(formData: FormDat
   const rows = requirements.map((row) => {
     const plannedQuantity = Number(row.required_quantity ?? 0);
     const unitCost = Number(row.estimated_unit_cost ?? 0);
+    const stockStatus = classifyConsumptionLineStockBehavior(row);
+    const isOperationalZeroCostNonConsumable = stockStatus === "operational_zero_cost_non_consumable";
     return {
       tenant_id: tenant.tenantId,
       consumption_record_id: draft.id,
@@ -2577,13 +2569,15 @@ export async function regenerateConsumptionDraftFromPlanAction(formData: FormDat
       location_id: null,
       unit_id: row.unit_id,
       planned_quantity: round4(plannedQuantity),
-      consumed_quantity: round4(plannedQuantity),
+      consumed_quantity: isOperationalZeroCostNonConsumable ? 0 : round4(plannedQuantity),
       waste_quantity: 0,
       leftover_quantity: 0,
-      available_quantity: round4(Number(row.available_quantity ?? 0)),
-      unit_cost: round4(unitCost),
-      total_cost: round4(plannedQuantity * unitCost),
-      notes: "consumption_draft_regenerated_from_requirements",
+      available_quantity: isOperationalZeroCostNonConsumable ? 0 : round4(Number(row.available_quantity ?? 0)),
+      unit_cost: isOperationalZeroCostNonConsumable ? 0 : round4(unitCost),
+      total_cost: isOperationalZeroCostNonConsumable ? 0 : round4(plannedQuantity * unitCost),
+      notes: isOperationalZeroCostNonConsumable
+        ? "operational_zero_cost_non_consumable"
+        : "consumption_draft_regenerated_from_requirements",
       created_by: user.id,
     };
   });
@@ -2630,12 +2624,14 @@ export async function updateConsumptionLineAction(formData: FormData): Promise<v
 
   const { data: line, error: lineError } = await supabase
     .from("event_catering_consumption_lines")
-    .select("id,item_id,unit_id,unit_cost")
+    .select("id,item_id,unit_id,unit_cost,kitchen_inventory_items:kitchen_inventory_items!event_catering_consumption_lines_tenant_item_fkey(name)")
     .eq("tenant_id", tenant.tenantId)
     .eq("consumption_record_id", record.id)
     .eq("id", lineId)
     .maybeSingle();
   if (lineError || !line) throw new Error("Línea de consumo inválida para el tenant.");
+  const stockStatus = classifyConsumptionLineStockBehavior(line);
+  const isOperationalZeroCostNonConsumable = stockStatus === "operational_zero_cost_non_consumable";
 
   if (locationId) {
     const { data: location, error: locationError } = await supabase
@@ -2671,12 +2667,12 @@ export async function updateConsumptionLineAction(formData: FormData): Promise<v
   const { error: updateError } = await supabase
     .from("event_catering_consumption_lines")
     .update({
-      location_id: locationId || null,
-      consumed_quantity: round4(consumedQuantity),
-      waste_quantity: round4(wasteQuantity),
-      leftover_quantity: round4(leftoverQuantity),
-      unit_cost: round4(unitCost),
-      total_cost: round4((consumedQuantity + wasteQuantity) * unitCost),
+      location_id: isOperationalZeroCostNonConsumable ? null : locationId || null,
+      consumed_quantity: isOperationalZeroCostNonConsumable ? 0 : round4(consumedQuantity),
+      waste_quantity: isOperationalZeroCostNonConsumable ? 0 : round4(wasteQuantity),
+      leftover_quantity: isOperationalZeroCostNonConsumable ? 0 : round4(leftoverQuantity),
+      unit_cost: isOperationalZeroCostNonConsumable ? 0 : round4(unitCost),
+      total_cost: isOperationalZeroCostNonConsumable ? 0 : round4((consumedQuantity + wasteQuantity) * unitCost),
       notes: notes || null,
     })
     .eq("tenant_id", tenant.tenantId)
@@ -2707,7 +2703,7 @@ export async function applyPlannedQuantitiesToConsumptionAction(formData: FormDa
 
   const { data: lines, error: linesError } = await supabase
     .from("event_catering_consumption_lines")
-    .select("id,planned_quantity,unit_cost")
+    .select("id,planned_quantity,unit_cost,kitchen_inventory_items:kitchen_inventory_items!event_catering_consumption_lines_tenant_item_fkey(name)")
     .eq("tenant_id", tenant.tenantId)
     .eq("consumption_record_id", record.id);
   if (linesError) throw new Error(`No se pudieron cargar líneas de consumo: ${linesError.message}`);
@@ -2715,13 +2711,17 @@ export async function applyPlannedQuantitiesToConsumptionAction(formData: FormDa
   for (const line of lines ?? []) {
     const plannedQuantity = Number(line.planned_quantity ?? 0);
     const unitCost = Number(line.unit_cost ?? 0);
+    const stockStatus = classifyConsumptionLineStockBehavior(line);
+    const isOperationalZeroCostNonConsumable = stockStatus === "operational_zero_cost_non_consumable";
     const { error: updateError } = await supabase
       .from("event_catering_consumption_lines")
       .update({
-        consumed_quantity: round4(plannedQuantity),
+        consumed_quantity: isOperationalZeroCostNonConsumable ? 0 : round4(plannedQuantity),
         waste_quantity: 0,
         leftover_quantity: 0,
-        total_cost: round4(plannedQuantity * unitCost),
+        location_id: isOperationalZeroCostNonConsumable ? null : undefined,
+        unit_cost: isOperationalZeroCostNonConsumable ? 0 : round4(unitCost),
+        total_cost: isOperationalZeroCostNonConsumable ? 0 : round4(plannedQuantity * unitCost),
       })
       .eq("tenant_id", tenant.tenantId)
       .eq("consumption_record_id", record.id)
@@ -2845,6 +2845,40 @@ export async function confirmConsumptionRecordAction(formData: FormData): Promis
     .eq("id", consumptionId)
     .maybeSingle();
   if (recordError || !record) throw new Error("Consumo inválido para el tenant.");
+
+  const { data: draftLines, error: draftLinesError } = await supabase
+    .from("event_catering_consumption_lines")
+    .select("id,item_id,consumed_quantity,waste_quantity,leftover_quantity,location_id,unit_cost,kitchen_inventory_items:kitchen_inventory_items!event_catering_consumption_lines_tenant_item_fkey(name)")
+    .eq("tenant_id", tenant.tenantId)
+    .eq("consumption_record_id", record.id);
+  if (draftLinesError) throw new Error(`No se pudieron preparar líneas de consumo para confirmar: ${draftLinesError.message}`);
+
+  for (const line of draftLines ?? []) {
+    const stockStatus = classifyConsumptionLineStockBehavior(line);
+    if (stockStatus !== "operational_zero_cost_non_consumable") continue;
+    const needsNormalization =
+      Number(line.consumed_quantity ?? 0) !== 0 ||
+      Number(line.waste_quantity ?? 0) !== 0 ||
+      Number(line.leftover_quantity ?? 0) !== 0 ||
+      line.location_id != null ||
+      Number(line.unit_cost ?? 0) !== 0;
+    if (!needsNormalization) continue;
+    const { error: normalizeError } = await supabase
+      .from("event_catering_consumption_lines")
+      .update({
+        location_id: null,
+        consumed_quantity: 0,
+        waste_quantity: 0,
+        leftover_quantity: 0,
+        unit_cost: 0,
+        total_cost: 0,
+        notes: "operational_zero_cost_non_consumable",
+      })
+      .eq("tenant_id", tenant.tenantId)
+      .eq("consumption_record_id", record.id)
+      .eq("id", line.id);
+    if (normalizeError) throw new Error(`No se pudo normalizar línea informativa antes de confirmar: ${normalizeError.message}`);
+  }
 
   const { error: rpcError } = await supabase.rpc("event_catering_confirm_consumption", {
     p_consumption_record_id: record.id,

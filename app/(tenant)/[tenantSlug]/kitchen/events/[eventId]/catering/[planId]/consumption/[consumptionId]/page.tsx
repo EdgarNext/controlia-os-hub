@@ -1,4 +1,5 @@
 import { StatePanel } from "@/components/ui/state-panel";
+import { EventCateringBadge } from "@/app/(tenant)/[tenantSlug]/kitchen/events/_components/event-catering-badge";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
 import {
   applyPlannedQuantitiesToConsumptionAction,
@@ -59,6 +60,10 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
   const isConfirmed = record.status === "confirmed";
   const statusLabel = record.status === "draft" ? "Pendiente de confirmar" : record.status === "confirmed" ? "Confirmado" : "Cancelado";
   const availabilityByLine = new Map(availabilityRows.map((row) => [row.line_id, row]));
+  const actionableLines = lines.filter((line) => {
+    const availability = availabilityByLine.get(line.id) ?? null;
+    return availability?.stock_status !== "operational_zero_cost_non_consumable";
+  });
   const readiness = getConsumptionDraftReadiness(record.status, availabilityRows);
   const readinessText =
     readiness.reason === "ready"
@@ -70,11 +75,15 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
           : readiness.reason === "invalid_quantity"
             ? "Cantidad inválida"
             : "Sin consumo capturado";
-  const consumedTotalsByUnit = summarizeQuantitiesByUnit(lines, (line) => Number(line.consumed_quantity ?? 0));
-  const wasteTotalsByUnit = summarizeQuantitiesByUnit(lines, (line) => Number(line.waste_quantity ?? 0));
-  const leftoverTotalsByUnit = summarizeQuantitiesByUnit(lines, (line) => Number(line.leftover_quantity ?? 0));
-  const readyLineCount = availabilityRows.filter((row) => row.total_out_quantity > 0 && !row.missing_location && row.has_sufficient_balance).length;
-  const adjustedLineCount = lines.filter((line) => Number(line.waste_quantity ?? 0) > 0 || Number(line.leftover_quantity ?? 0) > 0).length;
+  const consumedTotalsByUnit = summarizeQuantitiesByUnit(actionableLines, (line) => Number(line.consumed_quantity ?? 0));
+  const wasteTotalsByUnit = summarizeQuantitiesByUnit(actionableLines, (line) => Number(line.waste_quantity ?? 0));
+  const leftoverTotalsByUnit = summarizeQuantitiesByUnit(actionableLines, (line) => Number(line.leftover_quantity ?? 0));
+  const readyLineCount = availabilityRows.filter(
+    (row) => !row.ignore_for_readiness && row.total_out_quantity > 0 && !row.missing_location && row.has_sufficient_balance,
+  ).length;
+  const adjustedLineCount = actionableLines.filter(
+    (line) => Number(line.waste_quantity ?? 0) > 0 || Number(line.leftover_quantity ?? 0) > 0,
+  ).length;
   const planName = record.event_catering_plans?.name?.trim() || "Servicio de catering";
   const eventName = record.events?.name?.trim() || "Evento";
   const eventDate = record.events?.starts_at ? new Date(record.events.starts_at).toLocaleDateString("es-MX") : null;
@@ -98,7 +107,7 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
         <div className="mt-3 grid gap-2 text-xs md:grid-cols-3 lg:grid-cols-6">
           <div className="rounded border border-border bg-muted/20 p-2">
             <p className="text-muted">Líneas listas</p>
-            <p className="mt-1 font-semibold text-foreground">{isConfirmed ? lines.length : `${readyLineCount}/${lines.length}`}</p>
+            <p className="mt-1 font-semibold text-foreground">{isConfirmed ? actionableLines.length : `${readyLineCount}/${actionableLines.length}`}</p>
           </div>
           <div className="rounded border border-border bg-muted/20 p-2">
             <p className="text-muted">Total a consumir</p>
@@ -224,20 +233,33 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
                   const hasAdjustment = Number(line.waste_quantity) > 0 || Number(line.leftover_quantity) > 0;
                   const unitCode = line.kitchen_inventory_units?.code ?? "ud";
                   const locationName = line.kitchen_inventory_locations?.name ?? null;
+                  const isOperationalInformative = availability?.stock_status === "operational_zero_cost_non_consumable";
                   const stockLabel = availability
-                    ? line.location_id
+                    ? isOperationalInformative
+                      ? "No consume stock"
+                      : line.location_id
                       ? `${formatQuantity(availability.physical_balance)} ${unitCode} en ${locationName ?? "ubicación asignada"}`
                       : `${formatQuantity(availability.physical_balance)} ${unitCode} total`
                     : `0.00 ${unitCode}`;
                   return (
                   <tr key={line.id} className="border-t border-border">
                     <td className="px-2 py-1 text-foreground">
-                      {line.kitchen_inventory_items?.name ?? line.item_id.slice(0, 8)}
+                      <div className="space-y-1">
+                        <p>{line.kitchen_inventory_items?.name ?? line.item_id.slice(0, 8)}</p>
+                        {isOperationalInformative ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <EventCateringBadge label="Zero-cost operativo" tone="info" />
+                            <span className="text-[11px] text-muted">
+                              Insumo operativo con costo cero; no consume inventario ni bloquea el consumo real.
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
                       {!isConfirmed ? (
                         <div className="mt-1 flex flex-wrap gap-1">
                           {totalOut <= 0 ? <span className="rounded-full bg-muted/30 px-2 py-0.5 text-[11px] text-muted">Sin consumo</span> : null}
                           {availability?.missing_location ? <span className="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning">Sin ubicación</span> : null}
-                          {availability && !availability.has_sufficient_balance ? (
+                          {availability && !availability.ignore_for_readiness && !availability.has_sufficient_balance ? (
                             <span className="rounded-full bg-danger/10 px-2 py-0.5 text-[11px] text-danger">Stock insuficiente</span>
                           ) : null}
                           {hasAdjustment ? <span className="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning">Ajustado</span> : null}
@@ -246,8 +268,17 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
                     </td>
                     <td className="px-2 py-1 text-muted">{formatQuantity(Number(line.planned_quantity))} {unitCode}</td>
                     <td className="px-2 py-1 text-foreground">
-                      {formatQuantity(Number(line.consumed_quantity))} {unitCode}
-                      {hasAdjustment ? (
+                      {isOperationalInformative ? (
+                        <div className="space-y-1">
+                          <p className="text-[11px] text-muted">Informativo · no consume stock</p>
+                          <p className="text-[11px] text-muted">Planeado: {formatQuantity(Number(line.planned_quantity))} {unitCode}</p>
+                        </div>
+                      ) : (
+                        <>
+                          {formatQuantity(Number(line.consumed_quantity))} {unitCode}
+                        </>
+                      )}
+                      {!isOperationalInformative && hasAdjustment ? (
                         <p className="text-[11px] text-muted">
                           merma {Number(line.waste_quantity).toLocaleString("es-MX", { maximumFractionDigits: 4 })} · sobrante{" "}
                           {Number(line.leftover_quantity).toLocaleString("es-MX", { maximumFractionDigits: 4 })}
@@ -257,10 +288,10 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
                     {isConfirmed ? null : (
                       <td className="px-2 py-1 text-muted">
                         <span>{stockLabel}</span>
-                        {availability && availability.has_sufficient_balance && !availability.missing_location ? (
+                        {availability && !availability.ignore_for_readiness && availability.has_sufficient_balance && !availability.missing_location ? (
                           <span className="ml-2 rounded-full bg-success/10 px-2 py-0.5 text-[11px] text-success">Suficiente</span>
                         ) : null}
-                        {availability && !availability.has_sufficient_balance ? (
+                        {availability && !availability.ignore_for_readiness && !availability.has_sufficient_balance ? (
                           <div className="mt-1 text-[11px] text-warning">
                             <p>Disponible para este consumo: {formatQuantity(availability.available_quantity)} {unitCode}</p>
                             <p>Apartado para otros planes: {formatQuantity(availability.reserved_other_plans)} {unitCode}</p>
@@ -269,7 +300,7 @@ export default async function KitchenConsumptionDetailPage({ params }: KitchenCo
                         ) : null}
                       </td>
                     )}
-                    <td className="px-2 py-1 text-muted">{locationName ?? "Sin ubicación"}</td>
+                    <td className="px-2 py-1 text-muted">{isOperationalInformative ? "No aplica" : locationName ?? "Sin ubicación"}</td>
                     <td className="px-2 py-1">
                       {isConfirmed ? (
                         totalOut > 0

@@ -10,7 +10,9 @@ import {
   updatePlanRecipeServingsAction,
 } from "@/lib/kitchen/event-catering/actions";
 import {
+  getCateringPlanPriceReviewSummary,
   getEventForCatering,
+  getCateringPlanFinancialReport,
   getCateringPlan,
   getCateringPlanOperationalSummary,
   getPlanDraftRequisition,
@@ -29,12 +31,33 @@ import { KitchenPageHeader } from "@/app/(tenant)/[tenantSlug]/kitchen/_componen
 import { KitchenStatusBadge } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-status-badge";
 import { KitchenSubmitButton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-submit-button";
 import { EventCateringContextHeader } from "@/app/(tenant)/[tenantSlug]/kitchen/events/_components/event-catering-context-header";
+import { EventCateringBadge } from "@/app/(tenant)/[tenantSlug]/kitchen/events/_components/event-catering-badge";
 import { resolveKitchenPage } from "../../../../_lib/page-access";
 import { AddReadyRecipeToPlanForm } from "./_components/plan-forms";
+import type {
+  CateringPlanFinancialLine,
+  CateringPlanFinancialStatus,
+  CateringPlanFinancialVarianceReason,
+} from "@/lib/kitchen/event-catering/types";
 
 type KitchenEventCateringPlanPageProps = {
   params: Promise<{ tenantSlug: string; eventId: string; planId: string }>;
 };
+
+function getRequirementActionPriority({
+  hasRecipes,
+  requirementsCount,
+  shortageCount,
+}: {
+  hasRecipes: boolean;
+  requirementsCount: number;
+  shortageCount: number;
+}) {
+  if (!hasRecipes) return "add_recipe" as const;
+  if (requirementsCount === 0) return "refresh_requirements" as const;
+  if (shortageCount > 0) return "generate_requisition" as const;
+  return "reserve_inventory" as const;
+}
 
 export default async function KitchenEventCateringPlanPage({ params }: KitchenEventCateringPlanPageProps) {
   const { tenantSlug, eventId, planId } = await params;
@@ -56,6 +79,7 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
   const canManagePlans = hasModulePageAccess(accessMap.plans ?? "none", "manage");
   const canManageRequirements = hasModulePageAccess(accessMap.requirements ?? "none", "manage");
   const canManageRequisitions = hasModulePageAccess(accessMap.requisitions ?? "none", "manage");
+  const planRecipesPromise = listPlanRecipes(result.tenant.tenantSlug, plan.id);
   const requirementsPromise = listCateringRequirements(result.tenant.tenantSlug, plan.id);
   const itemFlowPromise = listCateringPlanItemFlow(result.tenant.tenantSlug, plan.id);
   const warningsPromise = itemFlowPromise.then((itemFlow) =>
@@ -74,12 +98,16 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
   return (
     <div className="space-y-4">
       <KitchenPageHeader
-        eyebrow="Plan de catering"
-        title={plan.name ?? `Plan ${plan.id.slice(0, 8)}`}
-        description={`Costo estimado: $${Number(plan.estimated_total_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+        eyebrow="Servicio de catering"
+        title={`Servicio: ${plan.name ?? `Plan ${plan.id.slice(0, 8)}`}`}
+        description="Revisa costo, recetas, faltantes y siguiente paso operativo del servicio."
         metadata={
           <>
-            <span>Evento: {eventId.slice(0, 8)}</span>
+            <span>Evento: {event?.name ?? eventId.slice(0, 8)}</span>
+            <span className="mx-2">·</span>
+            <span>Fecha: {event?.starts_at ? new Date(event.starts_at).toLocaleString("es-MX") : "—"}</span>
+            <span className="mx-2">·</span>
+            <span>Costo estimado: ${Number(plan.estimated_total_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             <span className="mx-2">·</span>
             <span>Estado: <KitchenStatusBadge status={plan.status} /></span>
             <span className="mx-2">·</span>
@@ -131,6 +159,13 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
         />
       </Suspense>
 
+      <Suspense fallback={<KitchenTableSkeleton rows={8} columns={6} />}>
+        <PlanFinancialReportSection
+          tenantSlug={result.tenant.tenantSlug}
+          planId={plan.id}
+        />
+      </Suspense>
+
       <Suspense fallback={<KitchenTableSkeleton rows={5} columns={4} />}>
         <PlanRecipesSection
           tenantSlug={result.tenant.tenantSlug}
@@ -138,7 +173,12 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
           planId={plan.id}
           canManagePlans={canManagePlans}
           suggestedServings={plan.planned_guest_count != null ? Number(plan.planned_guest_count) : null}
+          planRecipesPromise={planRecipesPromise}
         />
+      </Suspense>
+
+      <Suspense fallback={<KitchenTableSkeleton rows={4} columns={4} />}>
+        <PlanPriceReviewSection tenantSlug={result.tenant.tenantSlug} planId={plan.id} />
       </Suspense>
 
       <Suspense fallback={<KitchenTableSkeleton rows={8} columns={7} />}>
@@ -146,11 +186,18 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
           uiTenantSlug={tenantSlug}
           planId={plan.id}
           requirementsPromise={requirementsPromise}
-          canManageRequirements={canManageRequirements}
-          canManageRequisitions={canManageRequisitions}
-          isServiceClosed={isServiceClosed}
         />
       </Suspense>
+
+      <PlanActionsSection
+        uiTenantSlug={tenantSlug}
+        planId={plan.id}
+        canManageRequirements={canManageRequirements}
+        canManageRequisitions={canManageRequisitions}
+        isServiceClosed={isServiceClosed}
+        requirementsPromise={requirementsPromise}
+        planRecipesPromise={planRecipesPromise}
+      />
 
       <Suspense fallback={<KitchenTableSkeleton rows={8} columns={10} />}>
         <PlanItemFlowSection itemFlowPromise={itemFlowPromise} />
@@ -206,39 +253,224 @@ async function PlanOperationalSummarySection({
   );
 }
 
+function formatMoney(value: number | null | undefined) {
+  if (value == null) return "No disponible";
+  return `$${Number(value).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatQuantity(value: number | null | undefined, unitCode?: string | null) {
+  if (value == null) return "No disponible";
+  return `${Number(value).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}${unitCode ? ` ${unitCode}` : ""}`;
+}
+
+function getFinancialStatusBadge(status: CateringPlanFinancialStatus) {
+  switch (status) {
+    case "ok":
+      return <EventCateringBadge label="OK" tone="success" />;
+    case "remaining_inventory":
+      return <EventCateringBadge label="Remanente" tone="info" />;
+    case "over_purchase":
+      return <EventCateringBadge label="Sobrecompra" tone="warning" />;
+    case "waste":
+      return <EventCateringBadge label="Merma" tone="warning" />;
+    case "operational_zero_cost":
+      return <EventCateringBadge label="Zero-cost operativo" tone="muted" />;
+    case "partial":
+      return <EventCateringBadge label="Reporte parcial" tone="info" />;
+    case "review_needed":
+      return <EventCateringBadge label="Revisar" tone="danger" />;
+    default:
+      return <EventCateringBadge label="Revisar" tone="danger" />;
+  }
+}
+
+function getVarianceReasonLabel(reason: CateringPlanFinancialVarianceReason) {
+  switch (reason) {
+    case "ok":
+      return "Sin variación material";
+    case "price_change":
+      return "Cambio de precio";
+    case "supplier_change":
+      return "Cambio de proveedor";
+    case "purchase_presentation":
+      return "Presentación de compra";
+    case "minimum_purchase_or_multiple":
+      return "Compra mínima o múltiplo";
+    case "over_purchase_remaining_inventory":
+      return "Remanente recuperable";
+    case "received_less_than_requisitioned":
+      return "Recibido menor a requisición";
+    case "consumed_less_than_received":
+      return "Consumido menor a recibido";
+    case "waste":
+      return "Merma";
+    case "operational_zero_cost":
+      return "Zero-cost operativo";
+    case "review_needed":
+      return "Revisión necesaria";
+    default:
+      return "Revisión necesaria";
+  }
+}
+
+function PlanFinancialLineRow({ line }: { line: CateringPlanFinancialLine }) {
+  return (
+    <tr className="border-t border-border align-top transition-colors hover:bg-surface-2/50">
+      <td className="px-2 py-2 text-foreground">
+        <div className="font-medium">{line.itemName ?? line.itemId.slice(0, 8)}</div>
+        <div className="text-muted">{line.unitCode ?? "ud"}</div>
+      </td>
+      <td className="px-2 py-2 text-foreground">
+        <div>{line.supplierName ?? "No disponible"}</div>
+        <div className="text-muted">{line.purchasePresentation ?? "No disponible"}</div>
+      </td>
+      <td className="px-2 py-2 text-foreground">
+        <div>Req: {formatQuantity(line.requiredQuantity, line.unitCode)}</div>
+        <div className="text-muted">Rec: {formatQuantity(line.receivedQuantity, line.unitCode)}</div>
+        <div className="text-muted">Cons: {formatQuantity(line.consumedQuantity, line.unitCode)}</div>
+      </td>
+      <td className="px-2 py-2 text-foreground">
+        <div>{formatQuantity(line.remainingQuantity, line.unitCode)}</div>
+        <div className="text-muted">Merma: {formatQuantity(line.wasteQuantity, line.unitCode)}</div>
+      </td>
+      <td className="px-2 py-2 text-foreground">
+        <div>Recibido: {formatMoney(line.receivedCost)}</div>
+        <div className="text-muted">Consumido: {formatMoney(line.consumedCost)}</div>
+        <div className="text-muted">Remanente: {formatMoney(line.remainingValue)}</div>
+      </td>
+      <td className="px-2 py-2 text-foreground">
+        <div>{getFinancialStatusBadge(line.financialStatus)}</div>
+        <div className="mt-1 text-muted">{getVarianceReasonLabel(line.primaryVarianceReason)}</div>
+      </td>
+    </tr>
+  );
+}
+
+async function PlanFinancialReportSection({
+  tenantSlug,
+  planId,
+}: {
+  tenantSlug: string;
+  planId: string;
+}) {
+  const report = await getCateringPlanFinancialReport(tenantSlug, planId);
+  const { summary } = report;
+  const topLines = report.lines.filter((line) => line.isFinanciallyRelevant || line.isOperationalZeroCost);
+
+  return (
+    <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Cierre financiero del servicio</h2>
+          <p className="mt-1 text-xs text-muted">
+            Diferencia entre costo estimado, compra planeada, compra recibida, consumo real, merma e inventario recuperable.
+          </p>
+        </div>
+        <div>{getFinancialStatusBadge(summary.reportStatus === "closed" ? "ok" : summary.reportStatus === "partial" ? "partial" : "remaining_inventory")}</div>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <KitchenMetricCard label="Costo estimado inicial" value={formatMoney(summary.estimatedInitialCost)} hint="Costo base del servicio al momento del costeo." />
+        <KitchenMetricCard label="Total requisicionado" value={formatMoney(summary.requisitionedCost)} hint="Compra planeada a partir de requisiciones." />
+        <KitchenMetricCard label="Total recibido/comprado" value={formatMoney(summary.receivedCost)} hint="Valor recibido para abastecer el servicio." />
+        <KitchenMetricCard label="Costo consumido real" value={formatMoney(summary.consumedCost)} hint="Valor efectivamente consumido por el evento." />
+        <KitchenMetricCard label="Merma" value={formatMoney(summary.wasteCost)} hint="Costo de salida no recuperable." tone={summary.wasteCost > 0 ? "warning" : "default"} />
+        <KitchenMetricCard label="Inventario remanente" value={formatMoney(summary.remainingInventoryValue)} hint="Valor comprado que quedó disponible para uso futuro." tone={summary.remainingInventoryValue > 0 ? "warning" : "default"} />
+        <KitchenMetricCard label="Variación bruta compra vs estimado" value={formatMoney(summary.grossPurchaseVariance)} hint="Diferencia entre compra/recepción y estimado inicial." tone={summary.grossPurchaseVariance > 0 ? "warning" : "default"} />
+        <KitchenMetricCard label="Variación neta consumo vs estimado" value={formatMoney(summary.netConsumptionVariance)} hint="Diferencia entre consumo real + merma y estimado inicial." tone={Math.abs(summary.netConsumptionVariance) > 0.01 ? "warning" : "default"} />
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <KitchenMetricCard label="Estimado por persona" value={formatMoney(summary.estimatedCostPerPerson)} />
+        <KitchenMetricCard label="Compra por persona" value={formatMoney(summary.purchasedCostPerPerson)} />
+        <KitchenMetricCard label="Consumo real por persona" value={formatMoney(summary.consumedCostPerPerson)} />
+      </div>
+
+      <div className="mt-3 rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
+        <p className="text-xs font-medium text-foreground">Lectura gerencial</p>
+        <p className="mt-1 text-xs text-muted">{report.narrative}</p>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted">
+        <span>Requisiciones: {summary.requisitionCount}</span>
+        <span>·</span>
+        <span>Recepciones recibidas: {summary.receivedReceiptCount}</span>
+        <span>·</span>
+        <span>Consumos confirmados: {summary.confirmedConsumptionCount}</span>
+        <span>·</span>
+        <span>Zero-cost operativo: {summary.operationalZeroCostLineCount}</span>
+      </div>
+
+      <div className="mt-4 overflow-x-auto">
+        <table className="min-w-full text-xs">
+          <thead>
+            <tr className="text-left text-muted">
+              <th className="px-2 py-1">Insumo</th>
+              <th className="px-2 py-1">Proveedor / presentación</th>
+              <th className="px-2 py-1">Cantidades</th>
+              <th className="px-2 py-1">Remanente</th>
+              <th className="px-2 py-1">Costos</th>
+              <th className="px-2 py-1">Estado / causa</th>
+            </tr>
+          </thead>
+          <tbody>
+            {topLines.map((line) => (
+              <PlanFinancialLineRow key={`${line.itemId}:${line.unitId}`} line={line} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="mt-2 text-xs text-muted">
+        Los totales monetarios sí se consolidan. Las cantidades se muestran por insumo y unidad para no mezclar kg, litros y piezas.
+      </p>
+    </section>
+  );
+}
+
 async function PlanRecipesSection({
   tenantSlug,
   uiTenantSlug,
   planId,
   canManagePlans,
   suggestedServings,
+  planRecipesPromise,
 }: {
   tenantSlug: string;
   uiTenantSlug: string;
   planId: string;
   canManagePlans: boolean;
   suggestedServings: number | null;
+  planRecipesPromise: ReturnType<typeof listPlanRecipes>;
 }) {
   const [planRecipes, readyRecipes] = await Promise.all([
-    listPlanRecipes(tenantSlug, planId),
+    planRecipesPromise,
     listReadyRecipesForCatering(tenantSlug),
   ]);
+  const hasRecipes = planRecipes.length > 0;
 
   return (
     <>
-      {canManagePlans ? (
-        <AddReadyRecipeToPlanForm
-          tenantSlug={uiTenantSlug}
-          planId={planId}
-          suggestedServings={suggestedServings}
-          recipes={readyRecipes}
-        />
-      ) : null}
       {planRecipes.length === 0 ? (
-        <StatePanel kind="empty" title="Sin recetas en el plan" message="Agrega recetas ready para estimar el costo del catering." />
+        <>
+          {canManagePlans ? (
+            <AddReadyRecipeToPlanForm
+              tenantSlug={uiTenantSlug}
+              planId={planId}
+              suggestedServings={suggestedServings}
+              recipes={readyRecipes}
+            />
+          ) : null}
+          <StatePanel kind="empty" title="Sin recetas en el servicio" message="Agrega recetas ready para estimar el costo del servicio." />
+        </>
       ) : (
         <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-          <h2 className="text-sm font-semibold text-foreground">Recetas del plan</h2>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Recetas del servicio</h2>
+              <p className="text-xs text-muted">Cada receta muestra su base para este servicio, costo estimado y acciones de ajuste.</p>
+            </div>
+          </div>
           <div className="mt-2 space-y-2">
             {planRecipes.map((planRecipe) => (
               <div key={planRecipe.id} className="rounded border border-border bg-surface-2 p-3">
@@ -247,9 +479,9 @@ async function PlanRecipesSection({
                   Categoría: {planRecipe.kitchen_recipe_recipes?.category ?? "Sin categoría"}
                 </p>
                 <p className="text-xs text-muted">
-                  Base de cálculo: {Number(planRecipe.planned_servings).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ·
+                  Base para este servicio: {Number(planRecipe.planned_servings).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ·
                   Multiplicador: {Number(planRecipe.multiplier).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ·
-                  Costo base: ${Number(planRecipe.estimated_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ·
+                  Costo de esta receta en el servicio: ${Number(planRecipe.estimated_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ·
                   Estado receta: <KitchenStatusBadge status={planRecipe.kitchen_recipe_recipes?.status} />
                 </p>
                 {canManagePlans ? (
@@ -284,9 +516,89 @@ async function PlanRecipesSection({
               </div>
             ))}
           </div>
+          {canManagePlans && hasRecipes ? (
+            <details className="mt-3 rounded border border-border bg-surface p-3">
+              <summary className="cursor-pointer text-xs font-medium text-foreground">Agregar receta</summary>
+              <div className="mt-3">
+                <AddReadyRecipeToPlanForm
+                  tenantSlug={uiTenantSlug}
+                  planId={planId}
+                  suggestedServings={suggestedServings}
+                  recipes={readyRecipes}
+                />
+              </div>
+            </details>
+          ) : null}
         </section>
       )}
     </>
+  );
+}
+
+async function PlanPriceReviewSection({
+  tenantSlug,
+  planId,
+}: {
+  tenantSlug: string;
+  planId: string;
+}) {
+  const summary = await getCateringPlanPriceReviewSummary(tenantSlug, planId);
+
+  return (
+    <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
+      <h2 className="text-sm font-semibold text-foreground">Revisión de precios del servicio</h2>
+      <p className="mt-1 text-xs text-muted">
+        Paso previo a requisición para validar que los insumos requeridos tienen precio vigente revisado. En esta fase es informativo; no modifica precios ni genera compra.
+      </p>
+      {summary.required_items_count === 0 ? (
+        <p className="mt-3 text-xs text-muted">Pendiente de implementar cuando el servicio tenga requerimientos calculados.</p>
+      ) : (
+        <>
+          <div className="mt-3">
+            <EventCateringBadge
+              label={
+                summary.items_without_current_price_count > 0
+                  ? "Faltan precios"
+                  : summary.items_with_current_price_count > 0
+                    ? "Precios vigentes disponibles"
+                    : "Informativo"
+              }
+              tone={
+                summary.items_without_current_price_count > 0
+                  ? "warning"
+                  : summary.items_with_current_price_count > 0
+                    ? "success"
+                    : "info"
+              }
+            />
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <KitchenMetricCard label="Insumos requeridos" value={summary.required_items_count} />
+            <KitchenMetricCard label="Con precio vigente" value={summary.items_with_current_price_count} />
+            <KitchenMetricCard label="Sin precio vigente" value={summary.items_without_current_price_count} tone={summary.items_without_current_price_count > 0 ? "warning" : "default"} />
+            <KitchenMetricCard
+              label="Última vigencia detectada"
+              value={summary.latest_valid_from ? new Date(summary.latest_valid_from).toLocaleDateString("es-MX") : "—"}
+            />
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            Fuentes detectadas: {summary.source_types.length > 0 ? summary.source_types.join(", ") : "Sin fuente visible"}.
+          </p>
+          {summary.items_without_current_price_count > 0 ? (
+            <div className="mt-3 rounded border border-amber-300/40 bg-amber-500/10 p-3">
+              <p className="text-xs font-medium text-amber-700">Advertencia: faltan precios vigentes para algunos insumos.</p>
+              <ul className="mt-2 space-y-1 text-xs text-amber-700">
+                {summary.missing_price_items.slice(0, 8).map((item: (typeof summary.missing_price_items)[number]) => (
+                  <li key={item.item_id}>
+                    {item.item_name ?? item.item_id.slice(0, 8)} {item.unit_code ? `· ${item.unit_code}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -294,16 +606,10 @@ async function PlanRequirementsSection({
   uiTenantSlug,
   planId,
   requirementsPromise,
-  canManageRequirements,
-  canManageRequisitions,
-  isServiceClosed,
 }: {
   uiTenantSlug: string;
   planId: string;
   requirementsPromise: ReturnType<typeof listCateringRequirements>;
-  canManageRequirements: boolean;
-  canManageRequisitions: boolean;
-  isServiceClosed: boolean;
 }) {
   const [requirements, draftRequisition] = await Promise.all([
     requirementsPromise,
@@ -336,43 +642,20 @@ async function PlanRequirementsSection({
 
   return (
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">Requerimientos y faltantes</h2>
-          <p className="text-xs text-muted">
-            Actualizar solo calcula. Apartar inventario reserva stock disponible para este servicio y evita que otros planes lo usen.
+      <div>
+        <h2 className="text-sm font-semibold text-foreground">Requerimientos y faltantes</h2>
+        <p className="text-xs text-muted">Insumos calculados a partir de las recetas del servicio. Las cantidades se muestran por insumo y unidad.</p>
+        <p className="mt-1 text-xs text-muted">Apartar inventario reserva stock disponible para este servicio. Generar requisición compra solo el faltante real.</p>
+        {hasRequirements ? (
+          <p className="mt-1 text-xs text-muted">
+            Estado:{" "}
+            {isFullyReserved
+              ? "Inventario apartado para este servicio."
+              : isPartiallyReserved
+                ? "Inventario parcialmente apartado."
+                : "Requerimientos calculados, inventario aún no apartado."}
           </p>
-          {hasRequirements ? (
-            <p className="mt-1 text-xs text-muted">
-              Estado:{" "}
-              {isFullyReserved
-                ? "Inventario apartado para este servicio."
-                : isPartiallyReserved
-                  ? "Inventario parcialmente apartado."
-                  : "Requerimientos calculados, inventario aún no apartado."}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          {canManageRequirements && !isServiceClosed ? (
-            <form action={recalculateCateringRequirementsAction}>
-              <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
-              <input type="hidden" name="planId" value={planId} />
-              <KitchenSubmitButton pendingLabel="Recalculando..." variant="secondary" className="px-3 py-2 text-xs">
-                Actualizar requerimientos
-              </KitchenSubmitButton>
-            </form>
-          ) : null}
-          {canManageRequirements && !isServiceClosed ? (
-            <form action={reserveInventoryForCateringPlanAction}>
-              <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
-              <input type="hidden" name="planId" value={planId} />
-              <KitchenSubmitButton pendingLabel="Apartando..." variant="primary" className="px-3 py-2 text-xs">
-                Apartar inventario para este servicio
-              </KitchenSubmitButton>
-            </form>
-          ) : null}
-        </div>
+        ) : null}
       </div>
       {requirements.length === 0 ? (
         <div className="mt-3">
@@ -384,15 +667,12 @@ async function PlanRequirementsSection({
             <thead>
               <tr className="text-left text-muted">
                 <th className="px-2 py-1">Insumo</th>
-                <th className="px-2 py-1">Unidad</th>
                 <th className="px-2 py-1">Requerido</th>
-                <th className="px-2 py-1">Stock físico</th>
-                <th className="px-2 py-1">Reservado otros eventos</th>
-                <th className="px-2 py-1">Reservado este plan</th>
-                <th className="px-2 py-1">Disponible real</th>
+                <th className="px-2 py-1">Disponible</th>
+                <th className="px-2 py-1">Reservado</th>
                 <th className="px-2 py-1">Faltante</th>
-                <th className="px-2 py-1">Costo unitario</th>
-                <th className="px-2 py-1">Costo total</th>
+                <th className="px-2 py-1">Costo estimado</th>
+                <th className="px-2 py-1">Estado</th>
               </tr>
             </thead>
             <tbody>
@@ -405,24 +685,27 @@ async function PlanRequirementsSection({
                       reserved_this_plan?: number;
                       available_for_plan?: number;
                     } }).availability_breakdown) ?? {};
-                    const physical = Number(availability.physical_balance ?? row.available_quantity ?? 0);
-                    const reservedOthers = Number(availability.reserved_other_plans ?? 0);
                     const reservedThisPlan = Number(availability.reserved_this_plan ?? 0);
                     const availableForPlan = Number(availability.available_for_plan ?? row.available_quantity ?? 0);
                     return (
                       <>
                   <td className="px-2 py-1 text-foreground">{row.kitchen_inventory_items?.name ?? row.item_id.slice(0, 8)}</td>
-                  <td className="px-2 py-1 text-muted">{row.kitchen_inventory_units?.code ?? "ud"}</td>
-                  <td className="px-2 py-1 text-foreground">{Number(row.required_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
-                  <td className="px-2 py-1 text-foreground">{physical.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
-                  <td className="px-2 py-1 text-foreground">{reservedOthers.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
-                  <td className="px-2 py-1 text-foreground">{reservedThisPlan.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
-                  <td className="px-2 py-1 text-foreground">{availableForPlan.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
-                  <td className={`px-2 py-1 ${Number(row.shortage_quantity) > 0 ? "text-amber-600" : "text-foreground"}`}>
-                    {Number(row.shortage_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                  <td className="px-2 py-1 text-foreground">
+                    {Number(row.required_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {row.kitchen_inventory_units?.code ?? "ud"}
                   </td>
-                  <td className="px-2 py-1 text-foreground">${Number(row.estimated_unit_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                  <td className="px-2 py-1 text-foreground">
+                    {availableForPlan.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {row.kitchen_inventory_units?.code ?? "ud"}
+                  </td>
+                  <td className="px-2 py-1 text-foreground">
+                    {reservedThisPlan.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {row.kitchen_inventory_units?.code ?? "ud"}
+                  </td>
+                  <td className={`px-2 py-1 ${Number(row.shortage_quantity) > 0 ? "text-amber-600" : "text-foreground"}`}>
+                    {Number(row.shortage_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {row.kitchen_inventory_units?.code ?? "ud"}
+                  </td>
                   <td className="px-2 py-1 text-foreground">${Number(row.estimated_total_cost).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-2 py-1 text-foreground">
+                    {Number(row.shortage_quantity) > 0 ? <EventCateringBadge label="Con faltantes" tone="warning" /> : reservedThisPlan >= Number(row.required_quantity) ? <EventCateringBadge label="Listo" tone="success" /> : <EventCateringBadge label="Pendiente" tone="info" />}
+                  </td>
                       </>
                     );
                   })()}
@@ -433,19 +716,6 @@ async function PlanRequirementsSection({
           {shortages.length > 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
             <p className="text-xs text-amber-600">Hay {shortages.length} insumos con faltante.</p>
-            <p className="mt-1 text-xs text-muted">
-              Al generar la requisición sugerida se aparta primero el inventario físico disponible para este plan y se compra
-              solo el faltante real.
-            </p>
-            {canManageRequisitions && !isServiceClosed ? (
-              <form action={generateCateringRequisitionFromShortagesAction}>
-                  <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
-                  <input type="hidden" name="planId" value={planId} />
-                  <KitchenSubmitButton pendingLabel="Generando..." variant="secondary" className="px-2 py-1 text-xs">
-                    Generar requisición sugerida
-                  </KitchenSubmitButton>
-                </form>
-              ) : null}
               {draftRequisition ? (
                 <Link
                   href={`/${uiTenantSlug}/kitchen/events/requisitions/${draftRequisition.id}`}
@@ -470,6 +740,98 @@ async function PlanRequirementsSection({
   );
 }
 
+function PlanActionsSection({
+  uiTenantSlug,
+  planId,
+  canManageRequirements,
+  canManageRequisitions,
+  isServiceClosed,
+  requirementsPromise,
+  planRecipesPromise,
+}: {
+  uiTenantSlug: string;
+  planId: string;
+  canManageRequirements: boolean;
+  canManageRequisitions: boolean;
+  isServiceClosed: boolean;
+  requirementsPromise: ReturnType<typeof listCateringRequirements>;
+  planRecipesPromise: ReturnType<typeof listPlanRecipes>;
+}) {
+  if (isServiceClosed || (!canManageRequirements && !canManageRequisitions)) {
+    return null;
+  }
+
+  return <PlanActionsSectionContent
+    uiTenantSlug={uiTenantSlug}
+    planId={planId}
+    canManageRequirements={canManageRequirements}
+    canManageRequisitions={canManageRequisitions}
+    requirementsPromise={requirementsPromise}
+    planRecipesPromise={planRecipesPromise}
+  />;
+}
+
+async function PlanActionsSectionContent({
+  uiTenantSlug,
+  planId,
+  canManageRequirements,
+  canManageRequisitions,
+  requirementsPromise,
+  planRecipesPromise,
+}: {
+  uiTenantSlug: string;
+  planId: string;
+  canManageRequirements: boolean;
+  canManageRequisitions: boolean;
+  requirementsPromise: ReturnType<typeof listCateringRequirements>;
+  planRecipesPromise: ReturnType<typeof listPlanRecipes>;
+}) {
+  const [requirements, planRecipes] = await Promise.all([requirementsPromise, planRecipesPromise]);
+  const primaryAction = getRequirementActionPriority({
+    hasRecipes: planRecipes.length > 0,
+    requirementsCount: requirements.length,
+    shortageCount: requirements.filter((row) => Number(row.shortage_quantity ?? 0) > 0).length,
+  });
+
+  const getVariant = (action: string) => (primaryAction === action ? "primary" : "secondary");
+
+  return (
+    <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
+      <h2 className="text-sm font-semibold text-foreground">Acciones operativas</h2>
+      <p className="mt-1 text-xs text-muted">Usa estas acciones para actualizar requerimientos, apartar inventario o generar la requisición sugerida del servicio.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {canManageRequirements ? (
+          <form action={recalculateCateringRequirementsAction}>
+            <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
+            <input type="hidden" name="planId" value={planId} />
+            <KitchenSubmitButton pendingLabel="Recalculando..." variant={getVariant("refresh_requirements")} className="px-3 py-2 text-xs">
+              Actualizar requerimientos
+            </KitchenSubmitButton>
+          </form>
+        ) : null}
+        {canManageRequirements ? (
+          <form action={reserveInventoryForCateringPlanAction}>
+            <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
+            <input type="hidden" name="planId" value={planId} />
+            <KitchenSubmitButton pendingLabel="Apartando..." variant={getVariant("reserve_inventory")} className="px-3 py-2 text-xs">
+              Apartar inventario para este servicio
+            </KitchenSubmitButton>
+          </form>
+        ) : null}
+        {canManageRequisitions ? (
+          <form action={generateCateringRequisitionFromShortagesAction}>
+            <input type="hidden" name="tenantSlug" value={uiTenantSlug} />
+            <input type="hidden" name="planId" value={planId} />
+            <KitchenSubmitButton pendingLabel="Generando..." variant={getVariant("generate_requisition")} className="px-3 py-2 text-xs">
+              Generar requisición sugerida
+            </KitchenSubmitButton>
+          </form>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 async function PlanItemFlowSection({
   itemFlowPromise,
 }: {
@@ -479,7 +841,8 @@ async function PlanItemFlowSection({
 
   return (
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-      <h2 className="text-sm font-semibold text-foreground">Flujo por insumo</h2>
+      <h2 className="text-sm font-semibold text-foreground">Detalle operativo por insumo</h2>
+      <p className="mt-1 text-xs text-muted">Seguimiento por insumo: requerido, faltante, requisicionado, recibido, consumido y pendiente.</p>
       {itemFlow.length === 0 ? (
         <p className="mt-2 text-xs text-muted">Sin flujo consolidado para este plan.</p>
       ) : (
@@ -548,7 +911,7 @@ async function PlanWarningsSection({
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
       <h2 className="text-sm font-semibold text-foreground">Alertas operativas</h2>
       {warnings.length === 0 ? (
-        <p className="mt-2 text-xs text-emerald-600">Sin alertas operativas relevantes.</p>
+        <p className="mt-2 text-xs text-muted">Estado limpio. No hay alertas operativas relevantes.</p>
       ) : (
         <ul className="mt-2 space-y-1 text-xs">
           {warnings.map((warning) => (

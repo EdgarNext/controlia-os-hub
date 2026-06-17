@@ -16,6 +16,7 @@ import { KitchenMetricCard } from "../_components/kitchen-metric-card";
 import { KitchenPageHeader } from "../_components/kitchen-page-header";
 import { KitchenStatusBadge } from "../_components/kitchen-status-badge";
 import { resolveKitchenPage } from "../_lib/page-access";
+import { EventCateringBadge } from "./_components/event-catering-badge";
 
 type KitchenEventsPageProps = {
   params: Promise<{ tenantSlug: string }>;
@@ -49,12 +50,12 @@ export default async function KitchenEventsPage({ params }: KitchenEventsPagePro
     <div className="space-y-4">
       <KitchenPageHeader
         eyebrow="Catering"
-        title="Catering por Evento"
-        description="Directorio operativo de eventos. Crea y abre servicios de catering por evento."
+        title="Panel operativo de catering"
+        description="Vista general de servicios, faltantes y avance operativo de cocina por evento."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Link href={`/${tenantSlug}/kitchen/events/plans`} className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm">
-              Planes / Servicios
+              Abrir servicios
             </Link>
             {canReadRequisitions ? (
               <Link
@@ -104,20 +105,19 @@ async function CateringSummarySection({
   return (
     <>
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KitchenMetricCard label="Planes activos" value={summary.plans_by_status.draft + summary.plans_by_status.planned} />
+        <KitchenMetricCard label="Servicios activos" value={summary.active_services_count} />
         <KitchenMetricCard
-          label="Costo estimado catering"
+          label="Costo estimado total"
           value={`$${summary.total_estimated_catering_cost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
         />
-        <KitchenMetricCard label="Faltantes" value={summary.total_shortages} tone={summary.total_shortages > 0 ? "warning" : "default"} />
+        <KitchenMetricCard label="Servicios con faltantes" value={summary.services_with_shortages_count} tone={summary.services_with_shortages_count > 0 ? "warning" : "default"} />
         <KitchenMetricCard
-          label="Requisiciones (Borrador/Revisada/Aprobada)"
-          value={`${summary.requisitions_by_status.draft}/${summary.requisitions_by_status.reviewed}/${summary.requisitions_by_status.approved}`}
+          label="Servicios listos para requisición"
+          value={summary.services_ready_for_requisition_count}
         />
+        <KitchenMetricCard label="Servicios listos para consumo" value={summary.services_ready_for_consumption_count} />
       </section>
-      <p className="text-xs text-muted">
-        Las requisiciones aprobadas son sugerencias de compra; aún no descuentan inventario.
-      </p>
+      <p className="text-xs text-muted">Las requisiciones aprobadas siguen siendo sugerencias de compra; aún no descuentan inventario.</p>
     </>
   );
 }
@@ -148,7 +148,12 @@ async function CateringEventsTableSection({
 
   return (
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-      <h2 className="text-sm font-semibold text-foreground">Eventos disponibles</h2>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Eventos para planear catering</h2>
+          <p className="mt-1 text-xs text-muted">Eventos del tenant que pueden abrir o recibir servicios de catering.</p>
+        </div>
+      </div>
       <div className="mt-2 overflow-x-auto">
         <table className="w-full min-w-[980px] text-left text-sm">
           <thead className="text-xs uppercase tracking-[0.08em] text-muted">
@@ -172,10 +177,10 @@ async function CateringEventsTableSection({
                 <td className="py-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <Link href={`/${tenantSlug}/kitchen/events/${event.id}/catering`} className="underline underline-offset-2">
-                      Crear servicio
+                      Abrir servicios
                     </Link>
                     <Link href={`/${tenantSlug}/kitchen/events/${event.id}/catering`} className="underline underline-offset-2">
-                      Ver servicios
+                      Crear servicio
                     </Link>
                   </div>
                 </td>
@@ -198,7 +203,7 @@ async function RecentPlansSection({
   const planSummaries = await planSummariesPromise;
   return (
     <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-      <h2 className="text-sm font-semibold text-foreground">Planes recientes</h2>
+      <h2 className="text-sm font-semibold text-foreground">Servicios recientes</h2>
       {planSummaries.length === 0 ? (
         <p className="mt-2 text-sm text-muted">No hay planes de catering registrados.</p>
       ) : (
@@ -226,7 +231,9 @@ async function RecentPlansSection({
                     </Link>
                   </td>
                   <td className="py-2 text-right">{plan.recipe_count}</td>
-                  <td className="py-2 text-right">{plan.shortages_count}</td>
+                  <td className="py-2 text-right">
+                    {plan.shortages_count > 0 ? <EventCateringBadge label={`${plan.shortages_count} con faltante`} tone="warning" /> : <EventCateringBadge label="Sin faltantes" tone="success" />}
+                  </td>
                   <td className="py-2">
                     {plan.requisition_id ? (
                       <Link href={`/${tenantSlug}/kitchen/events/requisitions/${plan.requisition_id}`} className="underline underline-offset-2">

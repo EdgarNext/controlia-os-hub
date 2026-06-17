@@ -14,6 +14,17 @@ type ConsumptionLineEditorProps = {
 export function ConsumptionLineEditor({ tenantSlug, consumptionId, line, availability }: ConsumptionLineEditorProps) {
   const locationOptions = availability?.location_options ?? [];
   const useSearchable = locationOptions.length > 5;
+  const isOperationalInformative = availability?.stock_status === "operational_zero_cost_non_consumable";
+
+  if (isOperationalInformative) {
+    return (
+      <div className="min-w-72 rounded border border-border bg-surface-2 p-2 text-xs text-muted">
+        <p className="font-medium text-foreground">Línea informativa</p>
+        <p className="mt-1">Insumo operativo con costo cero; no consume inventario ni requiere ubicación.</p>
+      </div>
+    );
+  }
+
   return (
     <details className="min-w-72 rounded border border-border bg-surface-2 p-2">
       <summary className="cursor-pointer text-xs font-medium text-foreground">Ajustar / registrar excepción</summary>

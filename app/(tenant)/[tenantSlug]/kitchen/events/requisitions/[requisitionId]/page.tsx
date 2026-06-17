@@ -18,6 +18,16 @@ import {
   listPurchaseReceiptsForRequisition,
   listCateringRequisitionLines,
 } from "@/lib/kitchen/event-catering/queries";
+import { EventCateringBadge } from "../../_components/event-catering-badge";
+import {
+  classifyRequisitionLineProcurement,
+  resolveRequisitionLineFinancialTotal,
+} from "@/lib/kitchen/event-catering/procurement-classification";
+import type {
+  CateringRequisitionSupplierSummary,
+  EventCateringRequisitionLine,
+  EventCateringRequisitionLineProcurementStatus,
+} from "@/lib/kitchen/event-catering/types";
 import { KitchenActionRowSkeleton, KitchenTableSkeleton } from "../../../_components/kitchen-loading-skeletons";
 import { KitchenCriticalActionGroup } from "../../../_components/kitchen-critical-action-group";
 import { KitchenFormPendingFieldset } from "../../../_components/kitchen-form-pending-fieldset";
@@ -29,18 +39,52 @@ type KitchenCateringRequisitionDetailPageProps = {
   params: Promise<{ tenantSlug: string; requisitionId: string }>;
 };
 
-function resolveRequisitionLineFinancialTotal(line: Awaited<ReturnType<typeof listCateringRequisitionLines>>[number]) {
-  const approvedTotal = Number(line.approved_total_cost ?? 0);
-  if (approvedTotal > 0) return approvedTotal;
-  const quotedTotal = Number(line.quoted_total_cost ?? 0);
-  if (quotedTotal > 0) return quotedTotal;
-  const preliminaryTotal = Number(line.preliminary_total_cost ?? 0);
-  if (preliminaryTotal > 0) return preliminaryTotal;
-  const estimatedTotal = Number(line.estimated_total_cost ?? 0);
-  if (estimatedTotal > 0) return estimatedTotal;
-  const unitPrice = Number(line.approved_unit_price ?? line.quoted_unit_price ?? line.preliminary_unit_price ?? line.estimated_unit_cost ?? 0);
-  const purchaseQuantity = Number(line.requested_purchase_quantity ?? 0);
-  return purchaseQuantity > 0 ? purchaseQuantity * unitPrice : 0;
+function resolveProcurementStatus(line: EventCateringRequisitionLine): EventCateringRequisitionLineProcurementStatus {
+  return line.procurement_status ?? classifyRequisitionLineProcurement(line);
+}
+
+function getProcurementBadge(status: EventCateringRequisitionLineProcurementStatus): {
+  label: string;
+  tone: "success" | "warning" | "info" | "danger" | "muted";
+  detail: string;
+} {
+  if (status === "receivable_with_price") {
+    return {
+      label: "Recibible",
+      tone: "success",
+      detail: "La línea tiene cantidad y monto válidos para recepción.",
+    };
+  }
+  if (status === "operational_zero_cost_non_receivable") {
+    return {
+      label: "Zero-cost operativo",
+      tone: "info",
+      detail: "Insumo operativo con costo cero; no genera línea de recepción ni bloquea la compra.",
+    };
+  }
+  if (status === "missing_price") {
+    return {
+      label: "Falta precio",
+      tone: "warning",
+      detail: "Falta precio para una línea comprable; captura cotización antes de recibir.",
+    };
+  }
+  return {
+    label: "Revisión manual",
+    tone: "danger",
+    detail: "La línea requiere revisión manual antes de compra o recepción.",
+  };
+}
+
+function getSupplierSummaryStatusLabel(status: CateringRequisitionSupplierSummary["status_summary"]): string {
+  if (status === "approved") return "Precio aprobado";
+  if (status === "quoted") return "Precio cotizado";
+  if (status === "preliminary") return "Precio preliminar";
+  if (status === "operational_zero_cost") return "Zero-cost operativo";
+  if (status === "missing_price") return "Falta precio";
+  if (status === "missing_supplier") return "Falta proveedor";
+  if (status === "missing_purchase_option") return "Falta opción compra";
+  return "Mixto";
 }
 
 export default async function KitchenCateringRequisitionDetailPage({
@@ -150,6 +194,21 @@ async function RequisitionContentSection({
   const draftReceipts = receipts.filter((receipt) => receipt.status === "draft");
   const receivedReceipts = receipts.filter((receipt) => receipt.status === "received");
   const canceledReceipts = receipts.filter((receipt) => receipt.status === "canceled");
+  const enrichedLines = lines.map((line) => {
+    const procurementStatus = resolveProcurementStatus(line);
+    return {
+      ...line,
+      procurementStatus,
+      financialTotal: line.financial_total ?? resolveRequisitionLineFinancialTotal(line),
+    };
+  });
+  const receivableLines = enrichedLines.filter((line) => line.procurementStatus === "receivable_with_price");
+  const operationalZeroCostLines = enrichedLines.filter(
+    (line) => line.procurementStatus === "operational_zero_cost_non_receivable",
+  );
+  const blockingLines = enrichedLines.filter(
+    (line) => line.procurementStatus === "missing_price" || line.procurementStatus === "review_needed",
+  );
   const totals = lines.reduce(
     (acc, line) => {
       const preliminaryTotal = Number(line.preliminary_total_cost ?? 0) > 0
@@ -169,13 +228,16 @@ async function RequisitionContentSection({
     { preliminary: 0, quoted: 0, approved: 0 },
   );
   const purchaseReadyStatus = (() => {
-    const missingSupplier = lines.some((line) => line.supplier_id == null);
-    const missingPurchaseOption = lines.some((line) => line.purchase_option_id == null && line.purchase_warning != null);
-    const missingPricing = lines.some((line) => line.quoted_unit_price == null && line.preliminary_unit_price == null);
+    const actionableLines = enrichedLines.filter((line) => line.procurementStatus !== "operational_zero_cost_non_receivable");
+    const missingSupplier = actionableLines.some((line) => line.supplier_id == null);
+    const missingPurchaseOption = actionableLines.some(
+      (line) => line.purchase_option_id == null && line.purchase_warning != null,
+    );
     const total = requisition.status === "approved" ? totals.approved : requisition.status === "reviewed" ? totals.quoted : totals.preliminary;
     if (missingSupplier) return "Pendiente de proveedor";
     if (missingPurchaseOption) return "Pendiente de unidad de compra";
-    if (missingPricing) return "Pendiente de cotizar";
+    if (blockingLines.length > 0) return "Falta precio comprable";
+    if (receivableLines.length === 0 && operationalZeroCostLines.length > 0) return "Solo zero-cost operativo";
     if (total <= 0) return "Pendiente de cotizar";
     if (requisition.status === "reviewed" || requisition.status === "approved") return "Lista para compra";
     return "Pendiente de cotizar";
@@ -202,25 +264,22 @@ async function RequisitionContentSection({
     },
   );
   const receiptExpectedTotal = lines.reduce((acc, line) => {
-    const requestedQuantity = Number(line.requested_quantity ?? 0);
-    const expectedInventoryQuantity = Number(line.expected_inventory_quantity ?? requestedQuantity);
-    if (expectedInventoryQuantity <= 0) return acc;
+    const procurementStatus = resolveProcurementStatus(line);
+    if (procurementStatus !== "receivable_with_price") return acc;
     return acc + resolveRequisitionLineFinancialTotal(line);
   }, 0);
-  const hasReceivableLines =
-    lines.length > 0 &&
-    lines.every((line) => {
-      const requestedQuantity = Number(line.requested_quantity ?? 0);
-      const expectedInventoryQuantity = Number(line.expected_inventory_quantity ?? requestedQuantity);
-      return line.item_id != null && line.unit_id != null && requestedQuantity > 0 && expectedInventoryQuantity > 0 && resolveRequisitionLineFinancialTotal(line) > 0;
-    }) &&
-    receiptExpectedTotal > 0;
+  const hasReceivableLines = receivableLines.length > 0 && receiptExpectedTotal > 0;
+  const receiptBlockMessage =
+    blockingLines.length > 0
+      ? "Falta precio para una línea comprable; captura cotización antes de recibir."
+      : "No hay líneas recibibles para crear recepción.";
   const canCreateReceipt =
     canManage &&
     requisition.status === "approved" &&
     !existingDraftReceipt &&
     !existingReceivedReceipt &&
-    hasReceivableLines;
+    hasReceivableLines &&
+    blockingLines.length === 0;
 
   return (
     <>
@@ -305,9 +364,9 @@ async function RequisitionContentSection({
                     Ver recepción recibida
                   </a>
                 </div>
-              ) : !hasReceivableLines ? (
+              ) : !canCreateReceipt ? (
                 <span className="rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-xs text-warning">
-                  No se puede crear recepción: líneas o total inválidos
+                  {receiptBlockMessage}
                 </span>
               ) : (
                 <form action={createPurchaseReceiptFromRequisitionAction}>
@@ -355,7 +414,7 @@ async function RequisitionContentSection({
           <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
             <h2 className="text-sm font-semibold text-foreground">Resumen por proveedor</h2>
             <div className="mt-3 overflow-x-auto">
-              <table className="min-w-full text-xs"><thead><tr className="text-left text-muted"><th className="px-2 py-1">Proveedor</th><th className="px-2 py-1">Líneas</th><th className="px-2 py-1">Preliminar</th><th className="px-2 py-1">Cotizado</th><th className="px-2 py-1">Aprobado</th><th className="px-2 py-1">Pend. cotizar</th><th className="px-2 py-1">Sin opción compra</th><th className="px-2 py-1">Sin proveedor</th><th className="px-2 py-1">Estado</th></tr></thead>
+              <table className="min-w-full text-xs"><thead><tr className="text-left text-muted"><th className="px-2 py-1">Proveedor</th><th className="px-2 py-1">Líneas</th><th className="px-2 py-1">Preliminar</th><th className="px-2 py-1">Cotizado</th><th className="px-2 py-1">Aprobado</th><th className="px-2 py-1">Sin cot. manual</th><th className="px-2 py-1">Sin opción compra</th><th className="px-2 py-1">Sin proveedor</th><th className="px-2 py-1">Estado</th></tr></thead>
                 <tbody>
                   {supplierSummary.map((row) => (
                     <tr key={row.supplier_id ?? "no-supplier"} className="border-t border-border">
@@ -364,7 +423,7 @@ async function RequisitionContentSection({
                       <td className="px-2 py-1 text-foreground">${row.quoted_total.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className="px-2 py-1 text-foreground">${row.approved_total.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className="px-2 py-1 text-muted">{row.lines_without_quote}</td><td className="px-2 py-1 text-muted">{row.lines_without_purchase_option}</td><td className="px-2 py-1 text-muted">{row.lines_without_supplier}</td>
-                      <td className="px-2 py-1 text-foreground">{row.status_summary === "complete" ? "Completo" : row.status_summary === "missing_quote" ? "Falta precio" : row.status_summary === "missing_supplier" ? "Falta proveedor" : "Falta opción compra"}</td>
+                      <td className="px-2 py-1 text-foreground">{getSupplierSummaryStatusLabel(row.status_summary)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -402,9 +461,20 @@ async function RequisitionContentSection({
               <table className="min-w-full text-xs">
                 <thead><tr className="text-left text-muted"><th className="px-2 py-1">Insumo</th><th className="px-2 py-1">Faltante</th><th className="px-2 py-1">Ajustes</th><th className="px-2 py-1">Cantidad cotizada</th><th className="px-2 py-1">Presentación</th><th className="px-2 py-1">Cotización</th></tr></thead>
                 <tbody>
-                  {lines.map((line) => (
+                  {enrichedLines.map((line) => {
+                    const badge = getProcurementBadge(line.procurementStatus);
+                    const isOperationalZeroCost = line.procurementStatus === "operational_zero_cost_non_receivable";
+                    return (
                     <tr key={line.id} className="border-t border-border">
-                      <td className="px-2 py-1 text-foreground">{line.kitchen_inventory_items?.name ?? line.item_id.slice(0, 8)}</td>
+                      <td className="px-2 py-1 text-foreground">
+                        <div className="space-y-1">
+                          <p>{line.kitchen_inventory_items?.name ?? line.item_id.slice(0, 8)}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <EventCateringBadge label={badge.label} tone={badge.tone} />
+                            <span className="text-[11px] text-muted">{badge.detail}</span>
+                          </div>
+                        </div>
+                      </td>
                       <td className="px-2 py-1 text-foreground">{Number(line.requested_quantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {line.kitchen_inventory_units?.code ?? "ud"}</td>
                       <td className="px-2 py-1 text-foreground">
                         {canManage && isDraft ? (
@@ -432,7 +502,9 @@ async function RequisitionContentSection({
                           : "—"}
                       </td>
                       <td className="px-2 py-1 text-foreground">
-                        {canQuote ? (
+                        {isOperationalZeroCost ? (
+                          <span className="text-[11px] text-muted">No comprable</span>
+                        ) : canQuote ? (
                           <form action={updateRequisitionLinePurchaseOptionAction} className="flex items-center gap-1">
                             <input type="hidden" name="tenantSlug" value={tenantSlug} />
                             <input type="hidden" name="requisitionId" value={requisition.id} />
@@ -457,7 +529,12 @@ async function RequisitionContentSection({
                         ) : (line.kitchen_inventory_suppliers?.name ?? "Sin proveedor")}
                       </td>
                       <td className="px-2 py-1 text-foreground">
-                        {canQuote ? (
+                        {isOperationalZeroCost ? (
+                          <div className="space-y-1">
+                            <p className="text-[11px] text-muted">Costo aplicado: $0.00</p>
+                            <p className="text-[11px] text-muted">No requiere cotización manual</p>
+                          </div>
+                        ) : canQuote ? (
                           <div className="space-y-1">
                             <p className="text-[11px] text-muted">
                               Precio actual: $
@@ -498,7 +575,8 @@ async function RequisitionContentSection({
                         )}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

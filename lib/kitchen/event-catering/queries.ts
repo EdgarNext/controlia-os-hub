@@ -24,18 +24,49 @@ import type {
   EventCateringConsumptionLineAvailability,
   EventCateringConsumptionDraftReadiness,
   CateringPlanOperationalSummary,
+  CateringPlanPriceReviewSummary,
   CateringPlanItemFlowRow,
   CateringPlanWarning,
   EventCateringInventoryReversal,
   EventCateringInventoryReversalLine,
   EventCateringInventoryReversalTargetType,
   EventCateringReversalTargetSummary,
+  CateringPlanFinancialLine,
+  CateringPlanFinancialReport,
+  CateringFinancialDashboard,
+  CateringFinancialDashboardAlert,
+  CateringFinancialDashboardRow,
+  CateringFinancialDashboardStatus,
+  CateringFinancialDashboardSummary,
+  CateringPlanFinancialStatus,
+  CateringPlanFinancialSummary,
+  CateringPlanFinancialVarianceReason,
   ReadyRecipeForCatering,
   RequisitionLinePurchaseOptionAlternative,
 } from "./types";
+import {
+  classifyConsumptionItemStockBehavior,
+  isOperationalZeroCostWaterItemName,
+  classifyRequisitionLineProcurement,
+  resolveRequisitionLineFinancialTotal,
+} from "./procurement-classification";
 
 function round4(value: number): number {
   return Number(value.toFixed(4));
+}
+
+function isPositive(value: number | null | undefined): boolean {
+  return Number(value ?? 0) > 0.0001;
+}
+
+function nearlyEqual(left: number, right: number): boolean {
+  return Math.abs(left - right) <= 0.0001;
+}
+
+function isMaterialVariance(value: number, reference: number): boolean {
+  const absoluteValue = Math.abs(value);
+  const threshold = Math.max(100, Math.abs(reference) * 0.05);
+  return absoluteValue > threshold;
 }
 
 function ceilToMultiple(value: number, multiple: number): number {
@@ -312,6 +343,8 @@ export async function listCateringRequisitionLines(tenantSlug: string, requisiti
     kitchen_inventory_suppliers: Array.isArray(row.kitchen_inventory_suppliers)
       ? ((row.kitchen_inventory_suppliers[0] ?? null) as EventCateringRequisitionLine["kitchen_inventory_suppliers"])
       : ((row.kitchen_inventory_suppliers ?? null) as EventCateringRequisitionLine["kitchen_inventory_suppliers"]),
+    procurement_status: classifyRequisitionLineProcurement(row as unknown as EventCateringRequisitionLine),
+    financial_total: resolveRequisitionLineFinancialTotal(row as unknown as EventCateringRequisitionLine),
   }));
 }
 
@@ -441,10 +474,13 @@ export async function getCateringRequisitionSupplierSummary(
       preliminary_total: 0,
       quoted_total: 0,
       approved_total: 0,
+      receivable_line_count: 0,
+      operational_zero_cost_line_count: 0,
       lines_without_quote: 0,
       lines_without_purchase_option: 0,
       lines_without_supplier: 0,
-      status_summary: "complete",
+      lines_missing_price: 0,
+      status_summary: "mixed",
     };
     current.line_count += 1;
     current.preliminary_total += Number(line.preliminary_total_cost ?? line.estimated_total_cost ?? 0);
@@ -457,14 +493,21 @@ export async function getCateringRequisitionSupplierSummary(
     if (line.quoted_unit_price == null) current.lines_without_quote += 1;
     if (line.purchase_option_id == null) current.lines_without_purchase_option += 1;
     if (line.supplier_id == null) current.lines_without_supplier += 1;
+    if (line.procurement_status === "receivable_with_price") current.receivable_line_count += 1;
+    if (line.procurement_status === "operational_zero_cost_non_receivable") current.operational_zero_cost_line_count += 1;
+    if (line.procurement_status === "missing_price" || line.procurement_status === "review_needed") current.lines_missing_price += 1;
     grouped.set(key, current);
   }
 
   return Array.from(grouped.values()).map((row) => {
-    let statusSummary: CateringRequisitionSupplierSummary["status_summary"] = "complete";
+    let statusSummary: CateringRequisitionSupplierSummary["status_summary"] = "mixed";
     if (row.lines_without_supplier > 0) statusSummary = "missing_supplier";
     else if (row.lines_without_purchase_option > 0) statusSummary = "missing_purchase_option";
-    else if (row.lines_without_quote > 0) statusSummary = "missing_quote";
+    else if (row.lines_missing_price > 0) statusSummary = "missing_price";
+    else if (row.operational_zero_cost_line_count === row.line_count) statusSummary = "operational_zero_cost";
+    else if (row.approved_total > 0) statusSummary = "approved";
+    else if (row.quoted_total > 0 && row.lines_without_quote < row.line_count) statusSummary = "quoted";
+    else if (row.preliminary_total > 0) statusSummary = "preliminary";
     return {
       ...row,
       preliminary_total: Number(row.preliminary_total.toFixed(4)),
@@ -605,6 +648,10 @@ export async function getCateringOverviewSummary(tenantSlug: string): Promise<Ca
     total_requirements: 0,
     total_shortages: 0,
     total_shortage_estimated_cost: 0,
+    active_services_count: 0,
+    services_with_shortages_count: 0,
+    services_ready_for_requisition_count: 0,
+    services_ready_for_consumption_count: 0,
     requisitions_by_status: { draft: 0, reviewed: 0, approved: 0, canceled: 0 },
     approved_requisition_total: 0,
     draft_requisition_total: 0,
@@ -657,6 +704,18 @@ export async function getCateringOverviewSummary(tenantSlug: string): Promise<Ca
     }
   }
 
+  if (canReadPlans) {
+    const operationalRows = await listCateringPlanOperationalIndex(tenantSlug);
+    summary.active_services_count = operationalRows.filter((row) => row.plan_status === "draft" || row.plan_status === "planned").length;
+    summary.services_with_shortages_count = operationalRows.filter((row) => row.shortage_count > 0).length;
+    summary.services_ready_for_requisition_count = operationalRows.filter(
+      (row) => row.requirements_count > 0 && row.shortage_count > 0 && row.latest_requisition_status == null,
+    ).length;
+    summary.services_ready_for_consumption_count = operationalRows.filter(
+      (row) => row.operational_status === "Listo para consumo",
+    ).length;
+  }
+
   return summary;
 }
 
@@ -666,7 +725,7 @@ export async function listCateringPlanSummaries(tenantSlug: string): Promise<Cat
   const [plans, events, planRecipes, requirements, requisitions] = await Promise.all([
     supabase
       .from("event_catering_plans")
-      .select("id,event_id,name,status,estimated_total_cost")
+      .select("id,event_id,name,status,planned_guest_count,estimated_total_cost")
       .eq("tenant_id", tenant.tenantId)
       .order("updated_at", { ascending: false }),
     supabase
@@ -727,6 +786,7 @@ export async function listCateringPlanSummaries(tenantSlug: string): Promise<Cat
       event_id: plan.event_id,
       event_name: event?.name ?? null,
       event_starts_at: event?.starts_at ?? null,
+      planned_guest_count: plan.planned_guest_count != null ? Number(plan.planned_guest_count) : null,
       estimated_plan_cost: Number(plan.estimated_total_cost ?? 0),
       recipe_count: recipeCountByPlan.get(plan.id) ?? 0,
       requirements_count: reqStats.count,
@@ -750,7 +810,7 @@ export async function listCateringPlanOperationalIndex(
       const supabase = await getSupabaseServerClient();
       const { data, error } = await supabase
         .from("event_catering_requirements")
-        .select("plan_id,shortage_quantity,source_payload")
+        .select("plan_id,item_id,shortage_quantity,source_payload")
         .eq("tenant_id", tenant.tenantId);
       if (error) throw new Error(`No fue posible cargar requerimientos para índice operativo: ${error.message}`);
       return data ?? [];
@@ -773,6 +833,7 @@ export async function listCateringPlanOperationalIndex(
   }
 
   const reqByPlan = new Map<string, { requirements: number; shortages: number; reservedThisPlanTotal: number }>();
+  const requirementItemIdsByPlan = new Map<string, Set<string>>();
   for (const row of requirements) {
     const current = reqByPlan.get(row.plan_id) ?? { requirements: 0, shortages: 0, reservedThisPlanTotal: 0 };
     current.requirements += 1;
@@ -783,6 +844,28 @@ export async function listCateringPlanOperationalIndex(
     );
     current.reservedThisPlanTotal += reservedThisPlan;
     reqByPlan.set(row.plan_id, current);
+    const itemIds = requirementItemIdsByPlan.get(row.plan_id) ?? new Set<string>();
+    if (typeof (row as { item_id?: string }).item_id === "string") {
+      itemIds.add((row as { item_id: string }).item_id);
+    }
+    requirementItemIdsByPlan.set(row.plan_id, itemIds);
+  }
+
+  const allRequirementItemIds = [...new Set(Array.from(requirementItemIdsByPlan.values()).flatMap((itemIds) => [...itemIds]))];
+  const pricedItemIds = new Set<string>();
+  if (allRequirementItemIds.length > 0) {
+    const tenant = await resolveTenantModulePageContext(tenantSlug, "event_catering", "plans", "read");
+    const supabase = await getSupabaseServerClient();
+    const { data: currentPrices, error: currentPricesError } = await supabase
+      .from("kitchen_inventory_supplier_prices")
+      .select("item_id")
+      .eq("tenant_id", tenant.tenantId)
+      .eq("is_current", true)
+      .in("item_id", allRequirementItemIds);
+    if (currentPricesError) throw new Error(`No fue posible cargar precios vigentes para índice operativo: ${currentPricesError.message}`);
+    for (const row of currentPrices ?? []) {
+      pricedItemIds.add(row.item_id);
+    }
   }
 
   const statusFromSet = <T extends string>(set: Set<T> | undefined, draft: T, confirmed: T): "none" | "draft" | "received" | "confirmed" | "mixed" => {
@@ -796,6 +879,9 @@ export async function listCateringPlanOperationalIndex(
 
   return planSummaries.map((plan) => {
     const req = reqByPlan.get(plan.plan_id) ?? { requirements: plan.requirements_count, shortages: plan.shortages_count, reservedThisPlanTotal: 0 };
+    const requirementItemIds = [...(requirementItemIdsByPlan.get(plan.plan_id) ?? new Set<string>())];
+    const pricedItemsCount = requirementItemIds.filter((itemId) => pricedItemIds.has(itemId)).length;
+    const missingItemsCount = Math.max(requirementItemIds.length - pricedItemsCount, 0);
     const receiptStatus = statusFromSet(receiptStatusesByPlan.get(plan.plan_id), "draft", "received");
     const consumptionStatus = statusFromSet(consumptionStatusesByPlan.get(plan.plan_id), "draft", "confirmed");
     const hasConfirmedConsumption = consumptionStatus === "confirmed" || consumptionStatus === "mixed";
@@ -819,6 +905,24 @@ export async function listCateringPlanOperationalIndex(
                       ? "Listo para consumo"
                       : "Requisición pendiente";
 
+    const priceReviewStatus: CateringPlanOperationalIndexRow["price_review_status"] =
+      req.requirements === 0
+        ? "pending_requirements"
+        : missingItemsCount > 0
+          ? "missing_prices"
+          : requirementItemIds.length > 0
+            ? "priced"
+            : "ready_to_review";
+
+    const priceReviewLabel: CateringPlanOperationalIndexRow["price_review_label"] =
+      priceReviewStatus === "pending_requirements"
+        ? "Pendiente"
+        : priceReviewStatus === "missing_prices"
+          ? "Faltan precios"
+          : priceReviewStatus === "priced"
+            ? "Precios vigentes disponibles"
+            : "Informativo";
+
     return {
       plan_id: plan.plan_id,
       plan_name: plan.plan_name,
@@ -826,7 +930,7 @@ export async function listCateringPlanOperationalIndex(
       event_name: plan.event_name,
       event_date: plan.event_starts_at,
       expected_attendance: null,
-      planned_guest_count: null,
+      planned_guest_count: plan.planned_guest_count,
       plan_status: plan.plan_status,
       recipes_count: plan.recipe_count,
       requirements_count: req.requirements,
@@ -837,9 +941,96 @@ export async function listCateringPlanOperationalIndex(
       receipt_status_summary: receiptStatus as CateringPlanOperationalIndexRow["receipt_status_summary"],
       consumption_status_summary: consumptionStatus as CateringPlanOperationalIndexRow["consumption_status_summary"],
       reserved_this_plan_total: Number(req.reservedThisPlanTotal.toFixed(4)),
+      price_review_status: priceReviewStatus,
+      price_review_label: priceReviewLabel,
       operational_status: operationalStatus,
     } satisfies CateringPlanOperationalIndexRow;
   });
+}
+
+export async function getCateringPlanPriceReviewSummary(
+  tenantSlug: string,
+  planId: string,
+): Promise<CateringPlanPriceReviewSummary> {
+  const tenant = await resolveTenantModulePageContext(tenantSlug, "event_catering", "plans", "read");
+  const supabase = await getSupabaseServerClient();
+
+  const { data: requirements, error: requirementsError } = await supabase
+    .from("event_catering_requirements")
+    .select(
+      "item_id,kitchen_inventory_items:kitchen_inventory_items!event_catering_requirements_tenant_item_fkey(name),kitchen_inventory_units:kitchen_inventory_units!event_catering_requirements_tenant_unit_fkey(code),unit_id",
+    )
+    .eq("tenant_id", tenant.tenantId)
+    .eq("plan_id", planId);
+
+  if (requirementsError) {
+    throw new Error(`No fue posible cargar requerimientos para revisión de precios: ${requirementsError.message}`);
+  }
+
+  const requirementRows = requirements ?? [];
+  const itemMap = new Map<
+    string,
+    { item_id: string; item_name: string | null; unit_code: string | null }
+  >();
+
+  for (const row of requirementRows) {
+    const item = Array.isArray(row.kitchen_inventory_items) ? row.kitchen_inventory_items[0] : row.kitchen_inventory_items;
+    const unit = Array.isArray(row.kitchen_inventory_units) ? row.kitchen_inventory_units[0] : row.kitchen_inventory_units;
+    itemMap.set(row.item_id, {
+      item_id: row.item_id,
+      item_name: (item as { name?: string } | null)?.name ?? null,
+      unit_code: (unit as { code?: string } | null)?.code ?? null,
+    });
+  }
+
+  const itemIds = [...itemMap.keys()];
+  if (itemIds.length === 0) {
+    return {
+      required_items_count: 0,
+      items_with_current_price_count: 0,
+      items_without_current_price_count: 0,
+      latest_valid_from: null,
+      source_types: [],
+      missing_price_items: [],
+    };
+  }
+
+  const { data: currentPrices, error: currentPricesError } = await supabase
+    .from("kitchen_inventory_supplier_prices")
+    .select("item_id,valid_from,source_type")
+    .eq("tenant_id", tenant.tenantId)
+    .eq("is_current", true)
+    .in("item_id", itemIds);
+
+  if (currentPricesError) {
+    throw new Error(`No fue posible cargar precios vigentes para revisión de precios: ${currentPricesError.message}`);
+  }
+
+  const pricedItemIds = new Set<string>();
+  const sourceTypes = new Set<string>();
+  let latestValidFrom: string | null = null;
+
+  for (const row of currentPrices ?? []) {
+    pricedItemIds.add(row.item_id);
+    if (row.source_type) sourceTypes.add(row.source_type);
+    if (row.valid_from && (!latestValidFrom || row.valid_from > latestValidFrom)) {
+      latestValidFrom = row.valid_from;
+    }
+  }
+
+  const missingPriceItems = itemIds
+    .filter((itemId) => !pricedItemIds.has(itemId))
+    .map((itemId) => itemMap.get(itemId)!)
+    .sort((left, right) => (left.item_name ?? "").localeCompare(right.item_name ?? "", "es-MX"));
+
+  return {
+    required_items_count: itemIds.length,
+    items_with_current_price_count: pricedItemIds.size,
+    items_without_current_price_count: missingPriceItems.length,
+    latest_valid_from: latestValidFrom,
+    source_types: [...sourceTypes].sort(),
+    missing_price_items: missingPriceItems,
+  };
 }
 
 export async function listCateringRequisitionOperationalIndex(
@@ -998,40 +1189,27 @@ export async function listApprovedRequisitionsPendingReceipt(tenantSlug: string)
 
   const { data: lineRows, error: lineRowsError } = await supabase
     .from("event_catering_requisition_lines")
-    .select("requisition_id,item_id,unit_id,requested_quantity,requested_purchase_quantity,expected_inventory_quantity,approved_unit_price,approved_total_cost,quoted_unit_price,quoted_total_cost,preliminary_unit_price,preliminary_total_cost,estimated_unit_cost,estimated_total_cost")
+    .select("requisition_id,item_id,unit_id,requested_quantity,requested_purchase_quantity,expected_inventory_quantity,approved_unit_price,approved_total_cost,quoted_unit_price,quoted_total_cost,preliminary_unit_price,preliminary_total_cost,estimated_unit_cost,estimated_total_cost,kitchen_inventory_items:kitchen_inventory_items!event_catering_requisition_lines_tenant_item_fkey(name)")
     .eq("tenant_id", tenant.tenantId)
     .in("requisition_id", requisitionIds);
   if (lineRowsError) throw new Error(`No fue posible contar líneas de requisiciones: ${lineRowsError.message}`);
   const lineCountByReq = new Map<string, number>();
   const receivableLineCountByReq = new Map<string, number>();
+  const blockingLineCountByReq = new Map<string, number>();
   const expectedTotalByReq = new Map<string, number>();
   for (const row of lineRows ?? []) {
     lineCountByReq.set(row.requisition_id, (lineCountByReq.get(row.requisition_id) ?? 0) + 1);
-    const requestedQuantity = Number(row.requested_quantity ?? 0);
-    const expectedInventoryQuantity = Number(row.expected_inventory_quantity ?? requestedQuantity);
-    const explicitTotal = Number(row.approved_total_cost ?? 0) > 0
-      ? Number(row.approved_total_cost)
-      : Number(row.quoted_total_cost ?? 0) > 0
-        ? Number(row.quoted_total_cost)
-        : Number(row.preliminary_total_cost ?? 0) > 0
-          ? Number(row.preliminary_total_cost)
-          : Number(row.estimated_total_cost ?? 0);
-    const effectivePrice = Number(row.approved_unit_price ?? row.quoted_unit_price ?? row.preliminary_unit_price ?? row.estimated_unit_cost ?? 0);
-    const fallbackPurchaseQuantity = Number(row.requested_purchase_quantity ?? 0);
-    const fallbackTotal = fallbackPurchaseQuantity > 0 ? fallbackPurchaseQuantity * effectivePrice : 0;
-    const lineExpectedTotal = explicitTotal > 0 ? explicitTotal : fallbackTotal;
-    const isReceivable =
-      row.item_id != null &&
-      row.unit_id != null &&
-      requestedQuantity > 0 &&
-      expectedInventoryQuantity > 0 &&
-      lineExpectedTotal > 0;
-    if (isReceivable) {
+    const procurementStatus = classifyRequisitionLineProcurement(row as unknown as EventCateringRequisitionLine);
+    if (procurementStatus === "receivable_with_price") {
+      const lineExpectedTotal = resolveRequisitionLineFinancialTotal(row as unknown as EventCateringRequisitionLine);
       receivableLineCountByReq.set(row.requisition_id, (receivableLineCountByReq.get(row.requisition_id) ?? 0) + 1);
       expectedTotalByReq.set(
         row.requisition_id,
         (expectedTotalByReq.get(row.requisition_id) ?? 0) + lineExpectedTotal,
       );
+    }
+    if (procurementStatus === "missing_price" || procurementStatus === "review_needed") {
+      blockingLineCountByReq.set(row.requisition_id, (blockingLineCountByReq.get(row.requisition_id) ?? 0) + 1);
     }
   }
 
@@ -1039,8 +1217,9 @@ export async function listApprovedRequisitionsPendingReceipt(tenantSlug: string)
     const plan = Array.isArray(row.event_catering_plans) ? row.event_catering_plans[0] : row.event_catering_plans;
     const lineCount = lineCountByReq.get(row.id) ?? 0;
     const receivableLineCount = receivableLineCountByReq.get(row.id) ?? 0;
+    const blockingLineCount = blockingLineCountByReq.get(row.id) ?? 0;
     const expectedReceiptTotal = Number((expectedTotalByReq.get(row.id) ?? 0).toFixed(4));
-    const canCreateReceipt = lineCount > 0 && receivableLineCount === lineCount && expectedReceiptTotal > 0;
+    const canCreateReceipt = receivableLineCount > 0 && blockingLineCount === 0 && expectedReceiptTotal > 0;
     return {
       requisition_id: row.id,
       plan_id: row.plan_id,
@@ -1053,11 +1232,13 @@ export async function listApprovedRequisitionsPendingReceipt(tenantSlug: string)
       can_create_receipt: canCreateReceipt,
       receipt_block_reason: canCreateReceipt
         ? null
-        : lineCount === 0
+        : receivableLineCount === 0
           ? "Sin líneas recibibles"
-          : expectedReceiptTotal <= 0
-            ? "Total esperado inválido"
-            : "Líneas incompletas para recibir",
+          : blockingLineCount > 0
+            ? "Falta precio para una línea comprable"
+            : expectedReceiptTotal <= 0
+              ? "Total esperado inválido"
+              : "Líneas incompletas para recibir",
       status: row.status,
       updated_at: row.updated_at,
     };
@@ -1283,6 +1464,11 @@ export async function listConsumptionLines(
     kitchen_inventory_locations: Array.isArray(row.kitchen_inventory_locations)
       ? ((row.kitchen_inventory_locations[0] ?? null) as EventCateringConsumptionLine["kitchen_inventory_locations"])
       : ((row.kitchen_inventory_locations ?? null) as EventCateringConsumptionLine["kitchen_inventory_locations"]),
+    stock_status: classifyConsumptionItemStockBehavior(
+      Array.isArray(row.kitchen_inventory_items)
+        ? (row.kitchen_inventory_items[0] as { name?: string | null } | undefined)?.name
+        : (row.kitchen_inventory_items as { name?: string | null } | null)?.name,
+    ),
   }));
 }
 
@@ -1526,18 +1712,23 @@ async function buildConsumptionLineAvailability(
 
   for (const line of lines) {
     const planId = planByRecord.get(line.consumption_record_id) ?? null;
+    const stockStatus = classifyConsumptionItemStockBehavior(line.kitchen_inventory_items?.name ?? null);
     const totalOutQuantity = Number((Number(line.consumed_quantity ?? 0) + Number(line.waste_quantity ?? 0)).toFixed(4));
+    const ignoreForReadiness = stockStatus === "operational_zero_cost_non_consumable";
     const currentBreakdown = line.location_id
       ? summarize(line.item_id, line.location_id, planId)
       : summarizeAggregate(line.item_id, planId);
-    const missingLocation = totalOutQuantity > 0 && !line.location_id;
-    const hasSufficientBalance = totalOutQuantity <= 0 || currentBreakdown.available_quantity >= totalOutQuantity;
+    const missingLocation = !ignoreForReadiness && totalOutQuantity > 0 && !line.location_id;
+    const hasSufficientBalance =
+      ignoreForReadiness || totalOutQuantity <= 0 || currentBreakdown.available_quantity >= totalOutQuantity;
 
     let warningMessage: string | null = null;
-    if (!hasSufficientBalance) warningMessage = "Stock insuficiente";
+    if (!ignoreForReadiness && !hasSufficientBalance) warningMessage = "Stock insuficiente";
     else if (missingLocation) warningMessage = "Falta ubicación";
 
-    const locationOptions = (locations.data ?? [])
+    const locationOptions = ignoreForReadiness
+      ? []
+      : (locations.data ?? [])
       .map((location) => {
         const breakdown = summarize(line.item_id, location.id as string, planId);
         return {
@@ -1556,7 +1747,16 @@ async function buildConsumptionLineAvailability(
       unit_id: line.unit_id,
       unit_code: line.kitchen_inventory_units?.code ?? "ud",
       location_id: line.location_id,
-      ...currentBreakdown,
+      stock_status: stockStatus,
+      ignore_for_readiness: ignoreForReadiness,
+      ...(ignoreForReadiness
+        ? {
+            available_quantity: 0,
+            physical_balance: 0,
+            reserved_other_plans: 0,
+            reserved_this_plan: 0,
+          }
+        : currentBreakdown),
       total_out_quantity: totalOutQuantity,
       has_sufficient_balance: hasSufficientBalance,
       missing_location: missingLocation,
@@ -1646,10 +1846,11 @@ export function getConsumptionDraftReadiness(
     };
   }
 
-  const positiveOutput = availability.filter((line) => line.total_out_quantity > 0);
+  const actionableLines = availability.filter((line) => !line.ignore_for_readiness);
+  const positiveOutput = actionableLines.filter((line) => line.total_out_quantity > 0);
   const missingLocationCount = positiveOutput.filter((line) => line.missing_location).length;
   const insufficientStockCount = positiveOutput.filter((line) => !line.has_sufficient_balance).length;
-  const invalidQuantityCount = availability.filter((line) => line.total_out_quantity < 0).length;
+  const invalidQuantityCount = actionableLines.filter((line) => line.total_out_quantity < 0).length;
 
   if (positiveOutput.length === 0) {
     return {
@@ -1699,6 +1900,443 @@ export function getConsumptionDraftReadiness(
     insufficient_stock_count: 0,
     invalid_quantity_count: 0,
     positive_output_count: positiveOutput.length,
+  };
+}
+
+export async function getCateringPlanFinancialReport(
+  tenantSlug: string,
+  planId: string,
+): Promise<CateringPlanFinancialReport> {
+  const plan = await getCateringPlan(tenantSlug, planId);
+
+  if (!plan) {
+    throw new Error("No fue posible construir reporte financiero: plan no encontrado.");
+  }
+
+  const [event, requirements, requisitions, consumptionRecords] = await Promise.all([
+    getEventForCatering(tenantSlug, plan.event_id),
+    listCateringRequirements(tenantSlug, planId),
+    listCateringRequisitions(tenantSlug),
+    listConsumptionRecordsForPlan(tenantSlug, planId),
+  ]);
+  const planRequisitions = requisitions.filter((requisition) => requisition.plan_id === planId);
+
+  const receiptResults = await Promise.all(planRequisitions.map((requisition) => listPurchaseReceiptsForRequisition(tenantSlug, requisition.id)));
+  const receipts = receiptResults.flat();
+  const requisitionLinesResults = await Promise.all(
+    planRequisitions.map((requisition) => listCateringRequisitionLines(tenantSlug, requisition.id)),
+  );
+  const requisitionLines = requisitionLinesResults.flat();
+  const receivedReceipts = receipts.filter((receipt) => receipt.status === "received");
+  const receiptLineResults = await Promise.all(
+    receivedReceipts.map((receipt) => listPurchaseReceiptLines(tenantSlug, receipt.id)),
+  );
+  const receiptLines = receiptLineResults.flat();
+  const consumptionLineResults = await Promise.all(
+    consumptionRecords.map((record) => listConsumptionLines(tenantSlug, record.id)),
+  );
+  const consumptionLines = consumptionLineResults.flat();
+
+  const requisitionLineByItemUnit = new Map<string, EventCateringRequisitionLine>();
+  for (const line of requisitionLines) {
+    requisitionLineByItemUnit.set(`${line.item_id}:${line.unit_id}`, line);
+  }
+
+  const receiptLineAggByItemUnit = new Map<
+    string,
+    {
+      receivedQuantity: number;
+      receivedCost: number;
+      receivedUnitCost: number | null;
+      purchasePresentation: string | null;
+    }
+  >();
+  for (const line of receiptLines) {
+    const key = `${line.item_id}:${line.unit_id}`;
+    const current = receiptLineAggByItemUnit.get(key) ?? {
+      receivedQuantity: 0,
+      receivedCost: 0,
+      receivedUnitCost: null,
+      purchasePresentation: line.event_catering_requisition_lines?.purchase_units?.code ?? null,
+    };
+    current.receivedQuantity += Number(line.received_quantity ?? 0);
+    current.receivedCost += Number(line.received_total_cost ?? 0);
+    if (Number(line.received_quantity ?? 0) > 0) {
+      current.receivedUnitCost = Number(line.received_total_cost ?? 0) / Number(line.received_quantity ?? 1);
+    }
+    if (!current.purchasePresentation) {
+      current.purchasePresentation = line.event_catering_requisition_lines?.purchase_units?.code ?? null;
+    }
+    receiptLineAggByItemUnit.set(key, current);
+  }
+
+  const consumptionLineByRequirementId = new Map<string, EventCateringConsumptionLine>();
+  for (const line of consumptionLines) {
+    if (line.requirement_id) consumptionLineByRequirementId.set(line.requirement_id, line);
+  }
+
+  const lines: CateringPlanFinancialLine[] = requirements.map((requirement) => {
+    const key = `${requirement.item_id}:${requirement.unit_id}`;
+    const requisitionLine = requisitionLineByItemUnit.get(key) ?? null;
+    const receiptAgg = receiptLineAggByItemUnit.get(key) ?? null;
+    const consumptionLine = consumptionLineByRequirementId.get(requirement.id) ?? null;
+    const itemName = requirement.kitchen_inventory_items?.name ?? null;
+    const isOperationalZeroCost = isOperationalZeroCostWaterItemName(itemName);
+    const requiredQuantity = Number(requirement.required_quantity ?? 0);
+    const estimatedUnitCost = Number(requirement.estimated_unit_cost ?? 0);
+    const estimatedCost = Number(requirement.estimated_total_cost ?? 0);
+    const requisitionedQuantity = requisitionLine ? Number(requisitionLine.requested_quantity ?? 0) : null;
+    const receivedQuantity = receiptAgg ? Number(receiptAgg.receivedQuantity ?? 0) : null;
+    const consumedQuantity = consumptionLine && !isOperationalZeroCost ? Number(consumptionLine.consumed_quantity ?? 0) : 0;
+    const wasteQuantity = consumptionLine && !isOperationalZeroCost ? Number(consumptionLine.waste_quantity ?? 0) : 0;
+    const receivedUnitCost = receiptAgg?.receivedUnitCost ?? null;
+    const consumedCost = !isOperationalZeroCost
+      ? round4(consumedQuantity * Number(consumptionLine?.unit_cost ?? estimatedUnitCost))
+      : 0;
+    const wasteCost = !isOperationalZeroCost
+      ? round4(wasteQuantity * Number(consumptionLine?.unit_cost ?? estimatedUnitCost))
+      : 0;
+    const remainingQuantity =
+      receiptAgg && !isOperationalZeroCost
+        ? round4(Math.max(Number(receiptAgg.receivedQuantity ?? 0) - consumedQuantity - wasteQuantity, 0))
+        : 0;
+    const remainingValue =
+      receiptAgg && !isOperationalZeroCost
+        ? round4(remainingQuantity * Number(receiptAgg.receivedUnitCost ?? 0))
+        : 0;
+    const requisitionedCost = isOperationalZeroCost ? 0 : requisitionLine ? Number(requisitionLine.financial_total ?? 0) : null;
+    const receivedCost = isOperationalZeroCost ? 0 : receiptAgg ? round4(receiptAgg.receivedCost) : null;
+    const requisitionUnitCost =
+      isOperationalZeroCost || !requisitionLine
+        ? 0
+        : Number(
+            requisitionLine.approved_unit_price ??
+              requisitionLine.quoted_unit_price ??
+              requisitionLine.preliminary_unit_price ??
+              requisitionLine.estimated_unit_cost ??
+              0,
+          );
+    const priceVariance =
+      receivedUnitCost != null && !isOperationalZeroCost ? round4(receivedUnitCost - estimatedUnitCost) : null;
+    const quantityPresentationVariance =
+      receivedCost != null && !isOperationalZeroCost ? round4(receivedCost - estimatedCost) : null;
+
+    let primaryVarianceReason: CateringPlanFinancialVarianceReason = "ok";
+    if (isOperationalZeroCost) primaryVarianceReason = "operational_zero_cost";
+    else if (wasteCost > 0) primaryVarianceReason = "waste";
+    else if (remainingValue > 0) primaryVarianceReason = "over_purchase_remaining_inventory";
+    else if (
+      receivedCost != null &&
+      receivedCost > estimatedCost &&
+      (Number(requisitionLine?.expected_surplus_quantity ?? 0) > 0 || (receivedQuantity ?? 0) > requiredQuantity)
+    ) {
+      primaryVarianceReason =
+        Number(requisitionLine?.expected_surplus_quantity ?? 0) > 0
+          ? "minimum_purchase_or_multiple"
+          : "purchase_presentation";
+    } else if (
+      priceVariance != null &&
+      Math.abs(priceVariance) > 0.0001 &&
+      receivedQuantity != null &&
+      nearlyEqual(receivedQuantity, requiredQuantity)
+    ) {
+      primaryVarianceReason = "price_change";
+    } else if (
+      receivedQuantity != null &&
+      requisitionedQuantity != null &&
+      receivedQuantity + 0.0001 < requisitionedQuantity
+    ) {
+      primaryVarianceReason = "received_less_than_requisitioned";
+    } else if (
+      receivedQuantity != null &&
+      consumedQuantity + wasteQuantity + 0.0001 < receivedQuantity &&
+      remainingValue > 0
+    ) {
+      primaryVarianceReason = "consumed_less_than_received";
+    } else if (!receiptAgg && requisitionLine && requisitionLine.procurement_status !== "operational_zero_cost_non_receivable") {
+      primaryVarianceReason = "review_needed";
+    }
+
+    let financialStatus: CateringPlanFinancialStatus = "ok";
+    if (isOperationalZeroCost) financialStatus = "operational_zero_cost";
+    else if (wasteCost > 0) financialStatus = "waste";
+    else if (remainingValue > 0 && receivedCost != null && receivedCost > estimatedCost) financialStatus = "over_purchase";
+    else if (remainingValue > 0) financialStatus = "remaining_inventory";
+    else if (receivedCost == null || consumptionLine == null) financialStatus = "partial";
+    else if (primaryVarianceReason === "review_needed") financialStatus = "review_needed";
+
+    return {
+      itemId: requirement.item_id,
+      itemName,
+      unitId: requirement.unit_id,
+      unitCode: requirement.kitchen_inventory_units?.code ?? null,
+      supplierId: requisitionLine?.supplier_id ?? null,
+      supplierName: requisitionLine?.kitchen_inventory_suppliers?.name ?? null,
+      purchasePresentation: receiptAgg?.purchasePresentation ?? requisitionLine?.purchase_units?.code ?? null,
+      requiredQuantity: round4(requiredQuantity),
+      requisitionedQuantity: requisitionedQuantity != null ? round4(requisitionedQuantity) : null,
+      receivedQuantity: receivedQuantity != null ? round4(receivedQuantity) : null,
+      consumedQuantity: round4(consumedQuantity),
+      wasteQuantity: round4(wasteQuantity),
+      remainingQuantity: round4(remainingQuantity),
+      estimatedUnitCost: round4(estimatedUnitCost),
+      requisitionUnitCost: requisitionLine ? round4(requisitionUnitCost) : null,
+      receivedUnitCost: receivedUnitCost != null ? round4(receivedUnitCost) : null,
+      estimatedCost: round4(estimatedCost),
+      requisitionedCost: requisitionedCost != null ? round4(requisitionedCost) : null,
+      receivedCost: receivedCost != null ? round4(receivedCost) : null,
+      consumedCost,
+      wasteCost,
+      remainingValue,
+      priceVariance: priceVariance != null ? round4(priceVariance) : null,
+      quantityPresentationVariance: quantityPresentationVariance != null ? round4(quantityPresentationVariance) : null,
+      financialStatus,
+      primaryVarianceReason,
+      isOperationalZeroCost,
+      isFinanciallyRelevant: !isOperationalZeroCost,
+    };
+  });
+
+  const estimatedInitialCost = round4(Number(plan.estimated_total_cost ?? 0));
+  const requisitionedCost = round4(lines.reduce((acc, line) => acc + Number(line.requisitionedCost ?? 0), 0));
+  const receivedCost = round4(lines.reduce((acc, line) => acc + Number(line.receivedCost ?? 0), 0));
+  const consumedCost = round4(lines.reduce((acc, line) => acc + line.consumedCost, 0));
+  const wasteCost = round4(lines.reduce((acc, line) => acc + line.wasteCost, 0));
+  const remainingInventoryValue = round4(lines.reduce((acc, line) => acc + line.remainingValue, 0));
+  const grossPurchaseVariance = round4(receivedCost - estimatedInitialCost);
+  const netConsumptionVariance = round4(consumedCost + wasteCost - estimatedInitialCost);
+  const plannedGuestCount = plan.planned_guest_count != null ? Number(plan.planned_guest_count) : null;
+  const hasPersonBase = isPositive(plannedGuestCount);
+
+  const summary: CateringPlanFinancialSummary = {
+    estimatedInitialCost,
+    requisitionedCost,
+    receivedCost,
+    consumedCost,
+    wasteCost,
+    remainingInventoryValue,
+    grossPurchaseVariance,
+    netConsumptionVariance,
+    recoverableValue: remainingInventoryValue,
+    estimatedCostPerPerson: hasPersonBase ? round4(estimatedInitialCost / Number(plannedGuestCount)) : null,
+    purchasedCostPerPerson: hasPersonBase ? round4(receivedCost / Number(plannedGuestCount)) : null,
+    consumedCostPerPerson: hasPersonBase ? round4(consumedCost / Number(plannedGuestCount)) : null,
+    wasteCostPerPerson: hasPersonBase ? round4(wasteCost / Number(plannedGuestCount)) : null,
+    requirementsCount: requirements.length,
+    requisitionCount: planRequisitions.length,
+    receiptCount: receipts.length,
+    receivedReceiptCount: receivedReceipts.length,
+    consumptionCount: consumptionRecords.length,
+    confirmedConsumptionCount: consumptionRecords.filter((record) => record.status === "confirmed").length,
+    operationalZeroCostLineCount: lines.filter((line) => line.isOperationalZeroCost).length,
+    reportStatus:
+      consumptionRecords.some((record) => record.status === "confirmed")
+        ? "closed"
+        : receivedReceipts.length > 0 || planRequisitions.length > 0
+          ? "in_progress"
+          : "partial",
+    varianceExplainedByRemaining:
+      Math.abs(grossPurchaseVariance) > 0.0001 &&
+      Math.abs(remainingInventoryValue - grossPurchaseVariance) <= 0.01,
+  };
+
+  const narrative = (() => {
+    const estimated = estimatedInitialCost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const purchased = receivedCost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const consumed = consumedCost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const waste = wasteCost.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const remaining = remainingInventoryValue.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (summary.reportStatus === "partial") {
+      return `El servicio se estimó en $${estimated}. Aún no hay recepción y consumo suficientes para un cierre financiero completo, por lo que el reporte se muestra como parcial.`;
+    }
+    if (summary.varianceExplainedByRemaining) {
+      return `El servicio se estimó en $${estimated}. Se recibió/compró por $${purchased}. El consumo real fue $${consumed} y la merma fue $${waste}. La diferencia de compra contra estimado se explica principalmente por inventario remanente valuado en $${remaining}, por lo que no se observa sobreconsumo relevante del evento.`;
+    }
+    if (wasteCost > 0 && netConsumptionVariance > 0.0001) {
+      return `El servicio se estimó en $${estimated}. Se recibió/compró por $${purchased}. El consumo real fue $${consumed} y la merma fue $${waste}, por lo que la variación neta del evento requiere revisión operativa.`;
+    }
+    if (netConsumptionVariance > 0.0001) {
+      return `El servicio se estimó en $${estimated}. El consumo real fue $${consumed}, por encima del estimado inicial. La compra total fue $${purchased}; conviene revisar precio, cantidad y remanente por insumo.`;
+    }
+    return `El servicio se estimó en $${estimated}. Se recibió/compró por $${purchased}. El consumo real fue $${consumed} y la merma fue $${waste}. La compra puede ser mayor que el costo real del evento cuando parte del valor queda recuperable como inventario remanente.`;
+  })();
+
+  return {
+    eventId: plan.event_id,
+    eventName: event?.name ?? null,
+    eventStartsAt: event?.starts_at ?? null,
+    planId: plan.id,
+    planName: plan.name ?? null,
+    planStatus: plan.status,
+    plannedGuestCount,
+    requisitionIds: planRequisitions.map((row) => row.id),
+    receiptIds: receipts.map((row) => row.id),
+    consumptionIds: consumptionRecords.map((row) => row.id),
+    summary,
+    lines: lines.sort((left, right) => {
+      const difference = Number(right.remainingValue ?? 0) - Number(left.remainingValue ?? 0);
+      if (Math.abs(difference) > 0.0001) return difference;
+      return String(left.itemName ?? "").localeCompare(String(right.itemName ?? ""), "es-MX");
+    }),
+    narrative,
+  };
+}
+
+export async function getCateringFinancialDashboard(
+  tenantSlug: string,
+): Promise<CateringFinancialDashboard> {
+  const plans = await listCateringPlans(tenantSlug);
+  if (plans.length === 0) {
+    return {
+      rows: [],
+      summary: {
+        servicesAnalyzed: 0,
+        estimatedInitialCostTotal: 0,
+        requisitionedCostTotal: 0,
+        receivedCostTotal: 0,
+        consumedCostTotal: 0,
+        wasteCostTotal: 0,
+        remainingInventoryValueTotal: 0,
+        grossPurchaseVarianceTotal: 0,
+        netConsumptionVarianceTotal: 0,
+        servicesRequiringReview: 0,
+      },
+      narrative: "Aún no hay servicios de catering con información financiera suficiente.",
+    };
+  }
+
+  const reports = await Promise.all(
+    plans.map((plan) => getCateringPlanFinancialReport(tenantSlug, plan.id)),
+  );
+
+  const rows: CateringFinancialDashboardRow[] = reports.map((report) => {
+    const { summary } = report;
+
+    const financialStatus: CateringFinancialDashboardStatus = (() => {
+      if (
+        summary.reportStatus === "partial" ||
+        (summary.receivedReceiptCount === 0 && summary.confirmedConsumptionCount === 0)
+      ) return "partial";
+      if (summary.wasteCost > 0 && isMaterialVariance(summary.wasteCost, summary.receivedCost || summary.estimatedInitialCost)) {
+        return "review_required";
+      }
+      if (isMaterialVariance(summary.netConsumptionVariance, summary.estimatedInitialCost)) {
+        return "review_required";
+      }
+      if (summary.confirmedConsumptionCount > 0) return "closed";
+      if (summary.consumptionCount > 0) return "consumed";
+      if (summary.receivedReceiptCount > 0) return "received";
+      if (summary.requisitionCount > 0) return "requisitioned";
+      return "planned";
+    })();
+
+    const alerts: CateringFinancialDashboardAlert[] = [];
+    if (summary.reportStatus === "partial") alerts.push("partial_report");
+    if (isMaterialVariance(summary.grossPurchaseVariance, summary.estimatedInitialCost)) {
+      alerts.push("purchase_above_estimate");
+    }
+    if (
+      summary.receivedCost > 0 &&
+      summary.remainingInventoryValue > summary.receivedCost * 0.1
+    ) {
+      alerts.push("high_remaining_inventory");
+    }
+    if (isMaterialVariance(summary.netConsumptionVariance, summary.estimatedInitialCost) && summary.netConsumptionVariance > 0) {
+      alerts.push("over_consumption");
+    }
+    if (summary.wasteCost > 0 && isMaterialVariance(summary.wasteCost, summary.receivedCost || summary.estimatedInitialCost)) {
+      alerts.push("material_waste");
+    }
+    if (alerts.length === 0) {
+      alerts.push("no_material_issue");
+    }
+
+    const alertLabel = (() => {
+      if (alerts.includes("over_consumption")) return "Sobreconsumo";
+      if (alerts.includes("material_waste")) return "Merma relevante";
+      if (alerts.includes("high_remaining_inventory")) return "Remanente alto";
+      if (alerts.includes("purchase_above_estimate")) return "Compra mayor al estimado";
+      if (alerts.includes("partial_report")) return "Reporte parcial";
+      return "Sin problema relevante";
+    })();
+
+    const operationalStatus =
+      financialStatus === "closed"
+        ? "Cerrado"
+        : financialStatus === "consumed"
+          ? "Consumido"
+          : financialStatus === "received"
+            ? "Recibido"
+            : financialStatus === "requisitioned"
+              ? "Requisicionado"
+              : financialStatus === "review_required"
+                ? "Requiere revisión"
+                : "Planeado";
+
+    const reading = summary.varianceExplainedByRemaining
+      ? "Compra mayor explicada por remanente recuperable."
+      : alerts.includes("over_consumption")
+        ? "El costo real del evento excede el estimado."
+        : alerts.includes("material_waste")
+          ? "La merma requiere revisión."
+          : alerts.includes("partial_report")
+            ? "Falta cierre financiero completo."
+            : "Servicio alineado sin hallazgo relevante.";
+
+    return {
+      eventId: report.eventId,
+      eventName: report.eventName,
+      eventDate: report.eventStartsAt,
+      planId: report.planId,
+      planName: report.planName,
+      operationalStatus,
+      financialStatus,
+      estimatedInitialCost: summary.estimatedInitialCost,
+      requisitionedCost: summary.requisitionedCost,
+      receivedCost: summary.receivedCost,
+      consumedCost: summary.consumedCost,
+      wasteCost: summary.wasteCost,
+      remainingInventoryValue: summary.remainingInventoryValue,
+      grossPurchaseVariance: summary.grossPurchaseVariance,
+      netConsumptionVariance: summary.netConsumptionVariance,
+      costPerPerson: summary.consumedCostPerPerson,
+      plannedGuestCount: report.plannedGuestCount,
+      alerts,
+      alertLabel,
+      reading,
+      detailHref: `/${tenantSlug}/kitchen/events/${report.eventId}/catering/${report.planId}`,
+    };
+  });
+
+  rows.sort((left, right) => {
+    const reviewScore = Number(right.financialStatus === "review_required") - Number(left.financialStatus === "review_required");
+    if (reviewScore !== 0) return reviewScore;
+    const varianceScore = Math.abs(right.grossPurchaseVariance) - Math.abs(left.grossPurchaseVariance);
+    if (Math.abs(varianceScore) > 0.0001) return varianceScore;
+    return new Date(right.eventDate ?? 0).getTime() - new Date(left.eventDate ?? 0).getTime();
+  });
+
+  const summary: CateringFinancialDashboardSummary = {
+    servicesAnalyzed: rows.length,
+    estimatedInitialCostTotal: round4(rows.reduce((acc, row) => acc + row.estimatedInitialCost, 0)),
+    requisitionedCostTotal: round4(rows.reduce((acc, row) => acc + row.requisitionedCost, 0)),
+    receivedCostTotal: round4(rows.reduce((acc, row) => acc + row.receivedCost, 0)),
+    consumedCostTotal: round4(rows.reduce((acc, row) => acc + row.consumedCost, 0)),
+    wasteCostTotal: round4(rows.reduce((acc, row) => acc + row.wasteCost, 0)),
+    remainingInventoryValueTotal: round4(rows.reduce((acc, row) => acc + row.remainingInventoryValue, 0)),
+    grossPurchaseVarianceTotal: round4(rows.reduce((acc, row) => acc + row.grossPurchaseVariance, 0)),
+    netConsumptionVarianceTotal: round4(rows.reduce((acc, row) => acc + row.netConsumptionVariance, 0)),
+    servicesRequiringReview: rows.filter((row) => row.financialStatus === "review_required").length,
+  };
+
+  const narrative = rows.length === 0
+    ? "Aún no hay servicios de catering con información financiera suficiente."
+    : `En el periodo visible se analizaron ${rows.length.toLocaleString("es-MX")} servicios. La compra total fue de $${summary.receivedCostTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, el consumo real fue de $${summary.consumedCostTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} y quedó remanente valorizado en $${summary.remainingInventoryValueTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Los servicios con mayor variación se explican principalmente por presentaciones de compra, remanentes o merma.`;
+
+  return {
+    rows,
+    summary,
+    narrative,
   };
 }
 

@@ -108,7 +108,21 @@ export type EventCateringRequisitionLine = {
   kitchen_inventory_units?: { id: string; code: string; name: string } | null;
   purchase_units?: { id: string; code: string; name: string } | null;
   kitchen_inventory_suppliers?: { id: string; name: string } | null;
+  procurement_status?: EventCateringRequisitionLineProcurementStatus;
+  financial_total?: number;
 };
+
+export type EventCateringRequisitionLineProcurementStatus =
+  | "receivable_with_price"
+  | "missing_price"
+  | "operational_zero_cost_non_receivable"
+  | "review_needed";
+
+export type EventCateringConsumptionLineStockStatus =
+  | "stock_consumable"
+  | "operational_zero_cost_non_consumable"
+  | "manual_consumption_only"
+  | "review_needed";
 
 export type RequisitionLinePurchaseOptionAlternative = {
   purchase_option_id: string;
@@ -138,6 +152,10 @@ export type CateringOverviewSummary = {
   total_requirements: number;
   total_shortages: number;
   total_shortage_estimated_cost: number;
+  active_services_count: number;
+  services_with_shortages_count: number;
+  services_ready_for_requisition_count: number;
+  services_ready_for_consumption_count: number;
   requisitions_by_status: Record<"draft" | "reviewed" | "approved" | "canceled", number>;
   approved_requisition_total: number;
   draft_requisition_total: number;
@@ -150,6 +168,7 @@ export type CateringPlanSummary = {
   event_id: string;
   event_name: string | null;
   event_starts_at: string | null;
+  planned_guest_count: number | null;
   estimated_plan_cost: number;
   recipe_count: number;
   requirements_count: number;
@@ -177,6 +196,8 @@ export type CateringPlanOperationalIndexRow = {
   receipt_status_summary: "none" | "draft" | "received" | "mixed";
   consumption_status_summary: "none" | "draft" | "confirmed" | "mixed";
   reserved_this_plan_total: number;
+  price_review_status: "pending_requirements" | "ready_to_review" | "priced" | "missing_prices";
+  price_review_label: "Pendiente" | "Informativo" | "Faltan precios" | "Precios vigentes disponibles";
   operational_status:
     | "Servicio cerrado"
     | "Sin recetas"
@@ -269,10 +290,21 @@ export type CateringRequisitionSupplierSummary = {
   preliminary_total: number;
   quoted_total: number;
   approved_total: number;
+  receivable_line_count: number;
+  operational_zero_cost_line_count: number;
   lines_without_quote: number;
   lines_without_purchase_option: number;
   lines_without_supplier: number;
-  status_summary: "complete" | "missing_quote" | "missing_supplier" | "missing_purchase_option";
+  lines_missing_price: number;
+  status_summary:
+    | "approved"
+    | "quoted"
+    | "preliminary"
+    | "operational_zero_cost"
+    | "missing_price"
+    | "missing_supplier"
+    | "missing_purchase_option"
+    | "mixed";
 };
 
 export type EventCateringPurchaseReceipt = {
@@ -388,6 +420,7 @@ export type EventCateringConsumptionLine = {
   kitchen_inventory_items?: { id: string; name: string } | null;
   kitchen_inventory_units?: { id: string; code: string; name: string } | null;
   kitchen_inventory_locations?: { id: string; name: string } | null;
+  stock_status?: EventCateringConsumptionLineStockStatus;
 };
 
 export type ConsumptionLineLocationAvailability = {
@@ -406,6 +439,8 @@ export type EventCateringConsumptionLineAvailability = {
   unit_id: string;
   unit_code: string;
   location_id: string | null;
+  stock_status: EventCateringConsumptionLineStockStatus;
+  ignore_for_readiness: boolean;
   available_quantity: number;
   physical_balance: number;
   reserved_other_plans: number;
@@ -510,6 +545,173 @@ export type CateringPlanOperationalSummary = {
   operational_status_label: string;
   variance_received_vs_required: number;
   variance_consumed_vs_received: number;
+};
+
+export type CateringPlanFinancialVarianceReason =
+  | "ok"
+  | "price_change"
+  | "supplier_change"
+  | "purchase_presentation"
+  | "minimum_purchase_or_multiple"
+  | "over_purchase_remaining_inventory"
+  | "received_less_than_requisitioned"
+  | "consumed_less_than_received"
+  | "waste"
+  | "operational_zero_cost"
+  | "review_needed";
+
+export type CateringPlanFinancialStatus =
+  | "ok"
+  | "remaining_inventory"
+  | "over_purchase"
+  | "waste"
+  | "operational_zero_cost"
+  | "partial"
+  | "review_needed";
+
+export type CateringPlanFinancialSummary = {
+  estimatedInitialCost: number;
+  requisitionedCost: number;
+  receivedCost: number;
+  consumedCost: number;
+  wasteCost: number;
+  remainingInventoryValue: number;
+  grossPurchaseVariance: number;
+  netConsumptionVariance: number;
+  recoverableValue: number;
+  estimatedCostPerPerson: number | null;
+  purchasedCostPerPerson: number | null;
+  consumedCostPerPerson: number | null;
+  wasteCostPerPerson: number | null;
+  requirementsCount: number;
+  requisitionCount: number;
+  receiptCount: number;
+  receivedReceiptCount: number;
+  consumptionCount: number;
+  confirmedConsumptionCount: number;
+  operationalZeroCostLineCount: number;
+  reportStatus: "partial" | "closed" | "in_progress";
+  varianceExplainedByRemaining: boolean;
+};
+
+export type CateringPlanFinancialLine = {
+  itemId: string;
+  itemName: string | null;
+  unitId: string;
+  unitCode: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  purchasePresentation: string | null;
+  requiredQuantity: number;
+  requisitionedQuantity: number | null;
+  receivedQuantity: number | null;
+  consumedQuantity: number | null;
+  wasteQuantity: number | null;
+  remainingQuantity: number | null;
+  estimatedUnitCost: number | null;
+  requisitionUnitCost: number | null;
+  receivedUnitCost: number | null;
+  estimatedCost: number;
+  requisitionedCost: number | null;
+  receivedCost: number | null;
+  consumedCost: number;
+  wasteCost: number;
+  remainingValue: number;
+  priceVariance: number | null;
+  quantityPresentationVariance: number | null;
+  financialStatus: CateringPlanFinancialStatus;
+  primaryVarianceReason: CateringPlanFinancialVarianceReason;
+  isOperationalZeroCost: boolean;
+  isFinanciallyRelevant: boolean;
+};
+
+export type CateringPlanFinancialReport = {
+  eventId: string;
+  eventName: string | null;
+  eventStartsAt: string | null;
+  planId: string;
+  planName: string | null;
+  planStatus: EventCateringPlan["status"];
+  plannedGuestCount: number | null;
+  requisitionIds: string[];
+  receiptIds: string[];
+  consumptionIds: string[];
+  summary: CateringPlanFinancialSummary;
+  lines: CateringPlanFinancialLine[];
+  narrative: string;
+};
+
+export type CateringFinancialDashboardStatus =
+  | "planned"
+  | "requisitioned"
+  | "received"
+  | "consumed"
+  | "closed"
+  | "partial"
+  | "review_required";
+
+export type CateringFinancialDashboardAlert =
+  | "high_remaining_inventory"
+  | "purchase_above_estimate"
+  | "over_consumption"
+  | "material_waste"
+  | "partial_report"
+  | "no_material_issue";
+
+export type CateringFinancialDashboardRow = {
+  eventId: string;
+  eventName: string | null;
+  eventDate: string | null;
+  planId: string;
+  planName: string | null;
+  operationalStatus: string;
+  financialStatus: CateringFinancialDashboardStatus;
+  estimatedInitialCost: number;
+  requisitionedCost: number;
+  receivedCost: number;
+  consumedCost: number;
+  wasteCost: number;
+  remainingInventoryValue: number;
+  grossPurchaseVariance: number;
+  netConsumptionVariance: number;
+  costPerPerson: number | null;
+  plannedGuestCount: number | null;
+  alerts: CateringFinancialDashboardAlert[];
+  alertLabel: string;
+  reading: string;
+  detailHref: string;
+};
+
+export type CateringFinancialDashboardSummary = {
+  servicesAnalyzed: number;
+  estimatedInitialCostTotal: number;
+  requisitionedCostTotal: number;
+  receivedCostTotal: number;
+  consumedCostTotal: number;
+  wasteCostTotal: number;
+  remainingInventoryValueTotal: number;
+  grossPurchaseVarianceTotal: number;
+  netConsumptionVarianceTotal: number;
+  servicesRequiringReview: number;
+};
+
+export type CateringFinancialDashboard = {
+  rows: CateringFinancialDashboardRow[];
+  summary: CateringFinancialDashboardSummary;
+  narrative: string;
+};
+
+export type CateringPlanPriceReviewSummary = {
+  required_items_count: number;
+  items_with_current_price_count: number;
+  items_without_current_price_count: number;
+  latest_valid_from: string | null;
+  source_types: string[];
+  missing_price_items: Array<{
+    item_id: string;
+    item_name: string | null;
+    unit_code: string | null;
+  }>;
 };
 
 export type CateringPlanItemFlowRow = {

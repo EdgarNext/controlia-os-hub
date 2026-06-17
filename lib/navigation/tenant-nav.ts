@@ -192,18 +192,18 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
         iconKey: "reports",
         match: "prefix",
         moduleKeys: ["event_catering"],
-        pageKey: "plans",
+        pageKey: "overview",
         children: [
           {
             href: (tenantSlug) => `/${tenantSlug}/kitchen/events`,
-            label: "Eventos",
+            label: "Panel operativo",
             match: "exact",
             moduleKeys: ["event_catering"],
-            pageKey: "plans",
+            pageKey: "overview",
           },
           {
             href: (tenantSlug) => `/${tenantSlug}/kitchen/events/plans`,
-            label: "Planes / Servicios",
+            label: "Servicios",
             match: "prefix",
             moduleKeys: ["event_catering"],
             pageKey: "plans",
