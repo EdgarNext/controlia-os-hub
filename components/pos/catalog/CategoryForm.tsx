@@ -1,9 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import type { CategoryActionState } from "@/actions/pos/catalog/categories.actions";
 import { Button } from "@/components/ui/button";
+import { getPublicCatalogImageUrl } from "@/lib/pos/catalog/images";
 import type { PosCatalogCategoryFormValues } from "@/types/pos-catalog";
 
 type CategoryFormProps = {
@@ -13,6 +15,7 @@ type CategoryFormProps = {
   returnHref?: string;
   categoryId?: string;
   initialValues?: PosCatalogCategoryFormValues;
+  initialImagePath?: string | null;
   submitLabel: string;
 };
 
@@ -28,12 +31,18 @@ export function CategoryForm({
   returnHref,
   categoryId,
   initialValues,
+  initialImagePath,
   submitLabel,
 }: CategoryFormProps) {
   const [state, formAction, isPending] = useActionState(action, initialState);
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const currentImageUrl = useMemo(() => getPublicCatalogImageUrl(initialImagePath), [initialImagePath]);
 
   return (
-    <form action={formAction} className="space-y-4 rounded-[var(--radius-base)] border border-border bg-surface p-4">
+    <form
+      action={formAction}
+      className="space-y-4 rounded-[var(--radius-base)] border border-border bg-surface p-4"
+    >
       <input type="hidden" name="tenantSlug" value={tenantSlug} />
       {returnHref ? <input type="hidden" name="returnPath" value={returnHref} /> : null}
       {categoryId ? <input type="hidden" name="categoryId" value={categoryId} /> : null}
@@ -73,6 +82,32 @@ export function CategoryForm({
         />
         Activa
       </label>
+
+      <div className="space-y-2">
+        <label className="block text-sm text-muted">Imagen de la categoría</label>
+        <input
+          type="file"
+          name="image"
+          accept="image/*"
+          onChange={(event) => setSelectedImage(event.target.files?.[0] ?? null)}
+          className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
+        />
+        {selectedImage ? (
+          <p className="text-xs text-muted">Archivo seleccionado: {selectedImage.name}</p>
+        ) : null}
+        {currentImageUrl ? (
+          <Image
+            src={currentImageUrl}
+            alt="Imagen actual de la categoría"
+            width={96}
+            height={96}
+            className="h-24 w-24 rounded-[var(--radius-base)] border border-border object-cover"
+            unoptimized
+          />
+        ) : (
+          <p className="text-xs text-muted">Sin imagen cargada.</p>
+        )}
+      </div>
 
       {state.error ? (
         <p className="rounded-[var(--radius-base)] border border-danger/40 bg-danger-soft px-3 py-2 text-sm text-danger">

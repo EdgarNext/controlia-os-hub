@@ -52,6 +52,23 @@ function toBoolean(input: FormDataEntryValue | null): boolean {
   return String(input ?? "") === "on";
 }
 
+function getImageFile(formData: FormData): File | null {
+  const file = formData.get("image");
+  if (!file || typeof file !== "object") {
+    return null;
+  }
+
+  if (!(file instanceof File)) {
+    return null;
+  }
+
+  if (typeof file.size !== "number" || file.size <= 0) {
+    return null;
+  }
+
+  return file;
+}
+
 function parseSortOrder(input: FormDataEntryValue | null): number {
   const raw = String(input ?? "").trim();
   if (!raw) {
@@ -146,11 +163,13 @@ export async function createCategoryAction(
 
   try {
     const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "categories", "manage");
+    const imageFile = getImageFile(formData);
 
     await createCatalogCategory({
       tenantId: tenant.tenantId,
       actorUserId: user.id,
       input: validation.input,
+      imageFile,
     });
 
     const redirectPath = resolveRedirectPath(formData, categoryListPath(tenant.tenantSlug));
@@ -193,12 +212,14 @@ export async function updateCategoryAction(
 
   try {
     const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "categories", "manage");
+    const imageFile = getImageFile(formData);
 
     await updateCatalogCategory({
       tenantId: tenant.tenantId,
       id: categoryId,
       actorUserId: user.id,
       input: validation.input,
+      imageFile,
     });
 
     const redirectPath = resolveRedirectPath(formData, categoryListPath(tenant.tenantSlug));

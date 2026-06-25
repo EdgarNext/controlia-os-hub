@@ -1,5 +1,7 @@
+import Image from "next/image";
 import Link from "next/link";
 import { StatePanel } from "@/components/ui/state-panel";
+import { getPublicCatalogImageUrl } from "@/lib/pos/catalog/images";
 import type { PosCatalogCategoryListItem } from "@/types/pos-catalog";
 
 function formatDateTime(value?: string | null): string {
@@ -39,6 +41,7 @@ export function CategoryList({
       <table className="w-full text-left text-sm">
         <thead className="bg-surface-2 text-xs uppercase tracking-[0.08em] text-muted">
           <tr>
+            <th className="px-4 py-3 font-semibold">Imagen</th>
             <th className="px-4 py-3 font-semibold">Nombre</th>
             <th className="px-4 py-3 font-semibold">Estado</th>
             <th className="px-4 py-3 font-semibold">Actualizado</th>
@@ -51,9 +54,24 @@ export function CategoryList({
             const editHref = tenantSlug
               ? editHrefBuilder?.(tenantSlug, category.id) ?? `/${tenantSlug}/pos/catalog/categories/${category.id}/edit`
               : null;
+            const imageUrl = getPublicCatalogImageUrl(category.image_path);
 
             return (
               <tr key={category.id} className="border-t border-border">
+                <td className="px-4 py-3">
+                  {imageUrl ? (
+                    <Image
+                      src={imageUrl}
+                      alt={`Imagen de ${category.name}`}
+                      width={48}
+                      height={48}
+                      className="h-12 w-12 rounded-[var(--radius-base)] border border-border object-cover"
+                      unoptimized
+                    />
+                  ) : (
+                    <span className="text-xs text-muted">Sin imagen</span>
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   <p className="font-medium text-foreground">{category.name}</p>
                   <p className="text-xs text-muted">Orden: {category.sort_order}</p>

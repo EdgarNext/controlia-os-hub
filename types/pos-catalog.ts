@@ -2,7 +2,7 @@ import type { PosCatalogCategory, PosCatalogItem } from "@/types/pos";
 
 export type PosCatalogCategoryListItem = Pick<
   PosCatalogCategory,
-  "id" | "tenant_id" | "name" | "sort_order" | "is_active" | "deleted_at" | "updated_at"
+  "id" | "tenant_id" | "name" | "sort_order" | "is_active" | "image_path" | "deleted_at" | "updated_at"
 > & {
   created_at?: string | null;
   created_by?: string | null;

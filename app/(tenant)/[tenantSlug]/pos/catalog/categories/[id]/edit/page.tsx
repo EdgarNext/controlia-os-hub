@@ -88,6 +88,7 @@ export default async function CategoryEditPage({ params }: CategoryEditPageProps
         categoryId={result.category.id}
         cancelHref={listPath}
         submitLabel="Guardar cambios"
+        initialImagePath={result.category.image_path}
         initialValues={{
           name: result.category.name,
           sort_order: result.category.sort_order,

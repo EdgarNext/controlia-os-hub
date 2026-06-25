@@ -48,7 +48,7 @@ export async function listCatalogCategories({
   const { data, error } = await supabase
     .from("catalog_categories")
     .select(
-      "id, tenant_id, name, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at",
+      "id, tenant_id, name, sort_order, is_active, image_path, created_at, created_by, updated_at, updated_by, deleted_at",
     )
     .eq("tenant_id", tenantId)
     .order("sort_order", { ascending: true })
@@ -89,7 +89,7 @@ export async function getCatalogCategoryById({
   const { data, error } = await supabase
     .from("catalog_categories")
     .select(
-      "id, tenant_id, name, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at",
+      "id, tenant_id, name, sort_order, is_active, image_path, created_at, created_by, updated_at, updated_by, deleted_at",
     )
     .eq("tenant_id", tenantId)
     .eq("id", id)

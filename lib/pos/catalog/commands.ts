@@ -11,6 +11,7 @@ type CreateCatalogCategoryInput = {
   tenantId: string;
   actorUserId: string;
   input: PosCatalogCategoryFormValues;
+  imageFile?: File | null;
 };
 
 type UpdateCatalogCategoryInput = {
@@ -18,6 +19,7 @@ type UpdateCatalogCategoryInput = {
   id: string;
   actorUserId: string;
   input: PosCatalogCategoryFormValues;
+  imageFile?: File | null;
 };
 
 type CreateCatalogProductInput = {
@@ -99,10 +101,38 @@ async function uploadCatalogItemImage(input: {
   return imagePath;
 }
 
+async function uploadCatalogCategoryImage(input: {
+  tenantId: string;
+  categoryId: string;
+  imageFile: File;
+}): Promise<string> {
+  const imagePath = getCatalogImagePath({
+    tenantId: input.tenantId,
+    kind: "categories",
+    id: input.categoryId,
+    file: input.imageFile,
+  });
+
+  const supabase = await getSupabaseServerClient();
+  const { error } = await supabase.storage
+    .from(CATALOG_IMAGES_BUCKET)
+    .upload(imagePath, input.imageFile, {
+      upsert: true,
+      contentType: input.imageFile.type || undefined,
+    });
+
+  if (error) {
+    throw new Error(`Unable to upload category image: ${error.message}`);
+  }
+
+  return imagePath;
+}
+
 export async function createCatalogCategory({
   tenantId,
   actorUserId,
   input,
+  imageFile = null,
 }: CreateCatalogCategoryInput): Promise<PosCatalogCategoryListItem> {
   const supabase = await getSupabaseServerClient();
   const nowIso = new Date().toISOString();
@@ -119,7 +149,7 @@ export async function createCatalogCategory({
       updated_at: nowIso,
     })
     .select(
-      "id, tenant_id, name, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at",
+      "id, tenant_id, name, sort_order, is_active, image_path, created_at, created_by, updated_at, updated_by, deleted_at",
     )
     .single();
 
@@ -127,7 +157,37 @@ export async function createCatalogCategory({
     throw new Error(`Unable to create catalog category: ${error.message}`);
   }
 
-  return data as PosCatalogCategoryListItem;
+  let created = data as PosCatalogCategoryListItem;
+
+  if (imageFile) {
+    const imagePath = await uploadCatalogCategoryImage({
+      tenantId,
+      categoryId: created.id,
+      imageFile,
+    });
+
+    const { data: updatedData, error: imageUpdateError } = await supabase
+      .from("catalog_categories")
+      .update({
+        image_path: imagePath,
+        updated_by: actorUserId,
+        updated_at: nowIso,
+      })
+      .eq("tenant_id", tenantId)
+      .eq("id", created.id)
+      .select(
+        "id, tenant_id, name, sort_order, is_active, image_path, created_at, created_by, updated_at, updated_by, deleted_at",
+      )
+      .single();
+
+    if (imageUpdateError) {
+      throw new Error(`Unable to save category image path: ${imageUpdateError.message}`);
+    }
+
+    created = updatedData as PosCatalogCategoryListItem;
+  }
+
+  return created;
 }
 
 export async function updateCatalogCategory({
@@ -135,23 +195,35 @@ export async function updateCatalogCategory({
   id,
   actorUserId,
   input,
+  imageFile = null,
 }: UpdateCatalogCategoryInput): Promise<PosCatalogCategoryListItem> {
   const supabase = await getSupabaseServerClient();
   const nowIso = new Date().toISOString();
 
+  const updatePayload: Record<string, unknown> = {
+    name: input.name,
+    sort_order: input.sort_order,
+    is_active: input.is_active,
+    updated_by: actorUserId,
+    updated_at: nowIso,
+  };
+
+  if (imageFile) {
+    const imagePath = await uploadCatalogCategoryImage({
+      tenantId,
+      categoryId: id,
+      imageFile,
+    });
+    updatePayload.image_path = imagePath;
+  }
+
   const { data, error } = await supabase
     .from("catalog_categories")
-    .update({
-      name: input.name,
-      sort_order: input.sort_order,
-      is_active: input.is_active,
-      updated_by: actorUserId,
-      updated_at: nowIso,
-    })
+    .update(updatePayload)
     .eq("tenant_id", tenantId)
     .eq("id", id)
     .select(
-      "id, tenant_id, name, sort_order, is_active, created_at, created_by, updated_at, updated_by, deleted_at",
+      "id, tenant_id, name, sort_order, is_active, image_path, created_at, created_by, updated_at, updated_by, deleted_at",
     )
     .maybeSingle();
 
