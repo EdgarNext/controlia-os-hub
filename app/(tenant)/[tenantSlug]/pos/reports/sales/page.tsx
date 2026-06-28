@@ -6,7 +6,7 @@ import { PosSalesMetricCards } from "@/components/pos/reports/sales/PosSalesMetr
 import { PosSalesReportHeader } from "@/components/pos/reports/sales/PosSalesReportHeader";
 import { PosSalesTrendChart } from "@/components/pos/reports/sales/PosSalesTrendChart";
 import { StatePanel } from "@/components/ui/state-panel";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getPosSalesReport } from "@/lib/pos/reports/sales";
 import {
   buildPosReportsFiltersFromSearchParams,
@@ -37,7 +37,7 @@ async function loadPosSalesPage(
   searchParams: PosReportsSearchParams,
 ): Promise<PosSalesPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "reports", "read");
+    const tenant = await resolveSalesPosTypePageContext(tenantSlug, "reports", ["variants"], "read");
     const { defaultFilters, filters } = buildPosReportsFiltersFromSearchParams(searchParams);
     const report = await getPosSalesReport({
       tenantId: tenant.tenantId,

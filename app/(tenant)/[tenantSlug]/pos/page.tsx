@@ -34,6 +34,12 @@ export default async function PosPage({ params }: PosPageProps) {
             description: "Gestiona el catálogo clásico basado en catalog_items.",
             visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
           },
+          {
+            href: `/${tenant.tenantSlug}/pos/reports?view=income`,
+            title: "Reportes POS simple",
+            description: "Consulta ingresos, productos y órdenes del POS simple.",
+            visible: hasModulePageAccess(accessMap.reports ?? "none", "read"),
+          },
         ].filter((link) => link.visible)
       : tenant.posType === "variants"
         ? [

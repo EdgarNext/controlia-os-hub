@@ -5,7 +5,7 @@ import { PosCashierShiftReportHeader } from "@/components/pos/reports/cashier-sh
 import { PosCashierShiftTable } from "@/components/pos/reports/cashier-shift/PosCashierShiftTable";
 import { PosReportsOverviewFilters } from "@/components/pos/reports/overview/PosReportsOverviewFilters";
 import { StatePanel } from "@/components/ui/state-panel";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getPosCashierShiftReport } from "@/lib/pos/reports/cashier-shift";
 import {
   buildPosReportsFiltersFromSearchParams,
@@ -36,7 +36,7 @@ async function loadPosCashierShiftPage(
   searchParams: PosReportsSearchParams,
 ): Promise<PosCashierShiftPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "reports", "read");
+    const tenant = await resolveSalesPosTypePageContext(tenantSlug, "reports", ["variants"], "read");
     const { defaultFilters, filters } = buildPosReportsFiltersFromSearchParams(searchParams);
     const report = await getPosCashierShiftReport({
       tenantId: tenant.tenantId,

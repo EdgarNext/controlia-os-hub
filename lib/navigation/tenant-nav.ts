@@ -70,6 +70,14 @@ const cafeSimpleNavDomain: TenantNavDomainConfig = {
       moduleKeys: ["sales_pos"],
       pageKey: "products",
     },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/reports?view=income`,
+      label: "Reportes POS simple",
+      iconKey: "reports",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "reports",
+    },
   ],
 };
 

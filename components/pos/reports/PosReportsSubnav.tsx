@@ -2,9 +2,11 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { SegmentedTabs, type SegmentedTab } from "@/components/layout/SegmentedTabs";
+import type { TenantPosType } from "@/lib/auth/tenant-pos-type";
 
 type PosReportsSubnavProps = {
   tenantSlug: string;
+  posType: TenantPosType;
 };
 
 function buildHref(basePath: string, query: string) {
@@ -35,11 +37,47 @@ function resolveActiveKey(pathname: string) {
   return "overview";
 }
 
-export function PosReportsSubnav({ tenantSlug }: PosReportsSubnavProps) {
+export function PosReportsSubnav({ tenantSlug, posType }: PosReportsSubnavProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const activeKey =
+    posType === "simple"
+      ? searchParams.get("view") === "products" || searchParams.get("view") === "orders"
+        ? (searchParams.get("view") as "products" | "orders")
+        : "income"
+      : resolveActiveKey(pathname);
+
+  if (posType === "simple") {
+    const baseParams = new URLSearchParams(searchParams.toString());
+    baseParams.delete("page");
+    baseParams.delete("orderId");
+
+    const simpleTabs: SegmentedTab[] = [
+      {
+        key: "income",
+        label: "Ingresos",
+        href: buildHref(`/${tenantSlug}/pos/reports`, new URLSearchParams({ ...Object.fromEntries(baseParams.entries()), view: "income" }).toString()),
+      },
+      {
+        key: "products",
+        label: "Productos",
+        href: buildHref(`/${tenantSlug}/pos/reports`, new URLSearchParams({ ...Object.fromEntries(baseParams.entries()), view: "products" }).toString()),
+      },
+      {
+        key: "orders",
+        label: "Ordenes",
+        href: buildHref(`/${tenantSlug}/pos/reports`, new URLSearchParams({ ...Object.fromEntries(baseParams.entries()), view: "orders" }).toString()),
+      },
+    ];
+
+    return (
+      <div className="-mx-1 overflow-x-auto px-1 pb-1">
+        <SegmentedTabs tabs={simpleTabs} activeKey={activeKey} />
+      </div>
+    );
+  }
+
   const query = searchParams.toString();
-  const activeKey = resolveActiveKey(pathname);
 
   const tabs: SegmentedTab[] = [
     {

@@ -5,7 +5,7 @@ import { PosAlertsReportHeader } from "@/components/pos/reports/alerts/PosAlerts
 import { PosAlertsSummaryCards } from "@/components/pos/reports/alerts/PosAlertsSummaryCards";
 import { PosReportsOverviewFilters } from "@/components/pos/reports/overview/PosReportsOverviewFilters";
 import { StatePanel } from "@/components/ui/state-panel";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getPosAlertsReport } from "@/lib/pos/reports/alerts";
 import {
   buildPosReportsFiltersFromSearchParams,
@@ -36,7 +36,7 @@ async function loadPosAlertsPage(
   searchParams: PosReportsSearchParams,
 ): Promise<PosAlertsPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "reports", "read");
+    const tenant = await resolveSalesPosTypePageContext(tenantSlug, "reports", ["variants"], "read");
     const { defaultFilters, filters } = buildPosReportsFiltersFromSearchParams(searchParams);
     const report = await getPosAlertsReport({
       tenantId: tenant.tenantId,

@@ -5,7 +5,7 @@ import { PosCashiersMetricCards } from "@/components/pos/reports/cashiers/PosCas
 import { PosCashiersReportHeader } from "@/components/pos/reports/cashiers/PosCashiersReportHeader";
 import { PosCashiersTable } from "@/components/pos/reports/cashiers/PosCashiersTable";
 import { StatePanel } from "@/components/ui/state-panel";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getPosCashiersReport } from "@/lib/pos/reports/cashiers";
 import {
   buildPosReportsFiltersFromSearchParams,
@@ -36,7 +36,7 @@ async function loadPosCashiersPage(
   searchParams: PosReportsSearchParams,
 ): Promise<PosCashiersPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "reports", "read");
+    const tenant = await resolveSalesPosTypePageContext(tenantSlug, "reports", ["variants"], "read");
     const { defaultFilters, filters } = buildPosReportsFiltersFromSearchParams(searchParams);
     const report = await getPosCashiersReport({
       tenantId: tenant.tenantId,
