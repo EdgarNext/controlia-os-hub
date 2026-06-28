@@ -7,7 +7,7 @@ import { CatalogSectionHeader } from "@/components/pos/catalog/CatalogSectionHea
 import { Card } from "@/components/ui/card";
 import { StatePanel } from "@/components/ui/state-panel";
 import { ProductList } from "@/components/pos/catalog/ProductList";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { listCatalogCategories, listCatalogProducts } from "@/lib/pos/catalog/queries";
 
 type ProductsPageProps = {
@@ -37,7 +37,12 @@ function isRedirectErrorLike(error: unknown): boolean {
 
 async function loadCatalogProductsPageData(tenantSlug: string): Promise<CatalogProductsPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "products", "read");
+    const tenant = await resolveSalesPosTypePageContext(
+      tenantSlug,
+      "products",
+      ["simple"],
+      "read",
+    );
     const [products, categories] = await Promise.all([
       listCatalogProducts({ tenantId: tenant.tenantId }),
       listCatalogCategories({ tenantId: tenant.tenantId }),

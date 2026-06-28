@@ -1,4 +1,4 @@
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { buildProductTemplateCsv } from "@/lib/pos/catalog/csv-transfer";
 
 type ProductsTemplateRouteProps = {
@@ -7,7 +7,12 @@ type ProductsTemplateRouteProps = {
 
 export async function GET(_request: Request, { params }: ProductsTemplateRouteProps) {
   const { tenantSlug } = await params;
-  const tenant = await resolveSalesPosPageContext(tenantSlug, "products", "manage");
+  const tenant = await resolveSalesPosTypePageContext(
+    tenantSlug,
+    "products",
+    ["simple"],
+    "manage",
+  );
   const csv = await buildProductTemplateCsv(tenant.tenantId);
 
   return new Response(csv, {

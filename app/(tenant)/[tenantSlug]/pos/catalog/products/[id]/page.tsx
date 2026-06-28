@@ -187,6 +187,29 @@ async function loadProductDetailPageData(
     }
 
     // Etapa 1 de la migración UX: esta vista convive con el flujo legado y solo reutiliza la capa v2 existente.
+    if (tenant.posType === "simple") {
+      const [legacyCategories, legacyProducts] = await Promise.all([
+        listLegacyCatalogCategoriesForSelect({ tenantId: tenant.tenantId }),
+        listCatalogProducts({ tenantId: tenant.tenantId }),
+      ]);
+      const legacyProduct = legacyProducts.find((item) => item.id === productId) ?? null;
+
+      if (!legacyProduct) {
+        notFound();
+      }
+
+      return {
+        ok: true,
+        mode: "legacy",
+        tenantSlug: tenant.tenantSlug,
+        tenantName: tenant.tenantName,
+        canManage: hasModulePageAccess(currentLevel, "manage"),
+        product: legacyProduct,
+        categories: legacyCategories,
+        legacyProducts,
+      };
+    }
+
     const [categories, products, variants, modifierGroups, modifierOptions, assignments, comboSlots, comboSlotOptions] =
       await Promise.all([
         listCatalogV2CategoriesForSelect(tenant.tenantId),
@@ -223,6 +246,10 @@ async function loadProductDetailPageData(
           comboSlotOptionId: toSingleQueryParam(searchParams.comboSlotOptionId),
         },
       };
+    }
+
+    if (tenant.posType === "variants") {
+      notFound();
     }
 
     const [legacyCategories, legacyProducts] = await Promise.all([

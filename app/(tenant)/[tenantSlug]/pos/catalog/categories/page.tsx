@@ -6,7 +6,7 @@ import { CatalogSectionHeader } from "@/components/pos/catalog/CatalogSectionHea
 import { Card } from "@/components/ui/card";
 import { StatePanel } from "@/components/ui/state-panel";
 import { CategoryList } from "@/components/pos/catalog/CategoryList";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { listCatalogCategories } from "@/lib/pos/catalog/queries";
 
 type CategoriesPageProps = {
@@ -35,7 +35,12 @@ function isRedirectErrorLike(error: unknown): boolean {
 
 async function loadCatalogCategoriesPageData(tenantSlug: string): Promise<CatalogCategoriesPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "categories", "read");
+    const tenant = await resolveSalesPosTypePageContext(
+      tenantSlug,
+      "categories",
+      ["simple", "variants"],
+      "read",
+    );
     const categories = await listCatalogCategories({ tenantId: tenant.tenantId });
 
     return {

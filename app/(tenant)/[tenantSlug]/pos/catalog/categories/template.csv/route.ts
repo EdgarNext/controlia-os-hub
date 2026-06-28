@@ -1,5 +1,5 @@
 import { buildCategoryTemplateCsv } from "@/lib/pos/catalog/csv-transfer";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 
 type CategoriesTemplateRouteProps = {
   params: Promise<{ tenantSlug: string }>;
@@ -7,7 +7,12 @@ type CategoriesTemplateRouteProps = {
 
 export async function GET(_request: Request, { params }: CategoriesTemplateRouteProps) {
   const { tenantSlug } = await params;
-  const tenant = await resolveSalesPosPageContext(tenantSlug, "categories", "manage");
+  const tenant = await resolveSalesPosTypePageContext(
+    tenantSlug,
+    "categories",
+    ["simple", "variants"],
+    "manage",
+  );
   const csv = await buildCategoryTemplateCsv(tenant.tenantId);
 
   return new Response(csv, {

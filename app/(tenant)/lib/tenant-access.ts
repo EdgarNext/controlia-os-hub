@@ -1,3 +1,5 @@
+import type { TenantModuleKey } from "@/lib/auth/module-page-access";
+import { assertCurrentTenantModuleAccess } from "@/lib/auth/module-role-access";
 import { requireUser } from "@/lib/auth/require-user";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -44,5 +46,17 @@ export async function assertTenantAdmin(tenantId: string) {
     throw new Error("Admin access is required for this tenant action.");
   }
 
+  return user;
+}
+
+export async function assertTenantModuleRead(tenantId: string, moduleKey: TenantModuleKey) {
+  const user = await requireUser();
+  await assertCurrentTenantModuleAccess(tenantId, moduleKey, "read");
+  return user;
+}
+
+export async function assertTenantModuleManage(tenantId: string, moduleKey: TenantModuleKey) {
+  const user = await requireUser();
+  await assertCurrentTenantModuleAccess(tenantId, moduleKey, "manage");
   return user;
 }

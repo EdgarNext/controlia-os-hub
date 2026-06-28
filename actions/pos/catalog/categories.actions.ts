@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { resolveSalesPosPageActor } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageActor } from "@/lib/auth/tenant-pos-access";
 import {
   type CatalogCsvImportSummary,
   importCategoriesFromCsv,
@@ -162,7 +162,12 @@ export async function createCategoryAction(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "categories", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "categories",
+      ["simple", "variants"],
+      "manage",
+    );
     const imageFile = getImageFile(formData);
 
     await createCatalogCategory({
@@ -211,7 +216,12 @@ export async function updateCategoryAction(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "categories", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "categories",
+      ["simple", "variants"],
+      "manage",
+    );
     const imageFile = getImageFile(formData);
 
     await updateCatalogCategory({
@@ -253,7 +263,12 @@ export async function importCategoriesCsvAction(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "categories", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "categories",
+      ["simple", "variants"],
+      "manage",
+    );
     const summary = await importCategoriesFromCsv({
       tenantId: tenant.tenantId,
       actorUserId: user.id,

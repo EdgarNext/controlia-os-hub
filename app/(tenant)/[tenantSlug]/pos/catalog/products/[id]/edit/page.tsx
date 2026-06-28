@@ -4,7 +4,7 @@ import { updateProductAction } from "@/actions/pos/catalog/products.actions";
 import { ProductForm } from "@/components/pos/catalog/ProductForm";
 import { CatalogSectionHeader } from "@/components/pos/catalog/CatalogSectionHeader";
 import { StatePanel } from "@/components/ui/state-panel";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getCatalogProductById, listCatalogCategoriesForSelect } from "@/lib/pos/catalog/queries";
 
 type ProductEditPageProps = {
@@ -27,7 +27,12 @@ type ProductEditPageResult =
 
 async function loadProductEditPage(tenantSlug: string, id: string): Promise<ProductEditPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "products", "manage");
+    const tenant = await resolveSalesPosTypePageContext(
+      tenantSlug,
+      "products",
+      ["simple"],
+      "manage",
+    );
 
     const [product, categories] = await Promise.all([
       getCatalogProductById({ tenantId: tenant.tenantId, id }),

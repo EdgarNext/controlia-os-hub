@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import { CatalogV2NavTabs } from "@/components/pos/catalog-v2/CatalogV2NavTabs";
 import { Card } from "@/components/ui/card";
+import { StatePanel } from "@/components/ui/state-panel";
+import { isTenantAccessDeniedError } from "@/app/(tenant)/lib/access-errors";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 
 type CatalogV2LayoutProps = {
   children: ReactNode;
@@ -9,6 +12,22 @@ type CatalogV2LayoutProps = {
 
 export default async function CatalogV2Layout({ children, params }: CatalogV2LayoutProps) {
   const { tenantSlug } = await params;
+
+  try {
+    await resolveSalesPosTypePageContext(tenantSlug, "products", ["variants"], "read");
+  } catch (error) {
+    if (isTenantAccessDeniedError(error)) {
+      return (
+        <StatePanel
+          kind="permission"
+          title="Sin acceso a catálogo configurable"
+          message="Este tenant no tiene habilitada la experiencia de POS configurable."
+        />
+      );
+    }
+
+    throw error;
+  }
 
   return (
     <div className="space-y-6">

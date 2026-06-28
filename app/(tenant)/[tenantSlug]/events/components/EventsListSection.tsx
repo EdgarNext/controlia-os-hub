@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { TriangleAlert } from "lucide-react";
-import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { isTenantAccessDeniedError } from "../../../lib/access-errors";
+import { resolveTenantModuleContext } from "@/lib/auth/module-role-guard";
 import { getEventCreateData } from "../actions/eventActions";
 import { EventStatusBadge } from "../[eventId]/components/EventStatusBadge";
 import { StatePanel } from "../create/components/StatePanel";
@@ -18,7 +18,7 @@ function formatEventDate(startsAt: string | null) {
 
 async function loadEventsListData(tenantSlug: string) {
   try {
-    const tenant = await resolveTenantContextBySlug(tenantSlug);
+    const tenant = await resolveTenantModuleContext(tenantSlug, "event_core", "read");
     const data = await getEventCreateData(tenant.tenantId, { limit: 50 });
 
     return {

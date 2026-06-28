@@ -1,5 +1,5 @@
-import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { isTenantAccessDeniedError } from "../../../lib/access-errors";
+import { resolveTenantModuleContext } from "@/lib/auth/module-role-guard";
 import { getVenueEquipmentData } from "../actions/venueActions";
 import { StatePanel } from "../components/StatePanel";
 import { EquipmentManagerClient } from "./components/EquipmentManagerClient";
@@ -10,7 +10,7 @@ type VenueEquipmentPageProps = {
 
 async function loadVenueEquipmentPageData(tenantSlug: string) {
   try {
-    const tenant = await resolveTenantContextBySlug(tenantSlug);
+    const tenant = await resolveTenantModuleContext(tenantSlug, "event_core", "read");
     const data = await getVenueEquipmentData(tenant.tenantId);
 
     return {

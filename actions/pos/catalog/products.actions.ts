@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { resolveSalesPosPageActor } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageActor } from "@/lib/auth/tenant-pos-access";
 import {
   type CatalogCsvImportSummary,
   importProductsFromCsv,
@@ -155,7 +155,12 @@ async function resolveTenantAndActor(tenantSlug: string): Promise<{
   tenantSlug: string;
   actorUserId: string;
 }> {
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["simple"],
+    "manage",
+  );
 
   return {
     tenantId: tenant.tenantId,
@@ -187,7 +192,12 @@ export async function createProductAction(
   const imageFile = getImageFile(formData);
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["simple"],
+      "manage",
+    );
 
     await createCatalogProduct({
       tenantId: tenant.tenantId,
@@ -235,7 +245,12 @@ export async function updateProductAction(
   const imageFile = getImageFile(formData);
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["simple"],
+      "manage",
+    );
 
     await updateCatalogProduct({
       tenantId: tenant.tenantId,
@@ -442,7 +457,12 @@ export async function importProductsCsvAction(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["simple"],
+      "manage",
+    );
     const summary = await importProductsFromCsv({
       tenantId: tenant.tenantId,
       actorUserId: user.id,

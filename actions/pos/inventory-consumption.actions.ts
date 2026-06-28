@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
-import { resolveSalesPosPageActor } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageActor } from "@/lib/auth/tenant-pos-access";
 import {
   simulateKitchenDispatchInventoryConsumption,
   setBindingActive,
@@ -45,7 +45,12 @@ export async function simulateInventoryConsumptionForKitchenDispatchAction(formD
   const kitchenBatchId = asTrimmed(formData.get("kitchenBatchId"));
   if (!kitchenBatchId) throw new Error("kitchenBatchId es obligatorio.");
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   try {
     const result = await simulateKitchenDispatchInventoryConsumption({
       tenantId: tenant.tenantId,
@@ -78,7 +83,12 @@ export async function saveInventorySettingsAction(formData: FormData) {
   const tenantSlug = asTrimmed(formData.get("tenantSlug")).toLowerCase();
   const enabled = asBoolean(formData.get("enabled"));
   const mode = asTrimmed(formData.get("mode")) || "simulation";
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
 
   await saveInventorySettings({
     tenantId: tenant.tenantId,
@@ -107,7 +117,12 @@ export async function saveBindingAction(formData: FormData) {
     throw new Error("Producto, receta y versión son obligatorios.");
   }
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   const [versions, readiness] = await Promise.all([
     listRecipeVersionsForInventory(tenant.tenantId),
     getReadinessMap(tenant.tenantId),
@@ -152,7 +167,12 @@ export async function toggleBindingActiveAction(formData: FormData) {
   const bindingId = asTrimmed(formData.get("bindingId"));
   const isActive = asTrimmed(formData.get("nextState")) === "active";
   if (!bindingId) throw new Error("bindingId es obligatorio.");
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   if (isActive) {
     const binding = await getBindingById(tenant.tenantId, bindingId);
     if (!binding) throw new Error("Binding no encontrado para el tenant.");
@@ -200,7 +220,12 @@ export async function saveModifierRuleAction(formData: FormData) {
     throw new Error("add_delta/subtract_delta requieren delta_quantity > 0.");
   }
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await upsertModifierRule({
     tenantId: tenant.tenantId,
     actorUserId: user.id,
@@ -223,7 +248,12 @@ export async function toggleModifierRuleActiveAction(formData: FormData) {
   const ruleId = asTrimmed(formData.get("ruleId"));
   const isActive = asTrimmed(formData.get("nextState")) === "active";
   if (!ruleId) throw new Error("ruleId es obligatorio.");
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await setRuleActive({ tenantId: tenant.tenantId, actorUserId: user.id, ruleId, isActive });
   revalidateInventoryPath(tenant.tenantSlug);
 }
@@ -252,7 +282,12 @@ export async function saveMatcherAction(formData: FormData) {
   }
 
   const normalizedValue = normalizeMatcherValue(matcherValue);
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await upsertMatcher({
     tenantId: tenant.tenantId,
     actorUserId: user.id,
@@ -272,7 +307,12 @@ export async function toggleMatcherActiveAction(formData: FormData) {
   const matcherId = asTrimmed(formData.get("matcherId"));
   const isActive = asTrimmed(formData.get("nextState")) === "active";
   if (!matcherId) throw new Error("matcherId es obligatorio.");
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await setMatcherActive({ tenantId: tenant.tenantId, actorUserId: user.id, matcherId, isActive });
   revalidateInventoryPath(tenant.tenantSlug);
 }

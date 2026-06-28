@@ -4,7 +4,7 @@ import { updateCategoryAction } from "@/actions/pos/catalog/categories.actions";
 import { CategoryForm } from "@/components/pos/catalog/CategoryForm";
 import { CatalogSectionHeader } from "@/components/pos/catalog/CatalogSectionHeader";
 import { StatePanel } from "@/components/ui/state-panel";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getCatalogCategoryById } from "@/lib/pos/catalog/queries";
 
 type CategoryEditPageProps = {
@@ -26,7 +26,12 @@ type CategoryEditPageResult =
 
 async function loadCategoryEditPage(tenantSlug: string, id: string): Promise<CategoryEditPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "categories", "manage");
+    const tenant = await resolveSalesPosTypePageContext(
+      tenantSlug,
+      "categories",
+      ["simple", "variants"],
+      "manage",
+    );
 
     const category = await getCatalogCategoryById({
       tenantId: tenant.tenantId,

@@ -1,5 +1,5 @@
-import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { isTenantAccessDeniedError } from "../../../lib/access-errors";
+import { resolveTenantModuleContext } from "@/lib/auth/module-role-guard";
 import { getEventCreateData } from "../actions/eventActions";
 import { EventWizardForm } from "./components/EventWizardForm";
 import { StatePanel } from "./components/StatePanel";
@@ -10,7 +10,7 @@ type EventNewPageProps = {
 
 async function loadEventNewPageData(tenantSlug: string) {
   try {
-    const tenant = await resolveTenantContextBySlug(tenantSlug);
+    const tenant = await resolveTenantModuleContext(tenantSlug, "event_core", "read");
     const data = await getEventCreateData(tenant.tenantId, { limit: 50 });
 
     return {

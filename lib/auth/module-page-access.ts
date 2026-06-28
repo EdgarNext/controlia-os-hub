@@ -1,15 +1,21 @@
 import { cache } from "react";
 import { requireUser } from "@/lib/auth/require-user";
+import type { TenantModuleRole } from "@/lib/auth/module-role-access";
 import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export type ModulePageAccessLevel = "none" | "read" | "manage";
 export type SalesPosPageKey = "devices" | "categories" | "products" | "reports" | "users";
+export type RetailPosPageKey = "cash_shift" | "catalog" | "orders" | "settings";
 export type TenantModuleKey =
   | "sales_pos"
+  | "retail_pos"
+  | "event_core"
   | "kitchen_inventory"
   | "kitchen_recipes"
   | "event_catering";
+
+export type TenantModuleAccessMap = Record<string, TenantModuleRole>;
 
 type ModulePageAccessRow = {
   page_key: string;
@@ -128,6 +134,28 @@ export async function resolveSalesPosPageActor(
   requiredLevel: Exclude<ModulePageAccessLevel, "none"> = "manage",
 ) {
   const tenant = await resolveSalesPosPageContext(tenantSlug, pageKey, requiredLevel);
+  const user = await requireUser();
+
+  return {
+    tenant,
+    user,
+  };
+}
+
+export async function resolveRetailPosPageContext(
+  tenantSlug: string,
+  pageKey: RetailPosPageKey,
+  requiredLevel: Exclude<ModulePageAccessLevel, "none"> = "read",
+) {
+  return resolveTenantModulePageContext(tenantSlug, "retail_pos", pageKey, requiredLevel);
+}
+
+export async function resolveRetailPosPageActor(
+  tenantSlug: string,
+  pageKey: RetailPosPageKey,
+  requiredLevel: Exclude<ModulePageAccessLevel, "none"> = "manage",
+) {
+  const tenant = await resolveRetailPosPageContext(tenantSlug, pageKey, requiredLevel);
   const user = await requireUser();
 
   return {

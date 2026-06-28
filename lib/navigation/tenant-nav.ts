@@ -3,11 +3,13 @@ import {
   getCurrentTenantModulePageAccessMap,
   hasModulePageAccess,
 } from "@/lib/auth/module-page-access";
+import { hasTenantModuleRole } from "@/lib/auth/module-role-access";
+import type { TenantPosType } from "@/lib/auth/tenant-pos-type";
 import type { TenantContext } from "@/lib/auth/tenant-context";
 import type { TenantRole } from "@/lib/repos/types";
 import type { NavDomain, NavItem, NavSection } from "./platform-nav";
 
-type TenantDomainKey = "venue" | "commercial" | "cafe" | "kitchen" | "admin";
+type TenantDomainKey = "venue" | "commercial" | "cafe" | "kitchen" | "admin" | "retail";
 
 type TenantNavItemConfig = {
   href: (tenantSlug: string) => string;
@@ -34,112 +36,240 @@ type TenantNavDomainConfig = {
   items: TenantNavItemConfig[];
 };
 
-const tenantNavDomains: TenantNavDomainConfig[] = [
-  {
-    key: "venue",
-    label: "Eventos y Salas",
-    accentToken: "--nav-accent-venue",
-    moduleKeys: ["event_core"],
-    items: [
-      { href: (tenantSlug) => `/${tenantSlug}/dashboard`, label: "Dashboard", iconKey: "reports", match: "prefix", moduleKeys: ["event_core"] },
-      { href: (tenantSlug) => `/${tenantSlug}/venue`, label: "Salas y Layouts", iconKey: "catalog", match: "prefix", moduleKeys: ["event_core"] },
-      { href: (tenantSlug) => `/${tenantSlug}/events`, label: "Eventos", iconKey: "reports", match: "prefix", moduleKeys: ["event_core"] },
-    ],
-  },
-  {
-    key: "cafe",
-    label: "Cafeteria",
-    accentToken: "--nav-accent-cafe",
-    moduleKeys: ["sales_pos"],
-    items: [
-      {
-        href: (tenantSlug) => `/${tenantSlug}/pos/devices`,
-        label: "Dispositivos",
-        iconKey: "devices",
-        match: "prefix",
-        moduleKeys: ["sales_pos"],
-        pageKey: "devices",
-      },
-      {
-        href: (tenantSlug) => `/${tenantSlug}/pos/catalog`,
-        label: "Catálogo POS",
-        iconKey: "products",
-        match: "prefix",
-        moduleKeys: ["sales_pos"],
-        pageKey: "products",
-      },
-      {
-        href: (tenantSlug) => `/${tenantSlug}/pos/catalog-v2`,
-        label: "Catálogo V2",
-        iconKey: "products",
-        match: "prefix",
-        moduleKeys: ["sales_pos"],
-        pageKey: "products",
-      },
-      {
-        href: (tenantSlug) => `/${tenantSlug}/pos/users`,
-        label: "Usuarios POS",
-        iconKey: "users",
-        match: "prefix",
-        moduleKeys: ["sales_pos"],
-        pageKey: "users",
-      },
-      {
-        href: (tenantSlug) => `/${tenantSlug}/pos/reports`,
-        label: "Reportes POS",
-        iconKey: "reports",
-        match: "prefix",
-        moduleKeys: ["sales_pos"],
-        pageKey: "reports",
-        children: [
-          {
-            href: (tenantSlug) => `/${tenantSlug}/pos/reports`,
-            label: "Resumen",
-            match: "exact",
-          },
-          {
-            href: (tenantSlug) => `/${tenantSlug}/pos/reports/sales`,
-            label: "Ventas",
-            match: "prefix",
-          },
-          {
-            href: (tenantSlug) => `/${tenantSlug}/pos/reports/products`,
-            label: "Productos",
-            match: "prefix",
-          },
-          {
-            href: (tenantSlug) => `/${tenantSlug}/pos/reports/cashiers`,
-            label: "Cajeros",
-            match: "prefix",
-          },
-          {
-            href: (tenantSlug) => `/${tenantSlug}/pos/reports/cashier-shift`,
-            label: "Cortes",
-            match: "prefix",
-          },
-          {
-            href: (tenantSlug) => `/${tenantSlug}/pos/reports/alerts`,
-            label: "Alertas",
-            match: "prefix",
-          },
-        ],
-      },
-      {
-        href: (tenantSlug) => `/${tenantSlug}/pos/inventory`,
-        label: "POS Inventario",
-        iconKey: "products",
-        match: "prefix",
-        moduleKeys: ["sales_pos"],
-        pageKey: "products",
-      },
-    ],
-  },
-  {
-    key: "kitchen",
-    label: "Cocina",
-    accentToken: "--nav-accent-commercial",
-    moduleKeys: ["kitchen_inventory", "kitchen_recipes", "event_catering"],
-    items: [
+const venueNavDomain: TenantNavDomainConfig = {
+  key: "venue",
+  label: "Eventos y Salas",
+  accentToken: "--nav-accent-venue",
+  moduleKeys: ["event_core"],
+  items: [
+    { href: (tenantSlug) => `/${tenantSlug}/dashboard`, label: "Dashboard", iconKey: "reports", match: "prefix", moduleKeys: ["event_core"] },
+    { href: (tenantSlug) => `/${tenantSlug}/venue`, label: "Salas y Layouts", iconKey: "catalog", match: "prefix", moduleKeys: ["event_core"] },
+    { href: (tenantSlug) => `/${tenantSlug}/events`, label: "Eventos", iconKey: "reports", match: "prefix", moduleKeys: ["event_core"] },
+  ],
+};
+
+const cafeSimpleNavDomain: TenantNavDomainConfig = {
+  key: "cafe",
+  label: "Cafeteria · POS Simple",
+  accentToken: "--nav-accent-cafe",
+  moduleKeys: ["sales_pos"],
+  items: [
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/catalog/categories`,
+      label: "Categorias",
+      iconKey: "categories",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "categories",
+    },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/catalog/products`,
+      label: "Productos",
+      iconKey: "products",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "products",
+    },
+  ],
+};
+
+const cafeVariantsNavDomain: TenantNavDomainConfig = {
+  key: "cafe",
+  label: "Cafeteria · POS Configurable",
+  accentToken: "--nav-accent-cafe",
+  moduleKeys: ["sales_pos"],
+  items: [
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/catalog`,
+      label: "Catalogo configurable",
+      iconKey: "products",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "products",
+      children: [
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/catalog/categories`,
+          label: "Categorias",
+          match: "prefix",
+          pageKey: "categories",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/catalog-v2/products`,
+          label: "Productos y variantes",
+          match: "prefix",
+          pageKey: "products",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/catalog-v2/modifiers`,
+          label: "Modificadores y combos",
+          match: "prefix",
+          pageKey: "products",
+        },
+      ],
+    },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/reports`,
+      label: "Reportes POS avanzado",
+      iconKey: "reports",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "reports",
+      children: [
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports`,
+          label: "Resumen",
+          match: "exact",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/sales`,
+          label: "Ventas",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/products`,
+          label: "Productos",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/cashiers`,
+          label: "Cajeros",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/cashier-shift`,
+          label: "Cortes",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/alerts`,
+          label: "Alertas",
+          match: "prefix",
+        },
+      ],
+    },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/inventory`,
+      label: "Inventario POS",
+      iconKey: "products",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "products",
+    },
+  ],
+};
+
+const cafeUnknownNavDomain: TenantNavDomainConfig = {
+  key: "cafe",
+  label: "Cafeteria · POS (Compatibilidad)",
+  accentToken: "--nav-accent-cafe",
+  moduleKeys: ["sales_pos"],
+  items: [
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/devices`,
+      label: "Dispositivos",
+      iconKey: "devices",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "devices",
+    },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/catalog`,
+      label: "Catalogo configurable",
+      iconKey: "products",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "products",
+    },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/catalog-v2`,
+      label: "Catalogo v2",
+      iconKey: "products",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "products",
+    },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/users`,
+      label: "Usuarios POS",
+      iconKey: "users",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "users",
+    },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/reports`,
+      label: "Reportes POS",
+      iconKey: "reports",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "reports",
+      children: [
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports`,
+          label: "Resumen",
+          match: "exact",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/sales`,
+          label: "Ventas",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/products`,
+          label: "Productos",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/cashiers`,
+          label: "Cajeros",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/cashier-shift`,
+          label: "Cortes",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/pos/reports/alerts`,
+          label: "Alertas",
+          match: "prefix",
+        },
+      ],
+    },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/pos/inventory`,
+      label: "Inventario POS",
+      iconKey: "products",
+      match: "prefix",
+      moduleKeys: ["sales_pos"],
+      pageKey: "products",
+    },
+  ],
+};
+
+const retailNavDomain: TenantNavDomainConfig = {
+  key: "retail",
+  label: "Retail · POS",
+  accentToken: "--nav-accent-commercial",
+  moduleKeys: ["retail_pos"],
+  items: [
+    {
+      href: (tenantSlug) => `/${tenantSlug}/retail`,
+      label: "Backoffice retail",
+      iconKey: "catalog",
+      match: "prefix",
+      moduleKeys: ["retail_pos"],
+      pageKey: "catalog",
+    },
+  ],
+};
+
+const kitchenNavDomain: TenantNavDomainConfig = {
+  key: "kitchen",
+  label: "Cocina",
+  accentToken: "--nav-accent-commercial",
+  moduleKeys: ["kitchen_inventory", "kitchen_recipes", "event_catering"],
+  items: [
       {
         href: (tenantSlug) => `/${tenantSlug}/kitchen/inventory`,
         label: "Inventario",
@@ -247,15 +377,32 @@ const tenantNavDomains: TenantNavDomainConfig[] = [
         pageKey: "reports",
       },
     ],
-  },
-];
+};
+
+function getCafeNavDomainByPosType(posType: TenantPosType): TenantNavDomainConfig {
+  if (posType === "simple") {
+    return cafeSimpleNavDomain;
+  }
+
+  if (posType === "variants") {
+    return cafeVariantsNavDomain;
+  }
+
+  return cafeUnknownNavDomain;
+}
 
 function getTenantEnabledDomainsModules(enabledModuleKeys: string[]): Set<string> {
   return new Set(enabledModuleKeys);
 }
 
-function hasAnyEnabledModule(moduleKeys: string[], enabledModules: Set<string>) {
-  return moduleKeys.some((moduleKey) => enabledModules.has(moduleKey));
+function hasAnyAccessibleModule(
+  moduleKeys: string[],
+  enabledModules: Set<string>,
+  moduleRoleByKey: Record<string, "admin" | "operator" | "viewer" | "none">,
+) {
+  return moduleKeys.some(
+    (moduleKey) => enabledModules.has(moduleKey) && hasTenantModuleRole(moduleRoleByKey[moduleKey]),
+  );
 }
 
 function canViewItemByRole(role: TenantRole, requiredRoles?: TenantRole[]) {
@@ -271,11 +418,12 @@ async function buildItem(
   tenantId: string,
   role: TenantRole,
   enabledModules: Set<string>,
+  moduleRoleByKey: Record<string, "admin" | "operator" | "viewer" | "none">,
   isPlatformOwner: boolean,
   accentToken: string,
   item: TenantNavItemConfig,
 ): Promise<NavItem | null> {
-  if (!hasAnyEnabledModule(item.moduleKeys, enabledModules)) {
+  if (!hasAnyAccessibleModule(item.moduleKeys, enabledModules, moduleRoleByKey)) {
     return null;
   }
 
@@ -312,7 +460,7 @@ async function buildItem(
     const visibleChildren = await Promise.all(
       item.children.map(async (child) => {
         const childModules = child.moduleKeys ?? item.moduleKeys;
-        if (!hasAnyEnabledModule(childModules, enabledModules)) return null;
+        if (!hasAnyAccessibleModule(childModules, enabledModules, moduleRoleByKey)) return null;
         if (!child.pageKey) {
           return {
             href: child.href(tenantSlug),
@@ -350,14 +498,34 @@ const getTenantNavCached = cache(
     role: TenantRole,
     isPlatformOwner: boolean,
     enabledModuleKeysSignature: string,
+    moduleRoleSignature: string,
+    posType: TenantPosType,
   ): Promise<NavSection[]> => {
     const enabledModules = getTenantEnabledDomainsModules(
       enabledModuleKeysSignature.split(",").filter(Boolean),
     );
+    const moduleRoleByKey = moduleRoleSignature.split(",").reduce<
+      Record<string, "admin" | "operator" | "viewer" | "none">
+    >((accumulator, entry) => {
+      const [moduleKey, moduleRole] = entry.split(":");
+      if (moduleKey) {
+        accumulator[moduleKey] =
+          moduleRole === "admin" || moduleRole === "operator" || moduleRole === "viewer"
+            ? moduleRole
+            : "none";
+      }
+      return accumulator;
+    }, {});
+    const domainsSource = [
+      venueNavDomain,
+      enabledModules.has("sales_pos") ? getCafeNavDomainByPosType(posType) : null,
+      enabledModules.has("retail_pos") ? retailNavDomain : null,
+      kitchenNavDomain,
+    ].filter((domain): domain is TenantNavDomainConfig => domain !== null);
 
     const domains = await Promise.all(
-      tenantNavDomains
-        .filter((domain) => hasAnyEnabledModule(domain.moduleKeys, enabledModules))
+      domainsSource
+        .filter((domain) => hasAnyAccessibleModule(domain.moduleKeys, enabledModules, moduleRoleByKey))
         .map(async (domain) => {
           const items = (
             await Promise.all(
@@ -367,6 +535,7 @@ const getTenantNavCached = cache(
                   tenantId,
                   role,
                   enabledModules,
+                  moduleRoleByKey,
                   isPlatformOwner,
                   domain.accentToken,
                   item,
@@ -399,15 +568,27 @@ const getTenantNavCached = cache(
 export async function getTenantNav(
   context: Pick<
     TenantContext,
-    "tenantId" | "tenantSlug" | "tenantRole" | "enabledModuleKeys" | "isPlatformOwner"
+    | "tenantId"
+    | "tenantSlug"
+    | "tenantRole"
+    | "enabledModuleKeys"
+    | "moduleRoleByKey"
+    | "isPlatformOwner"
+    | "posType"
   >,
 ): Promise<NavSection[]> {
   const enabledModuleKeysSignature = [...context.enabledModuleKeys].sort().join(",");
+  const moduleRoleSignature = Object.entries(context.moduleRoleByKey)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([moduleKey, moduleRole]) => `${moduleKey}:${moduleRole}`)
+    .join(",");
   return getTenantNavCached(
     context.tenantId,
     context.tenantSlug,
     context.tenantRole,
     context.isPlatformOwner,
     enabledModuleKeysSignature,
+    moduleRoleSignature,
+    context.posType,
   );
 }

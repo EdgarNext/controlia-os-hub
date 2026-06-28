@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { isTenantAccessDeniedError } from "../../../../lib/access-errors";
+import { resolveTenantModuleContext } from "@/lib/auth/module-role-guard";
 import { getRoomSetupData } from "../../actions/venueActions";
 import { StatePanel } from "../../components/StatePanel";
 import { RoomSetupClient } from "./components/RoomSetupClient";
@@ -12,7 +12,7 @@ type RoomSetupPageProps = {
 
 async function loadRoomSetupPageData(tenantSlug: string, roomId: string) {
   try {
-    const tenant = await resolveTenantContextBySlug(tenantSlug);
+    const tenant = await resolveTenantModuleContext(tenantSlug, "event_core", "read");
     const data = await getRoomSetupData(tenant.tenantId, roomId);
 
     return {

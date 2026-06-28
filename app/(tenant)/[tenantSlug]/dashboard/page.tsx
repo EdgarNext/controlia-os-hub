@@ -1,8 +1,26 @@
 import { Activity } from "lucide-react";
+import { isTenantAccessDeniedError } from "@/app/(tenant)/lib/access-errors";
 import { StatePanel } from "@/components/ui/state-panel";
+import { resolveTenantModuleContext } from "@/lib/auth/module-role-guard";
 
 export default async function TenantDashboardPage({ params }: { params: Promise<{ tenantSlug: string }> }) {
   const { tenantSlug } = await params;
+
+  try {
+    await resolveTenantModuleContext(tenantSlug, "event_core", "read");
+  } catch (error) {
+    if (isTenantAccessDeniedError(error)) {
+      return (
+        <StatePanel
+          kind="permission"
+          title="Sin permisos para el tablero"
+          message="Tu usuario no tiene acceso al modulo de eventos y salas de este tenant."
+        />
+      );
+    }
+
+    throw error;
+  }
 
   return (
     <div className="space-y-4">

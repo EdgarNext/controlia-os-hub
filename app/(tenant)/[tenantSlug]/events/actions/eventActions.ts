@@ -5,7 +5,7 @@ import { closeEvent, createEvent, getEventById, getEvents, publishEvent } from "
 import { getRoomById, getRoomEquipment, getRooms } from "@/lib/venue";
 import type { Event, EventFilters } from "@/types/events";
 import type { Room, RoomLayout } from "@/types/venue";
-import { assertTenantAdmin, assertTenantMember, normalizeTenantId } from "../../../lib/tenant-access";
+import { assertTenantModuleManage, assertTenantModuleRead, normalizeTenantId } from "../../../lib/tenant-access";
 
 type ActionResult =
   | { ok: true; message: string; warning?: string; eventId?: string }
@@ -205,7 +205,7 @@ function getDraftWarnings(checks: EventPublishChecks): string[] {
 
 export async function getEventCreateData(tenantId: string, filters?: EventFilters): Promise<EventCreateData> {
   const normalizedTenantId = normalizeTenantId(tenantId);
-  await assertTenantMember(normalizedTenantId);
+  await assertTenantModuleRead(normalizedTenantId, "event_core");
 
   const [events, rooms] = await Promise.all([
     getEvents(normalizedTenantId, filters),
@@ -230,7 +230,7 @@ export async function getEventCreateData(tenantId: string, filters?: EventFilter
 
 export async function getEventDetailsData(tenantId: string, eventId: string): Promise<EventDetailsData> {
   const normalizedTenantId = normalizeTenantId(tenantId);
-  await assertTenantMember(normalizedTenantId);
+  await assertTenantModuleRead(normalizedTenantId, "event_core");
 
   const event = await getEventById(normalizedTenantId, eventId);
 
@@ -263,7 +263,7 @@ export async function createEventAction(formData: FormData): Promise<ActionResul
   try {
     const tenantId = normalizeTenantId(formData.get("tenantId"));
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
-    const user = await assertTenantAdmin(tenantId);
+    const user = await assertTenantModuleManage(tenantId, "event_core");
 
     const name = String(formData.get("name") ?? "").trim();
     const venueRoomId = String(formData.get("venueRoomId") ?? "").trim();
@@ -340,7 +340,7 @@ export async function publishEventAction(formData: FormData): Promise<ActionResu
   try {
     const tenantId = normalizeTenantId(formData.get("tenantId"));
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
-    await assertTenantAdmin(tenantId);
+    await assertTenantModuleManage(tenantId, "event_core");
     const eventId = String(formData.get("eventId") ?? "").trim();
 
     if (!tenantSlug) {
@@ -389,7 +389,7 @@ export async function closeEventAction(formData: FormData): Promise<ActionResult
   try {
     const tenantId = normalizeTenantId(formData.get("tenantId"));
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
-    await assertTenantAdmin(tenantId);
+    await assertTenantModuleManage(tenantId, "event_core");
     const eventId = String(formData.get("eventId") ?? "").trim();
 
     if (!tenantSlug) {

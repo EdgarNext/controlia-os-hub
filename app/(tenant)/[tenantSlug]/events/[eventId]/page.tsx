@@ -1,5 +1,5 @@
-import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { isTenantAccessDeniedError } from "../../../lib/access-errors";
+import { resolveTenantModuleContext } from "@/lib/auth/module-role-guard";
 import { getEventDetailsData } from "../actions/eventActions";
 import { EventDetailsClient } from "./components/EventDetailsClient";
 import { StatePanel } from "./components/StatePanel";
@@ -10,7 +10,7 @@ type EventDetailsPageProps = {
 
 async function loadEventDetailsPageData(tenantSlug: string, eventId: string) {
   try {
-    const tenant = await resolveTenantContextBySlug(tenantSlug);
+    const tenant = await resolveTenantModuleContext(tenantSlug, "event_core", "read");
     const data = await getEventDetailsData(tenant.tenantId, eventId);
 
     return {

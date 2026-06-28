@@ -33,6 +33,7 @@ export function getSegmentLabel(segment: string) {
   if (segment === "catalog-v2") return "Catálogo V2";
   if (segment === "modifiers") return "Modificadores";
   if (segment === "pos") return "POS";
+  if (segment === "retail") return "Retail POS";
   if (segment === "kitchen") return "Cocina";
   if (segment === "inventory") return "Inventario";
   if (segment === "setup") return "Configuración";

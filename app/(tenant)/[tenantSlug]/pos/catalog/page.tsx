@@ -5,7 +5,7 @@ import { StatePanel } from "@/components/ui/state-panel";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
-import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import {
   archiveComboSlotOptionV2Action,
   archiveComboSlotV2Action,
@@ -103,7 +103,7 @@ function formatMoneyFromCents(cents?: number | null): string {
 
 async function loadCatalogV2PageData(tenantSlug: string, searchParams: Record<string, string | string[] | undefined>): Promise<CatalogV2PageResult> {
   try {
-    const tenant = await resolveTenantContextBySlug(tenantSlug);
+    const tenant = await resolveSalesPosTypePageContext(tenantSlug, "products", ["variants"], "read");
     const accessMap = await getCurrentTenantModulePageAccessMap(tenant.tenantId, "sales_pos");
     const currentLevel = accessMap.products ?? "none";
 

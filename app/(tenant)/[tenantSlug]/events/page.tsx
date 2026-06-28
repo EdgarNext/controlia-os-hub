@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { CalendarDays } from "lucide-react";
+import { resolveTenantModuleContext } from "@/lib/auth/module-role-guard";
+import { isTenantAccessDeniedError } from "../../lib/access-errors";
 import { EventsListSection } from "./components/EventsListSection";
 import { EventsStatusFilter } from "./components/EventsStatusFilter";
+import { StatePanel } from "./create/components/StatePanel";
 
 type StatusFilter = "all" | "draft" | "published";
 
@@ -34,6 +37,22 @@ export default async function EventsPage({
   const { tenantSlug } = await params;
   const { status } = await searchParams;
   const statusFilter = normalizeStatusFilter(status);
+
+  try {
+    await resolveTenantModuleContext(tenantSlug, "event_core", "read");
+  } catch (error) {
+    if (isTenantAccessDeniedError(error)) {
+      return (
+        <StatePanel
+          kind="permission"
+          title="Sin permisos para eventos"
+          message="No tienes acceso al modulo de eventos y salas de este tenant."
+        />
+      );
+    }
+
+    throw error;
+  }
 
   return (
     <div className="space-y-4">

@@ -16,7 +16,7 @@ import {
   upsertRoomEquipment,
 } from "@/lib/venue";
 import type { Equipment, Room, RoomEquipment } from "@/types/venue";
-import { assertTenantAdmin, assertTenantMember, normalizeTenantId } from "../../../lib/tenant-access";
+import { assertTenantModuleManage, assertTenantModuleRead, normalizeTenantId } from "../../../lib/tenant-access";
 
 type ActionResult = { ok: true; message: string } | { ok: false; message: string };
 
@@ -91,7 +91,7 @@ async function buildRoomEquipmentCountMap(tenantId: string, rooms: Room[]) {
 
 export async function getVenueConfigData(tenantId: string): Promise<VenueConfigData> {
   const normalizedTenantId = normalizeTenantId(tenantId);
-  await assertTenantMember(normalizedTenantId);
+  await assertTenantModuleRead(normalizedTenantId, "event_core");
 
   const rooms = await getRooms(normalizedTenantId);
   const equipmentCatalog = await getEquipmentCatalog(normalizedTenantId);
@@ -109,7 +109,7 @@ export async function getVenueConfigData(tenantId: string): Promise<VenueConfigD
 
 export async function getVenueRoomsData(tenantId: string): Promise<VenueRoomsData> {
   const normalizedTenantId = normalizeTenantId(tenantId);
-  await assertTenantMember(normalizedTenantId);
+  await assertTenantModuleRead(normalizedTenantId, "event_core");
 
   const rooms = await getRooms(normalizedTenantId);
   const roomEquipmentCountMap = await buildRoomEquipmentCountMap(normalizedTenantId, rooms);
@@ -129,7 +129,7 @@ export async function getVenueRoomsData(tenantId: string): Promise<VenueRoomsDat
 
 export async function getVenueEquipmentData(tenantId: string): Promise<VenueEquipmentData> {
   const normalizedTenantId = normalizeTenantId(tenantId);
-  await assertTenantMember(normalizedTenantId);
+  await assertTenantModuleRead(normalizedTenantId, "event_core");
 
   const equipmentCatalog = await getEquipmentCatalog(normalizedTenantId);
 
@@ -147,7 +147,7 @@ export async function getRoomSetupData(tenantId: string, roomId: string): Promis
     throw new Error("El id de la sala es obligatorio.");
   }
 
-  await assertTenantMember(normalizedTenantId);
+  await assertTenantModuleRead(normalizedTenantId, "event_core");
 
   const [room, assignedEquipmentRaw, equipmentCatalog] = await Promise.all([
     getRoomById(normalizedTenantId, normalizedRoomId),
@@ -183,7 +183,7 @@ export async function createRoomAction(formData: FormData): Promise<ActionResult
   try {
     const tenantId = normalizeTenantId(formData.get("tenantId"));
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
-    const user = await assertTenantAdmin(tenantId);
+    const user = await assertTenantModuleManage(tenantId, "event_core");
 
     const name = String(formData.get("name") ?? "").trim();
     const code = String(formData.get("code") ?? "").trim();
@@ -220,7 +220,7 @@ export async function updateRoomAction(formData: FormData): Promise<ActionResult
     const tenantId = normalizeTenantId(formData.get("tenantId"));
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
     const roomId = String(formData.get("roomId") ?? "").trim();
-    const user = await assertTenantAdmin(tenantId);
+    const user = await assertTenantModuleManage(tenantId, "event_core");
 
     const name = String(formData.get("name") ?? "").trim();
     const code = String(formData.get("code") ?? "").trim();
@@ -261,7 +261,7 @@ export async function deleteRoomAction(formData: FormData): Promise<ActionResult
     const tenantId = normalizeTenantId(formData.get("tenantId"));
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
     const roomId = String(formData.get("roomId") ?? "").trim();
-    await assertTenantAdmin(tenantId);
+    await assertTenantModuleManage(tenantId, "event_core");
 
     if (!tenantSlug) {
       return { ok: false, message: "El slug del tenant es obligatorio." };
@@ -288,7 +288,7 @@ export async function createEquipmentAction(formData: FormData): Promise<ActionR
   try {
     const tenantId = normalizeTenantId(formData.get("tenantId"));
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
-    const user = await assertTenantAdmin(tenantId);
+    const user = await assertTenantModuleManage(tenantId, "event_core");
 
     const name = String(formData.get("name") ?? "").trim();
     const equipmentType = String(formData.get("category") ?? formData.get("equipmentType") ?? "").trim();
@@ -323,7 +323,7 @@ export async function updateEquipmentAction(formData: FormData): Promise<ActionR
     const tenantId = normalizeTenantId(formData.get("tenantId"));
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
     const equipmentId = String(formData.get("equipmentId") ?? "").trim();
-    const user = await assertTenantAdmin(tenantId);
+    const user = await assertTenantModuleManage(tenantId, "event_core");
 
     const name = String(formData.get("name") ?? "").trim();
     const equipmentType = String(formData.get("category") ?? formData.get("equipmentType") ?? "").trim();
@@ -362,7 +362,7 @@ export async function deleteEquipmentAction(formData: FormData): Promise<ActionR
     const tenantId = normalizeTenantId(formData.get("tenantId"));
     const tenantSlug = String(formData.get("tenantSlug") ?? "").trim();
     const equipmentId = String(formData.get("equipmentId") ?? "").trim();
-    await assertTenantAdmin(tenantId);
+    await assertTenantModuleManage(tenantId, "event_core");
 
     if (!tenantSlug) {
       return { ok: false, message: "El slug del tenant es obligatorio." };
@@ -393,7 +393,7 @@ export async function assignRoomEquipmentAction(formData: FormData): Promise<Act
     const equipmentId = String(formData.get("equipmentId") ?? "").trim();
     const quantity = parsePositiveInteger(formData.get("quantity"), "La cantidad");
 
-    await assertTenantAdmin(tenantId);
+    await assertTenantModuleManage(tenantId, "event_core");
 
     if (!tenantSlug) {
       return { ok: false, message: "El slug del tenant es obligatorio." };
@@ -423,7 +423,7 @@ export async function unassignRoomEquipmentAction(formData: FormData): Promise<A
     const roomId = String(formData.get("roomId") ?? "").trim();
     const roomEquipmentId = String(formData.get("roomEquipmentId") ?? "").trim();
 
-    await assertTenantAdmin(tenantId);
+    await assertTenantModuleManage(tenantId, "event_core");
 
     if (!tenantSlug) {
       return { ok: false, message: "El slug del tenant es obligatorio." };

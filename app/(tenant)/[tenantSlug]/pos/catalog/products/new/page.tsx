@@ -6,7 +6,7 @@ import { ProductV2Form } from "@/components/pos/catalog-v2/ProductV2Form";
 import { ProductForm } from "@/components/pos/catalog/ProductForm";
 import { CatalogSectionHeader } from "@/components/pos/catalog/CatalogSectionHeader";
 import { StatePanel } from "@/components/ui/state-panel";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { listCatalogCategoriesForSelect } from "@/lib/pos/catalog/queries";
 import {
   listCatalogV2CategoriesForSelect,
@@ -24,6 +24,7 @@ type ProductNewPageResult =
       mode: "v2" | "legacy";
       tenantSlug: string;
       tenantName: string;
+      posType: "simple" | "variants" | "unknown";
       categories: Awaited<ReturnType<typeof listCatalogV2CategoriesForSelect>> | Awaited<ReturnType<typeof listCatalogCategoriesForSelect>>;
       defaultVariantOptions: Awaited<ReturnType<typeof listCatalogV2VariantsForSelect>>;
     }
@@ -46,8 +47,14 @@ async function loadProductNewPage(
   searchParams: Record<string, string | string[] | undefined>,
 ): Promise<ProductNewPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "products", "manage");
-    const legacyMode = toSingleQueryParam(searchParams.mode) === "legacy";
+    const tenant = await resolveSalesPosTypePageContext(
+      tenantSlug,
+      "products",
+      ["simple", "variants"],
+      "manage",
+    );
+    const requestedLegacyMode = toSingleQueryParam(searchParams.mode) === "legacy";
+    const legacyMode = tenant.posType === "simple" || (tenant.posType === "unknown" && requestedLegacyMode);
 
     if (legacyMode) {
       const categories = await listCatalogCategoriesForSelect({ tenantId: tenant.tenantId });
@@ -57,6 +64,7 @@ async function loadProductNewPage(
         mode: "legacy",
         tenantSlug: tenant.tenantSlug,
         tenantName: tenant.tenantName,
+        posType: tenant.posType === "simple" ? "simple" : "unknown",
         categories,
         defaultVariantOptions: [],
       };
@@ -72,6 +80,7 @@ async function loadProductNewPage(
       mode: "v2",
       tenantSlug: tenant.tenantSlug,
       tenantName: tenant.tenantName,
+      posType: tenant.posType === "variants" ? "variants" : "unknown",
       categories,
       defaultVariantOptions: variants,
     };
@@ -121,7 +130,11 @@ export default async function ProductNewPage({ params, searchParams }: ProductNe
         <StatePanel
           kind="warning"
           title="Modo clásico"
-          message="Esta ruta sigue disponible para compatibilidad, pero el flujo nuevo y recomendado es el formulario v2."
+            message={
+              result.tenantName
+                ? "Esta ruta usa el flujo clásico compatible con el catálogo simple."
+                : "Esta ruta sigue disponible para compatibilidad."
+            }
         >
           <div className="mt-3 flex flex-wrap gap-2">
             <Link
@@ -129,12 +142,6 @@ export default async function ProductNewPage({ params, searchParams }: ProductNe
               className="inline-flex items-center justify-center rounded-[var(--radius-base)] border border-border bg-surface-2 px-4 py-2 text-sm font-medium text-foreground transition-opacity duration-200 hover:opacity-90"
             >
               Volver a productos
-            </Link>
-            <Link
-              href={`/${result.tenantSlug}/pos/catalog/products/new`}
-              className="inline-flex items-center justify-center rounded-[var(--radius-base)] border border-border bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity duration-200 hover:opacity-90"
-            >
-              Abrir alta v2
             </Link>
           </div>
         </StatePanel>
@@ -169,12 +176,14 @@ export default async function ProductNewPage({ params, searchParams }: ProductNe
           >
             Volver a productos
           </Link>
-          <Link
-            href={legacyModeHref}
-            className="inline-flex items-center justify-center rounded-[var(--radius-base)] border border-border bg-surface-2 px-4 py-2 text-sm font-medium text-foreground transition-opacity duration-200 hover:opacity-90"
-          >
-            Abrir modo clásico
-          </Link>
+          {result.posType === "unknown" ? (
+            <Link
+              href={legacyModeHref}
+              className="inline-flex items-center justify-center rounded-[var(--radius-base)] border border-border bg-surface-2 px-4 py-2 text-sm font-medium text-foreground transition-opacity duration-200 hover:opacity-90"
+            >
+              Abrir modo clásico
+            </Link>
+          ) : null}
         </div>
       </StatePanel>
 

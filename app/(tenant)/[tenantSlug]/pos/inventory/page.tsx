@@ -15,8 +15,8 @@ import { StatePanel } from "@/components/ui/state-panel";
 import {
   getCurrentTenantModulePageAccessMap,
   hasModulePageAccess,
-  resolveSalesPosPageContext,
 } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   getPosInventorySimulationEventDetail,
@@ -65,7 +65,12 @@ function getSingleSearchParam(
 export default async function PosInventoryPage({ params, searchParams }: PageProps) {
   const { tenantSlug } = await params;
   const resolvedSearchParams = (await searchParams) ?? {};
-  const tenant = await resolveSalesPosPageContext(tenantSlug, "products", "read");
+  const tenant = await resolveSalesPosTypePageContext(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "read",
+  );
   const adminClient = getSupabaseAdminClient();
   const accessMap = await getCurrentTenantModulePageAccessMap(tenant.tenantId, "sales_pos");
   const canManage = hasModulePageAccess(accessMap.products ?? "none", "manage");

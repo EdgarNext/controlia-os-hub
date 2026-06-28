@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { resolveSalesPosPageActor } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageActor } from "@/lib/auth/tenant-pos-access";
 import {
   archiveCatalogV2ComboSlot,
   archiveCatalogV2ComboSlotOption,
@@ -598,7 +598,12 @@ export async function saveProductV2Action(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["variants"],
+      "manage",
+    );
     const productId = toTrimmedString(formData.get("productId")) || null;
 
     await saveCatalogV2Product({
@@ -630,7 +635,12 @@ export async function archiveProductV2Action(formData: FormData): Promise<void> 
     return;
   }
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await archiveCatalogV2Product({ tenantId: tenant.tenantId, actorUserId: user.id, id: productId });
   const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
   revalidatePath(toRevalidatePath(redirectPath));
@@ -652,7 +662,12 @@ export async function saveVariantV2Action(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["variants"],
+      "manage",
+    );
     const variantId = toTrimmedString(formData.get("variantId")) || null;
 
     await saveCatalogV2Variant({
@@ -684,7 +699,12 @@ export async function archiveVariantV2Action(formData: FormData): Promise<void> 
     return;
   }
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await archiveCatalogV2Variant({ tenantId: tenant.tenantId, actorUserId: user.id, id: variantId });
   const redirectPath = resolveRedirectPath(formData, legacyCatalogPath(tenant.tenantSlug));
   revalidatePath(toRevalidatePath(redirectPath));
@@ -706,7 +726,12 @@ export async function saveModifierGroupV2Action(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["variants"],
+      "manage",
+    );
     const groupId = toTrimmedString(formData.get("modifierGroupId")) || null;
 
     await saveCatalogV2ModifierGroup({
@@ -738,7 +763,12 @@ export async function archiveModifierGroupV2Action(formData: FormData): Promise<
     return;
   }
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await archiveCatalogV2ModifierGroup({
     tenantId: tenant.tenantId,
     actorUserId: user.id,
@@ -764,7 +794,12 @@ export async function saveModifierOptionV2Action(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["variants"],
+      "manage",
+    );
     const optionId = toTrimmedString(formData.get("modifierOptionId")) || null;
 
     await saveCatalogV2ModifierOption({
@@ -796,7 +831,12 @@ export async function archiveModifierOptionV2Action(formData: FormData): Promise
     return;
   }
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await archiveCatalogV2ModifierOption({
     tenantId: tenant.tenantId,
     actorUserId: user.id,
@@ -822,7 +862,12 @@ export async function saveAssignmentV2Action(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["variants"],
+      "manage",
+    );
     const assignmentId = toTrimmedString(formData.get("assignmentId")) || null;
 
     await saveCatalogV2Assignment({
@@ -854,7 +899,12 @@ export async function archiveAssignmentV2Action(formData: FormData): Promise<voi
     return;
   }
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await archiveCatalogV2Assignment({
     tenantId: tenant.tenantId,
     actorUserId: user.id,
@@ -880,7 +930,12 @@ export async function saveComboSlotV2Action(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["variants"],
+      "manage",
+    );
     const comboSlotId = toTrimmedString(formData.get("comboSlotId")) || null;
 
     await saveCatalogV2ComboSlot({
@@ -912,7 +967,12 @@ export async function archiveComboSlotV2Action(formData: FormData): Promise<void
     return;
   }
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await archiveCatalogV2ComboSlot({
     tenantId: tenant.tenantId,
     actorUserId: user.id,
@@ -938,7 +998,12 @@ export async function saveComboSlotOptionV2Action(
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["variants"],
+      "manage",
+    );
     const comboSlotOptionId = toTrimmedString(formData.get("comboSlotOptionId")) || null;
 
     await saveCatalogV2ComboSlotOption({
@@ -970,7 +1035,12 @@ export async function archiveComboSlotOptionV2Action(formData: FormData): Promis
     return;
   }
 
-  const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+  const { tenant, user } = await resolveSalesPosTypePageActor(
+    tenantSlug,
+    "products",
+    ["variants"],
+    "manage",
+  );
   await archiveCatalogV2ComboSlotOption({
     tenantId: tenant.tenantId,
     actorUserId: user.id,
@@ -995,7 +1065,12 @@ export async function saveCatalogV2ProductImageAction(formData: FormData): Promi
   }
 
   try {
-    const { tenant, user } = await resolveSalesPosPageActor(tenantSlug, "products", "manage");
+    const { tenant, user } = await resolveSalesPosTypePageActor(
+      tenantSlug,
+      "products",
+      ["variants"],
+      "manage",
+    );
 
     await saveCatalogV2ProductImage({
       tenantId: tenant.tenantId,

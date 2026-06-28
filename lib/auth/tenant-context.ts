@@ -1,13 +1,16 @@
 import { cache } from "react";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/require-user";
+import { getCurrentTenantModuleRoleMap, type TenantModuleRole } from "@/lib/auth/module-role-access";
 import { perfMark, perfMeasure } from "@/lib/observability/perf";
+import { resolveTenantPosType, type TenantPosType } from "@/lib/auth/tenant-pos-type";
 import type { TenantRole } from "@/lib/repos/types";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type TenantModuleRow = {
   module_key: string;
   enabled: boolean;
+  config: Record<string, unknown> | null;
 };
 
 export type TenantContext = {
@@ -16,6 +19,9 @@ export type TenantContext = {
   tenantName: string;
   tenantRole: TenantRole;
   enabledModuleKeys: string[];
+  moduleConfigsByKey: Record<string, Record<string, unknown>>;
+  moduleRoleByKey: Record<string, TenantModuleRole>;
+  posType: TenantPosType;
   isPlatformOwner: boolean;
   userEmail: string | null;
 };
@@ -82,16 +88,32 @@ const resolveTenantContextBySlugCached = cache(async (normalizedSlug: string): P
 
     const { data: tenantModules, error: modulesError } = await supabase
       .from("tenant_modules")
-      .select("module_key, enabled")
+      .select("module_key, enabled, config")
       .eq("tenant_id", tenant.id);
 
+    const moduleConfigsByKey: Record<string, Record<string, unknown>> = {};
     if (!modulesError) {
-      const moduleKeys = ((tenantModules ?? []) as TenantModuleRow[])
-        .filter((row) => row.enabled)
-        .map((row) => row.module_key);
+      const moduleRows = (tenantModules ?? []) as TenantModuleRow[];
+      const moduleKeys = moduleRows.filter((row) => row.enabled).map((row) => row.module_key);
+
+      for (const row of moduleRows) {
+        moduleConfigsByKey[row.module_key] =
+          row.config && typeof row.config === "object" ? row.config : {};
+      }
 
       enabledModuleKeys = moduleKeys;
     }
+
+    const posType = resolveTenantPosType({
+      enabledModuleKeys,
+      moduleConfigsByKey,
+    });
+
+    const rawModuleRoleByKey = await getCurrentTenantModuleRoleMap(tenant.id);
+    const moduleRoleByKey = enabledModuleKeys.reduce<Record<string, TenantModuleRole>>((accumulator, moduleKey) => {
+      accumulator[moduleKey] = rawModuleRoleByKey[moduleKey] ?? "none";
+      return accumulator;
+    }, {});
 
     return {
       tenantId: tenant.id,
@@ -99,6 +121,9 @@ const resolveTenantContextBySlugCached = cache(async (normalizedSlug: string): P
       tenantName: tenant.name,
       tenantRole,
       enabledModuleKeys,
+      moduleConfigsByKey,
+      moduleRoleByKey,
+      posType,
       isPlatformOwner,
       userEmail: user.email ?? null,
     };

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Wrench } from "lucide-react";
-import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import { isTenantAccessDeniedError } from "../../lib/access-errors";
+import { resolveTenantModuleContext } from "@/lib/auth/module-role-guard";
 import { getVenueConfigData } from "./actions/venueActions";
 import { RoomSetupStatusBadge } from "./components/RoomSetupStatusBadge";
 import { StatePanel } from "./components/StatePanel";
@@ -30,7 +30,7 @@ function getVenueHealthState(data: Awaited<ReturnType<typeof getVenueConfigData>
 
 async function loadVenuePageData(tenantSlug: string) {
   try {
-    const tenant = await resolveTenantContextBySlug(tenantSlug);
+    const tenant = await resolveTenantModuleContext(tenantSlug, "event_core", "read");
     const data = await getVenueConfigData(tenant.tenantId);
 
     return {

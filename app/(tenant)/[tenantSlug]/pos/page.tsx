@@ -14,46 +14,77 @@ type PosPageProps = {
 export default async function PosPage({ params }: PosPageProps) {
   const { tenantSlug } = await params;
   const tenant = await resolveTenantContextBySlug(tenantSlug);
-  const accessMap = await getCurrentTenantModulePageAccessMap(tenant.tenantId, "sales_pos");
+  const accessMap =
+    tenant.enabledModuleKeys.includes("sales_pos")
+      ? await getCurrentTenantModulePageAccessMap(tenant.tenantId, "sales_pos")
+      : {};
 
-  const links = [
-    {
-      href: `/${tenant.tenantSlug}/pos/devices`,
-      title: "Dispositivos",
-      description: "Gestiona kioscos y activación de equipos POS.",
-      visible: hasModulePageAccess(accessMap.devices ?? "none", "read"),
-    },
-    {
-      href: `/${tenant.tenantSlug}/pos/catalog`,
-      title: "Catálogo POS v2",
-      description: "Administra productos, variantes y modifiers canónicos del POS.",
-      visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
-    },
-    {
-      href: `/${tenant.tenantSlug}/pos/users`,
-      title: "Usuarios POS",
-      description: "Crea y sincroniza cajeros y supervisores para login offline.",
-      visible: tenant.isPlatformOwner || hasModulePageAccess(accessMap.users ?? "none", "read"),
-    },
-    {
-      href: `/${tenant.tenantSlug}/pos/reports`,
-      title: "Reportes",
-      description: "Consulta ventas y estado de sincronización POS.",
-      visible: hasModulePageAccess(accessMap.reports ?? "none", "read"),
-    },
-    {
-      href: `/${tenant.tenantSlug}/pos/inventory`,
-      title: "POS Inventario",
-      description: "Configura bindings POS→receta, reglas y aliases en modo simulación.",
-      visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
-    },
-  ].filter((link) => link.visible);
+  const links =
+    tenant.posType === "simple"
+      ? [
+          {
+            href: `/${tenant.tenantSlug}/pos/catalog/categories`,
+            title: "Categorías",
+            description: "Administra la taxonomía base compartida del catálogo de cafetería.",
+            visible: hasModulePageAccess(accessMap.categories ?? "none", "read"),
+          },
+          {
+            href: `/${tenant.tenantSlug}/pos/catalog/products`,
+            title: "Productos simples",
+            description: "Gestiona el catálogo clásico basado en catalog_items.",
+            visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
+          },
+        ].filter((link) => link.visible)
+      : tenant.posType === "variants"
+        ? [
+            {
+              href: `/${tenant.tenantSlug}/pos/catalog`,
+              title: "Catálogo configurable",
+              description: "Administra productos, variantes, modificadores y combos.",
+              visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
+            },
+            {
+              href: `/${tenant.tenantSlug}/pos/reports`,
+              title: "Reportes POS avanzado",
+              description: "Consulta ventas y desempeño sobre sales_accounts.",
+              visible: hasModulePageAccess(accessMap.reports ?? "none", "read"),
+            },
+            {
+              href: `/${tenant.tenantSlug}/pos/inventory`,
+              title: "Inventario POS",
+              description: "Configura bindings POS→receta y simulación de consumo.",
+              visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
+            },
+          ].filter((link) => link.visible)
+        : tenant.posType === "retail"
+          ? [
+              {
+                href: `/${tenant.tenantSlug}/retail`,
+                title: "Backoffice retail",
+                description: "Punto de entrada del tenant retail dentro del hub.",
+                visible: true,
+              },
+            ]
+          : [
+              {
+                href: `/${tenant.tenantSlug}/pos/catalog`,
+                title: "Catálogo configurable",
+                description: "Compatibilidad temporal para tenants sin pos_type configurado.",
+                visible: hasModulePageAccess(accessMap.products ?? "none", "read"),
+              },
+              {
+                href: `/${tenant.tenantSlug}/pos/reports`,
+                title: "Reportes POS",
+                description: "Compatibilidad temporal para tenants sin pos_type configurado.",
+                visible: hasModulePageAccess(accessMap.reports ?? "none", "read"),
+              },
+            ].filter((link) => link.visible);
 
   return (
     <div className="space-y-4">
       <CatalogSectionHeader
         title="POS"
-        description="Operaciones Edge para dispositivos, catálogo y reportes de punto de venta."
+        description="Punto de entrada del POS según el tipo activo configurado para este tenant."
       />
 
       {links.length > 0 ? (
@@ -73,7 +104,7 @@ export default async function PosPage({ params }: PosPageProps) {
         <StatePanel
           kind="permission"
           title="Sin acceso a POS"
-          message="No tienes ninguna página habilitada dentro del módulo POS para este tenant."
+          message="No tienes ninguna página habilitada dentro de la experiencia POS resuelta para este tenant."
         />
       )}
     </div>

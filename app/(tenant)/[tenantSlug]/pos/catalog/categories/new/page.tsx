@@ -4,7 +4,7 @@ import { CategoryForm } from "@/components/pos/catalog/CategoryForm";
 import { CatalogSectionHeader } from "@/components/pos/catalog/CatalogSectionHeader";
 import { Card } from "@/components/ui/card";
 import { StatePanel } from "@/components/ui/state-panel";
-import { resolveSalesPosPageContext } from "@/lib/auth/module-page-access";
+import { resolveSalesPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 
 type CategoryNewPageProps = {
   params: Promise<{ tenantSlug: string }>;
@@ -24,7 +24,12 @@ type CategoryNewPageResult =
 
 async function loadCategoryNewPage(tenantSlug: string): Promise<CategoryNewPageResult> {
   try {
-    const tenant = await resolveSalesPosPageContext(tenantSlug, "categories", "manage");
+    const tenant = await resolveSalesPosTypePageContext(
+      tenantSlug,
+      "categories",
+      ["simple", "variants"],
+      "manage",
+    );
 
     return {
       ok: true,
