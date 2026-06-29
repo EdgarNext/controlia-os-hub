@@ -103,8 +103,78 @@ type ExistingOrderComparableLine = {
   unit_price_cents: number;
 };
 
+const ORDER_SELECT =
+  "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
+
+const REMOTE_FOLIO_COMPACT_PATTERN = /^([A-Z]+)(\d{6})(\d{4,})$/;
+const REMOTE_FOLIO_DASHED_PATTERN = /^([A-Z]+)-(\d{6})-(\d{4,})$/;
+const LOCAL_FOLIO_COMPACT_PATTERN = /^(\d{4})(\d{1,6})(\d{6})$/;
+const LOCAL_FOLIO_DASHED_PATTERN = /^(\d{4})-(\d{1,6})-(\d{6})$/;
+
 function asTrimmedString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeRetailPosLookupFolio(value: string): {
+  remote: string | null;
+  local: string | null;
+  normalized: string;
+} {
+  const cleaned = value.trim().toUpperCase().replace(/\s+/g, "").replace(/['’‘`]/g, "-");
+  if (!cleaned) {
+    return { remote: null, local: null, normalized: "" };
+  }
+
+  const remoteDashed = cleaned.match(REMOTE_FOLIO_DASHED_PATTERN);
+  if (remoteDashed) {
+    const [, prefix, datePart, serialPart] = remoteDashed;
+    return {
+      remote: `${prefix}-${datePart}-${serialPart}`,
+      local: null,
+      normalized: `${prefix}-${datePart}-${serialPart}`,
+    };
+  }
+
+  const remoteCompact = cleaned.match(REMOTE_FOLIO_COMPACT_PATTERN);
+  if (remoteCompact) {
+    const [, prefix, datePart, serialPart] = remoteCompact;
+    return {
+      remote: `${prefix}-${datePart}-${serialPart}`,
+      local: null,
+      normalized: `${prefix}-${datePart}-${serialPart}`,
+    };
+  }
+
+  const localDashed = cleaned.match(LOCAL_FOLIO_DASHED_PATTERN);
+  if (localDashed) {
+    const [, sequencePart, stationPart, datePart] = localDashed;
+    return {
+      remote: null,
+      local: `${sequencePart}-${stationPart}-${datePart}`,
+      normalized: `${sequencePart}-${stationPart}-${datePart}`,
+    };
+  }
+
+  const localCompact = cleaned.match(LOCAL_FOLIO_COMPACT_PATTERN);
+  if (localCompact) {
+    const [, sequencePart, stationPart, datePart] = localCompact;
+    return {
+      remote: null,
+      local: `${sequencePart}-${stationPart}-${datePart}`,
+      normalized: `${sequencePart}-${stationPart}-${datePart}`,
+    };
+  }
+
+  return { remote: cleaned, local: cleaned, normalized: cleaned };
+}
+
+function normalizeOriginLocalFolio(value: unknown): string | null {
+  const normalized = asTrimmedString(value);
+  if (!normalized) {
+    return null;
+  }
+
+  return normalizeRetailPosLookupFolio(normalized).local;
 }
 
 function asArray<T>(value: T[] | null | undefined) {
@@ -232,7 +302,7 @@ async function loadOrderContext(
           supabase
             .from("retail_pos_orders")
             .select(
-              "id, tenant_id, folio, origin_client_order_id, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by",
+              ORDER_SELECT,
             )
             .abortSignal(signal)
             .eq("tenant_id", tenantId)
@@ -243,7 +313,7 @@ async function loadOrderContext(
     : supabase
         .from("retail_pos_orders")
         .select(
-          "id, tenant_id, folio, origin_client_order_id, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by",
+          ORDER_SELECT,
         )
         .eq("tenant_id", tenantId)
         .eq("id", orderId)
@@ -782,6 +852,7 @@ async function createOrderWithRetry(input: {
   originDeviceRecordId: string;
   createdByPosUserId: string;
   originClientOrderId: string;
+  originLocalFolio: string | null;
 }): Promise<OrderRow> {
   const supabase = getSupabaseAdminClient();
 
@@ -793,12 +864,13 @@ async function createOrderWithRetry(input: {
         tenant_id: input.tenantId,
         folio,
         origin_client_order_id: input.originClientOrderId,
+        origin_local_folio: input.originLocalFolio,
         status: "pending_payment",
         origin_device_id: input.originDeviceRecordId,
         created_by_pos_user_id: input.createdByPosUserId,
       })
       .select(
-        "id, tenant_id, folio, origin_client_order_id, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by",
+        ORDER_SELECT,
       )
       .limit(1)
       .maybeSingle<OrderRow>();
@@ -818,6 +890,16 @@ async function createOrderWithRetry(input: {
       }
     }
 
+    if (isUniqueViolation(error, "retail_pos_orders_tenant_origin_local_folio_uidx")) {
+      if (input.originLocalFolio) {
+        const existing = await findOrderByOriginLocalFolio(input.tenantId, input.originLocalFolio);
+        if (existing?.origin_client_order_id === input.originClientOrderId) {
+          return existing;
+        }
+      }
+      throw new RetailPosRuntimeError(409, "origin_local_folio already exists for a different retail_pos order.");
+    }
+
     throw new RetailPosRuntimeError(400, `Unable to create retail_pos order: ${error?.message ?? "unknown error"}`);
   }
 
@@ -829,7 +911,7 @@ async function findOrderByOriginClientOrderId(tenantId: string, originClientOrde
   const { data, error } = await supabase
     .from("retail_pos_orders")
     .select(
-      "id, tenant_id, folio, origin_client_order_id, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by",
+      ORDER_SELECT,
     )
     .eq("tenant_id", tenantId)
     .eq("origin_client_order_id", originClientOrderId)
@@ -838,6 +920,51 @@ async function findOrderByOriginClientOrderId(tenantId: string, originClientOrde
 
   if (error) {
     throw new RetailPosRuntimeError(500, `Unable to resolve retail_pos order idempotency: ${error.message}`);
+  }
+
+  return data ?? null;
+}
+
+async function findOrderByOriginLocalFolio(tenantId: string, originLocalFolio: string) {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("retail_pos_orders")
+    .select(ORDER_SELECT)
+    .eq("tenant_id", tenantId)
+    .eq("origin_local_folio", originLocalFolio)
+    .limit(1)
+    .maybeSingle<OrderRow>();
+
+  if (error) {
+    throw new RetailPosRuntimeError(500, `Unable to resolve retail_pos local folio: ${error.message}`);
+  }
+
+  return data ?? null;
+}
+
+async function updateOrderOriginLocalFolio(input: {
+  tenantId: string;
+  orderId: string;
+  originLocalFolio: string;
+}) {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("retail_pos_orders")
+    .update({
+      origin_local_folio: input.originLocalFolio,
+    })
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .is("origin_local_folio", null)
+    .select(ORDER_SELECT)
+    .limit(1)
+    .maybeSingle<OrderRow>();
+
+  if (error) {
+    if (isUniqueViolation(error, "retail_pos_orders_tenant_origin_local_folio_uidx")) {
+      throw new RetailPosRuntimeError(409, "origin_local_folio already exists for a different retail_pos order.");
+    }
+    throw new RetailPosRuntimeError(500, `Unable to update retail_pos local folio: ${error.message}`);
   }
 
   return data ?? null;
@@ -890,6 +1017,7 @@ export async function createRetailPosOrder(input: {
   if (!originClientOrderId) {
     throw new RetailPosRuntimeError(400, "origin_client_order_id is required.");
   }
+  const originLocalFolio = normalizeOriginLocalFolio(input.request.origin_local_folio);
 
   await assertPosUser(actor.tenantId, input.request.created_by_pos_user_id);
 
@@ -913,6 +1041,34 @@ export async function createRetailPosOrder(input: {
       );
     }
 
+    if (originLocalFolio) {
+      if (existingOrder.origin_local_folio && existingOrder.origin_local_folio !== originLocalFolio) {
+        throw new RetailPosRuntimeError(
+          409,
+          "origin_client_order_id already exists with a different retail_pos order payload.",
+        );
+      }
+
+      if (!existingOrder.origin_local_folio) {
+        const updatedOrder = await updateOrderOriginLocalFolio({
+          tenantId: actor.tenantId,
+          orderId: existingOrder.id,
+          originLocalFolio,
+        });
+        if (updatedOrder) {
+          existingOrder.origin_local_folio = updatedOrder.origin_local_folio;
+        } else {
+          const reloadedOrder = await findOrderByOriginClientOrderId(actor.tenantId, originClientOrderId);
+          if (reloadedOrder?.origin_local_folio && reloadedOrder.origin_local_folio !== originLocalFolio) {
+            throw new RetailPosRuntimeError(
+              409,
+              "origin_client_order_id already exists with a different retail_pos order payload.",
+            );
+          }
+        }
+      }
+    }
+
     if (!areResolvedLinesEquivalent(resolvedLines, existingDetail.lines)) {
       if (existingOrder.status !== "pending_payment") {
         throw new RetailPosRuntimeError(
@@ -932,6 +1088,7 @@ export async function createRetailPosOrder(input: {
     originDeviceRecordId,
     createdByPosUserId: input.request.created_by_pos_user_id,
     originClientOrderId,
+    originLocalFolio,
   });
 
   try {
@@ -1021,30 +1178,46 @@ export async function getRetailPosOrderByFolio(input: {
   if (!folio) {
     throw new RetailPosRuntimeError(400, "folio is required.");
   }
+  const lookup = normalizeRetailPosLookupFolio(folio);
 
   const byFolioStartedAt =
     typeof performance !== "undefined" ? performance.now() : Date.now();
 
   const supabase = getSupabaseAdminClient({ trace: input.trace });
-  const { data, error } = await runSupabaseReadWithRetry<OrderRow>({
-    trace: input.trace,
-    step: "order_lookup_with_header",
-    query: (signal) =>
-      supabase
-        .from("retail_pos_orders")
-        .select(
-          "id, tenant_id, folio, origin_client_order_id, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by",
-        )
-        .abortSignal(signal)
-        .eq("tenant_id", actor.tenantId)
-        .eq("folio", folio)
-        .limit(1)
-        .maybeSingle<OrderRow>(),
-  });
+  const loadByField = async (field: "folio" | "origin_local_folio", value: string) => {
+    const { data, error } = await runSupabaseReadWithRetry<OrderRow[]>({
+      trace: input.trace,
+      step: field === "folio" ? "order_lookup_with_header" : "order_lookup_with_local_folio",
+      query: (signal) =>
+        supabase
+          .from("retail_pos_orders")
+          .select(ORDER_SELECT)
+          .abortSignal(signal)
+          .eq("tenant_id", actor.tenantId)
+          .eq(field, value)
+          .limit(2),
+    });
 
-  if (error) {
-    throw new RetailPosRuntimeError(500, `Unable to load retail_pos order by folio: ${error.message}`);
-  }
+    if (error) {
+      throw new RetailPosRuntimeError(500, `Unable to load retail_pos order by folio: ${error.message}`);
+    }
+
+    const rows = asArray(data);
+    if (rows.length > 1) {
+      throw new RetailPosRuntimeError(409, "Multiple retail_pos orders matched the provided folio.");
+    }
+
+    return rows[0] ?? null;
+  };
+
+  const remoteCandidate = lookup.remote;
+  const localCandidate = lookup.local;
+  const triedRemote = remoteCandidate ? await loadByField("folio", remoteCandidate) : null;
+  const data =
+    triedRemote ??
+    (localCandidate && (!remoteCandidate || localCandidate !== remoteCandidate || !triedRemote)
+      ? await loadByField("origin_local_folio", localCandidate)
+      : null);
 
   if (!data) {
     throw new RetailPosRuntimeError(404, "retail_pos order not found for folio.");

@@ -121,6 +121,7 @@ export type RetailPosOrder = {
   tenant_id: string;
   folio: string;
   origin_client_order_id: string;
+  origin_local_folio: string | null;
   status: RetailPosOrderStatus;
   origin_device_id: string;
   created_by_pos_user_id: string;
@@ -502,6 +503,7 @@ export type CreateRetailPosOrderLineInput = {
 export type CreateRetailPosOrderRequest = {
   tenant_id: string;
   origin_client_order_id: string;
+  origin_local_folio?: string | null;
   origin_device_id: string;
   created_by_pos_user_id: string;
   lines: CreateRetailPosOrderLineInput[];

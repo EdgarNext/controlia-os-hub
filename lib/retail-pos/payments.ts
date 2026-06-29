@@ -52,6 +52,9 @@ type CashShiftRow = {
   updated_by: string | null;
 };
 
+const ORDER_SELECT =
+  "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
+
 function ensureNonNegativeInteger(value: unknown, field: string) {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new RetailPosRuntimeError(400, `${field} must be a non-negative integer.`);
@@ -112,9 +115,7 @@ async function loadOrderForPayment(
     query: (signal) =>
       supabase
         .from("retail_pos_orders")
-        .select(
-          "id, tenant_id, folio, origin_client_order_id, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by",
-        )
+        .select(ORDER_SELECT)
         .abortSignal(signal)
         .eq("tenant_id", tenantId)
         .eq("id", orderId)

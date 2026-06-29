@@ -8,6 +8,7 @@ type RouteParams = { tenantSlug: string };
 type CreateOrderBody = {
   tenant_id: string;
   origin_client_order_id: string;
+  origin_local_folio?: string | null;
   origin_device_id: string;
   created_by_pos_user_id: string;
   lines: Array<{
