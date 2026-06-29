@@ -10,6 +10,7 @@ import type {
 } from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
+  assertRetailPosOrderEntryAccess,
   assertRetailPosDeviceRole,
   resolveRetailPosRuntimeActor,
   type RetailPosRuntimeActor,
@@ -879,7 +880,7 @@ export async function createRetailPosOrder(input: {
     trace: input.trace,
   });
 
-  assertRetailPosDeviceRole(actor, ["order_station"]);
+  assertRetailPosOrderEntryAccess(actor);
 
   if (input.request.tenant_id !== actor.tenantId) {
     throw new RetailPosRuntimeError(400, "tenant_id does not match runtime tenant.");
@@ -956,7 +957,7 @@ export async function updateRetailPosOrder(input: {
     deviceSecret: input.deviceSecret,
   });
 
-  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station"]);
+  assertRetailPosOrderEntryAccess(actor);
 
   if (input.request.tenant_id !== actor.tenantId) {
     throw new RetailPosRuntimeError(400, "tenant_id does not match runtime tenant.");

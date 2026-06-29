@@ -40,6 +40,7 @@ type DeviceSettingsRow = {
   device_id: string;
   tenant_id: string;
   device_role: RetailPosDeviceRole;
+  allow_order_entry: boolean;
   is_active: boolean;
 };
 
@@ -60,6 +61,7 @@ export type RetailPosRuntimeActor = {
   devicePublicId: string | null;
   deviceName: string | null;
   deviceRole: RetailPosDeviceRole | null;
+  allowOrderEntry: boolean;
 };
 
 function normalizeTenantSlug(tenantSlug: string) {
@@ -84,10 +86,6 @@ function timingSafeSecretEquals(expectedHash: string, computedHash: string) {
   }
 
   return timingSafeEqual(expectedBuffer, actualBuffer);
-}
-
-function nowMs() {
-  return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
 function logRuntimeAuthCache(input: {
@@ -212,6 +210,7 @@ export async function resolveRetailPosSessionActor(tenantSlug: string): Promise<
     devicePublicId: null,
     deviceName: null,
     deviceRole: null,
+    allowOrderEntry: false,
   };
 }
 
@@ -276,7 +275,7 @@ export async function authenticateRetailPosDeviceActor(input: {
       query: (signal) =>
         supabase
           .from("retail_pos_device_settings")
-          .select("device_id, tenant_id, device_role, is_active")
+          .select("device_id, tenant_id, device_role, allow_order_entry, is_active")
           .abortSignal(signal)
           .eq("tenant_id", tenant.id)
           .eq("device_id", device.id)
@@ -312,6 +311,7 @@ export async function authenticateRetailPosDeviceActor(input: {
     devicePublicId: device.device_id,
     deviceName: device.name,
     deviceRole: settings.device_role,
+    allowOrderEntry: settings.allow_order_entry,
   };
 }
 
@@ -419,6 +419,54 @@ export function assertRetailPosDeviceRole(
   }
 }
 
+export function canReadRetailPosOperators(actor: RetailPosRuntimeActor) {
+  if (actor.mode !== "device") {
+    return true;
+  }
+
+  return (
+    actor.deviceRole === "order_station" ||
+    actor.deviceRole === "cashier_station" ||
+    (actor.deviceRole === "backoffice_station" && actor.allowOrderEntry)
+  );
+}
+
+export function assertRetailPosOperatorsAccess(actor: RetailPosRuntimeActor) {
+  if (canReadRetailPosOperators(actor)) {
+    return;
+  }
+
+  throw new RetailPosRuntimeError(403, "POS device role is not allowed for this operation.");
+}
+
+export function assertRetailPosOrderEntryAccess(actor: RetailPosRuntimeActor) {
+  if (actor.mode !== "device") {
+    return;
+  }
+
+  if (actor.deviceRole === "order_station") {
+    return;
+  }
+
+  if (actor.deviceRole === "backoffice_station" && actor.allowOrderEntry) {
+    return;
+  }
+
+  throw new RetailPosRuntimeError(403, "POS device is not allowed to create or sync retail_pos orders.");
+}
+
+export function assertRetailPosOrderTicketAccess(actor: RetailPosRuntimeActor) {
+  if (actor.mode !== "device") {
+    return;
+  }
+
+  if (actor.deviceRole === "cashier_station") {
+    return;
+  }
+
+  assertRetailPosOrderEntryAccess(actor);
+}
+
 export async function resolveRetailPosTargetDevice(input: {
   actor: RetailPosRuntimeActor;
   deviceRecordId?: string | null;
@@ -478,7 +526,7 @@ export async function resolveRetailPosTargetDevice(input: {
 
   const { data: settings, error: settingsError } = await supabase
     .from("retail_pos_device_settings")
-    .select("device_id, tenant_id, device_role, is_active")
+    .select("device_id, tenant_id, device_role, allow_order_entry, is_active")
     .eq("tenant_id", input.actor.tenantId)
     .eq("device_id", device.id)
     .eq("is_active", true)

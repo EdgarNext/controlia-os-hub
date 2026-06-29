@@ -75,6 +75,7 @@ function cloneActor(actor: RetailPosRuntimeActor): RetailPosRuntimeActor {
     devicePublicId: actor.devicePublicId,
     deviceName: actor.deviceName,
     deviceRole: actor.deviceRole,
+    allowOrderEntry: actor.allowOrderEntry,
   };
 }
 

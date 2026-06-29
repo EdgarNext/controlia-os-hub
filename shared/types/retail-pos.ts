@@ -221,6 +221,7 @@ export type RetailPosDeviceSettings = {
   device_id: string;
   tenant_id: string;
   device_role: RetailPosDeviceRole;
+  allow_order_entry: boolean;
   printer_name: string | null;
   printer_driver: string | null;
   auto_print_order_ticket: boolean;
@@ -243,6 +244,7 @@ export type RetailPosCatalogDeviceSettings = Pick<
   | "device_id"
   | "tenant_id"
   | "device_role"
+  | "allow_order_entry"
   | "printer_name"
   | "printer_driver"
   | "auto_print_order_ticket"

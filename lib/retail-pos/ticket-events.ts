@@ -7,6 +7,7 @@ import type {
   RetailPosTicketType,
 } from "@/shared/types/retail-pos";
 import {
+  assertRetailPosOrderTicketAccess,
   assertRetailPosDeviceRole,
   resolveRetailPosRuntimeActor,
 } from "./auth";
@@ -186,7 +187,7 @@ export async function recordRetailPosTicketEvent(input: {
   if (ticketType === "payment") {
     assertRetailPosDeviceRole(actor, ["cashier_station"]);
   } else {
-    assertRetailPosDeviceRole(actor, ["order_station", "cashier_station"]);
+    assertRetailPosOrderTicketAccess(actor);
   }
 
   const existing = await findExistingTicketEventByClientEventId({

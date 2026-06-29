@@ -5,7 +5,7 @@ import type {
 } from "@/shared/types/retail-pos";
 import { listPosUsersForTenant } from "@/lib/pos/users";
 import {
-  assertRetailPosDeviceRole,
+  assertRetailPosOperatorsAccess,
   resolveRetailPosRuntimeActor,
 } from "./auth";
 import type { RuntimePerfTrace } from "./runtime-perf";
@@ -20,7 +20,7 @@ export async function listRetailPosRuntimeOperators(input: {
   const authStartedAt = performance.now();
   const actor = await resolveRetailPosRuntimeActor(input);
   const authMs = Math.round(performance.now() - authStartedAt);
-  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station"]);
+  assertRetailPosOperatorsAccess(actor);
 
   const operatorsQueryStartedAt = performance.now();
   const operators = (await listPosUsersForTenant(actor.tenantId, input.trace))

@@ -77,33 +77,58 @@ function assertSupportedDeviceRole(
   }
 }
 
-function buildCapabilities(deviceRole: RetailPosDeviceRole): RetailPosCapability[] {
-  if (deviceRole === "cashier_station") {
-    return [
-      "catalog.read",
-      "orders.lookup",
-      "cashier.status.read",
-      "cashier.shift.open",
-      "cashier.shift.close",
-      "payments.collect",
-      "tickets.print.payment",
-    ];
+const CASHIER_CAPABILITIES: RetailPosCapability[] = [
+  "catalog.read",
+  "orders.lookup",
+  "cashier.status.read",
+  "cashier.shift.open",
+  "cashier.shift.close",
+  "payments.collect",
+  "tickets.print.payment",
+];
+
+const BACKOFFICE_CAPABILITIES: RetailPosCapability[] = ["catalog.read"];
+
+const ORDER_STATION_CAPABILITIES: RetailPosCapability[] = [
+  "catalog.read",
+  "catalog.assign_barcode",
+  "catalog.quick_create",
+  "orders.create",
+  "orders.sync",
+  "orders.lookup",
+  "orders.cancel",
+  "tickets.print.order",
+];
+
+const BACKOFFICE_ORDER_ENTRY_CAPABILITIES: RetailPosCapability[] = [
+  "orders.create",
+  "orders.sync",
+  "tickets.print.order",
+];
+
+function buildCapabilities(input: {
+  deviceRole: RetailPosDeviceRole;
+  allowOrderEntry: boolean;
+  deviceStatus: string;
+  settingsActive: boolean;
+}): RetailPosCapability[] {
+  if (input.deviceRole === "cashier_station") {
+    return CASHIER_CAPABILITIES;
   }
 
-  if (deviceRole === "backoffice_station") {
-    return ["catalog.read"];
+  if (input.deviceRole === "backoffice_station") {
+    if (
+      input.allowOrderEntry &&
+      input.settingsActive &&
+      input.deviceStatus === "active"
+    ) {
+      return [...BACKOFFICE_CAPABILITIES, ...BACKOFFICE_ORDER_ENTRY_CAPABILITIES];
+    }
+
+    return BACKOFFICE_CAPABILITIES;
   }
 
-  return [
-    "catalog.read",
-    "catalog.assign_barcode",
-    "catalog.quick_create",
-    "orders.create",
-    "orders.sync",
-    "orders.lookup",
-    "orders.cancel",
-    "tickets.print.order",
-  ];
+  return ORDER_STATION_CAPABILITIES;
 }
 
 function buildConfigVersion(input: {
@@ -124,6 +149,7 @@ function buildConfigVersion(input: {
     },
     settings: {
       device_role: input.settings.device_role,
+      allow_order_entry: input.settings.allow_order_entry,
       printer_name: input.settings.printer_name,
       printer_driver: input.settings.printer_driver,
       auto_print_order_ticket: input.settings.auto_print_order_ticket,
@@ -292,10 +318,10 @@ async function loadBootstrapDeviceSettings(input: {
     trace: input.trace,
     step: "bootstrap_device_settings",
     query: (signal) =>
-      supabase
+        supabase
         .from("retail_pos_device_settings")
         .select(
-          "device_id, tenant_id, device_role, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, updated_at",
+          "device_id, tenant_id, device_role, allow_order_entry, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, updated_at",
         )
         .abortSignal(signal)
         .eq("tenant_id", input.tenantId)
@@ -462,7 +488,12 @@ export async function getRetailPosBootstrap(input: {
     configVersion,
     issuedAt: serverTime,
   });
-  const capabilities = buildCapabilities(settings.device_role);
+  const capabilities = buildCapabilities({
+    deviceRole: settings.device_role,
+    allowOrderEntry: settings.allow_order_entry,
+    deviceStatus: device.status,
+    settingsActive: settings.is_active,
+  });
   const cashierState = buildCashierState({
     serverTime,
     device,
