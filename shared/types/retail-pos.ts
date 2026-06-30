@@ -445,6 +445,20 @@ export type RetailPosBackofficeCatalogProductDetailResponse = {
   product: RetailPosBackofficeCatalogProduct;
 };
 
+export type CreateRetailPosBackofficeProductRequest = {
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  brand?: string | null;
+  sales_unit_code: string;
+  sales_unit_label: string;
+  allow_decimal_quantity: boolean;
+  price_cents: number;
+  cost_cents?: number | null;
+  supplier_id?: string | null;
+  is_active?: boolean;
+};
+
 export type UpdateRetailPosBackofficeProductRequest = {
   name?: string;
   sku?: string | null;

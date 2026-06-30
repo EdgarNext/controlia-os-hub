@@ -262,9 +262,9 @@ const retailNavDomain: TenantNavDomainConfig = {
   moduleKeys: ["retail_pos"],
   items: [
     {
-      href: (tenantSlug) => `/${tenantSlug}/retail`,
-      label: "Backoffice retail",
-      iconKey: "catalog",
+      href: (tenantSlug) => `/${tenantSlug}/retail/products`,
+      label: "Productos",
+      iconKey: "products",
       match: "prefix",
       moduleKeys: ["retail_pos"],
       pageKey: "catalog",

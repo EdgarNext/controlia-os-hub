@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
+  CreateRetailPosBackofficeProductRequest,
   CreateRetailPosBackofficeSupplierResponse,
   RetailPosAssignBarcodeRequest,
   RetailPosAssignBarcodeResponse,
@@ -882,6 +883,43 @@ function normalizeBackofficeProductPatch(input: UpdateRetailPosBackofficeProduct
   }
 
   return patch;
+}
+
+function normalizeBackofficeProductCreate(input: CreateRetailPosBackofficeProductRequest) {
+  const allowedKeys = new Set([
+    "name",
+    "sku",
+    "barcode",
+    "brand",
+    "sales_unit_code",
+    "sales_unit_label",
+    "allow_decimal_quantity",
+    "price_cents",
+    "cost_cents",
+    "supplier_id",
+    "is_active",
+  ]);
+
+  const unknownKeys = Object.keys(input).filter((key) => !allowedKeys.has(key));
+  if (unknownKeys.length > 0) {
+    throw new RetailPosRuntimeError(400, `Unknown product fields: ${unknownKeys.join(", ")}.`);
+  }
+
+  return {
+    name: normalizeRequiredString(input.name, "name"),
+    sku: normalizeSku(input.sku),
+    barcode: normalizeBarcode(input.barcode, { required: false }),
+    brand: normalizeOptionalValue(input.brand),
+    sales_unit_code: normalizeRequiredString(input.sales_unit_code, "sales_unit_code"),
+    sales_unit_label: normalizeRequiredString(input.sales_unit_label, "sales_unit_label"),
+    allow_decimal_quantity: ensureBoolean(input.allow_decimal_quantity, "allow_decimal_quantity"),
+    unit_price_cents: normalizePositiveInteger(input.price_cents, "price_cents"),
+    cost_cents: input.cost_cents === undefined || input.cost_cents === null
+      ? null
+      : ensureNonNegativeInteger(input.cost_cents, "cost_cents"),
+    supplier_id: normalizeOptionalValue(input.supplier_id),
+    is_active: input.is_active === undefined ? true : ensureBoolean(input.is_active, "is_active"),
+  } satisfies Omit<RetailPosBackofficeProductRow, "id" | "tenant_id" | "category_id" | "has_variants" | "deleted_at" | "created_at" | "updated_at">;
 }
 
 function groupCatalogItemsByProductId(items: RetailPosCatalogItem[]) {
@@ -1927,6 +1965,95 @@ export async function updateRetailPosBackofficeCatalogProduct(input: {
     product: mapBackofficeProductRow({
       product: data,
       categoryName: category?.name ?? null,
+      supplierName: supplier?.name ?? null,
+    }),
+  };
+}
+
+export async function createRetailPosBackofficeCatalogProduct(input: {
+  tenantSlug: string;
+  request: CreateRetailPosBackofficeProductRequest;
+  deviceId?: string | null;
+  deviceSecret?: string | null;
+}): Promise<RetailPosBackofficeCatalogProductDetailResponse> {
+  const actor = await resolveRetailPosRuntimeActor({
+    tenantSlug: input.tenantSlug,
+    deviceId: input.deviceId,
+    deviceSecret: input.deviceSecret,
+  });
+
+  assertBackofficeCatalogManageAccess(actor);
+
+  const createPayload = normalizeBackofficeProductCreate(input.request);
+
+  if (createPayload.sku) {
+    await assertSkuAvailable({
+      tenantId: actor.tenantId,
+      sku: createPayload.sku,
+    });
+  }
+
+  if (createPayload.barcode) {
+    await assertBarcodeAvailable({
+      tenantId: actor.tenantId,
+      barcode: createPayload.barcode,
+    });
+  }
+
+  if (createPayload.supplier_id !== null) {
+    const supplier = await loadSupplierById({
+      tenantId: actor.tenantId,
+      supplierId: createPayload.supplier_id,
+    });
+
+    if (!supplier) {
+      throw new RetailPosRuntimeError(400, "supplier_id is not available for this tenant.");
+    }
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("retail_pos_products")
+    .insert({
+      tenant_id: actor.tenantId,
+      category_id: null,
+      name: createPayload.name,
+      brand: createPayload.brand,
+      sku: createPayload.sku,
+      barcode: createPayload.barcode,
+      unit_price_cents: createPayload.unit_price_cents,
+      cost_cents: createPayload.cost_cents,
+      supplier_id: createPayload.supplier_id,
+      sales_unit_code: createPayload.sales_unit_code,
+      sales_unit_label: createPayload.sales_unit_label,
+      allow_decimal_quantity: createPayload.allow_decimal_quantity,
+      has_variants: false,
+      is_active: createPayload.is_active,
+    })
+    .select(
+      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
+    )
+    .limit(1)
+    .maybeSingle<RetailPosBackofficeProductRow>();
+
+  if (error) {
+    throw new RetailPosRuntimeError(400, `Unable to create retail_pos product: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new RetailPosRuntimeError(500, "retail_pos product insert did not return a record.");
+  }
+
+  const supplier = await loadSupplierById({
+    tenantId: actor.tenantId,
+    supplierId: data.supplier_id,
+  });
+
+  return {
+    ok: true,
+    product: mapBackofficeProductRow({
+      product: data,
+      categoryName: null,
       supplierName: supplier?.name ?? null,
     }),
   };
