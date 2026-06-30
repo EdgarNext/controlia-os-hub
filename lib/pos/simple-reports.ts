@@ -38,6 +38,7 @@ const PAGE_SIZE = 50;
 const MAX_RANGE_DAYS = 31;
 const MX_UTC_OFFSET_HOURS = 6;
 const PRODUCT_FETCH_PAGE_SIZE = 1000;
+const ORDER_FETCH_PAGE_SIZE = 1000;
 
 type SimplePosReportsSearchParams = PosReportsSearchParams & {
   view?: string | string[];
@@ -62,11 +63,13 @@ type RawProductSourceRow = {
   orders: {
     id: string;
     created_at: string;
+    closed_at: string | null;
     status: string;
     folio_text: string;
   } | {
     id: string;
     created_at: string;
+    closed_at: string | null;
     status: string;
     folio_text: string;
   }[] | null;
@@ -108,6 +111,7 @@ type ProductSourceRow = {
   orders: {
     id: string;
     created_at: string;
+    closed_at: string | null;
     status: string;
     folio_text: string;
   } | null;
@@ -146,6 +150,21 @@ type RawOrderDetailSourceRow = {
       name: string;
     }[] | null;
   }[] | null;
+};
+
+type SimplePaidOrderSourceRow = {
+  id: string;
+  folio_number: number | string | null;
+  folio_text: string | null;
+  status: string;
+  total_cents: number | string;
+  payment_received_cents: number | string | null;
+  change_cents: number | string | null;
+  payment_method: string | null;
+  print_status: string | null;
+  created_at: string;
+  closed_at: string | null;
+  is_tab: boolean | null;
 };
 
 function firstEmbedded<T>(value: T | T[] | null | undefined): T | null {
@@ -341,6 +360,53 @@ function buildUtcRange(filters: SimplePosReportsFilters) {
   };
 }
 
+function buildPaidOrdersDateOrFilter(filters: SimplePosReportsFilters): string {
+  const { startIso, endExclusiveIso } = buildUtcRange(filters);
+
+  return [
+    `and(closed_at.gte.${startIso},closed_at.lt.${endExclusiveIso})`,
+    `and(closed_at.is.null,created_at.gte.${startIso},created_at.lt.${endExclusiveIso})`,
+  ].join(",");
+}
+
+async function listSimplePaidOrdersForRange(input: {
+  tenantId: string;
+  filters: SimplePosReportsFilters;
+}): Promise<SimplePaidOrderSourceRow[]> {
+  const supabase = getSupabaseAdminClient();
+  const rows: SimplePaidOrderSourceRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + ORDER_FETCH_PAGE_SIZE - 1;
+    const { data, error } = await supabase
+      .from("orders")
+      .select(
+        "id, folio_number, folio_text, status, total_cents, payment_received_cents, change_cents, payment_method, print_status, created_at, closed_at, is_tab",
+      )
+      .eq("tenant_id", input.tenantId)
+      .eq("status", "PAID")
+      .or(buildPaidOrdersDateOrFilter(input.filters))
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`Unable to load simple POS paid orders for range: ${error.message}`);
+    }
+
+    const page = (data ?? []) as SimplePaidOrderSourceRow[];
+    rows.push(...page);
+
+    if (page.length < ORDER_FETCH_PAGE_SIZE) {
+      break;
+    }
+
+    from += ORDER_FETCH_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
 export function formatSimplePosShortDate(dateOnly: string): string {
   const date = new Date(`${dateOnly}T12:00:00.000Z`);
   return MX_SHORT_DATE_FORMATTER.format(date);
@@ -354,38 +420,24 @@ async function countOrdersByPrintState(input: {
   tenantId: string;
   filters: SimplePosReportsFilters;
 }) {
-  const supabase = getSupabaseAdminClient();
-  const { startIso, endExclusiveIso } = buildUtcRange(input.filters);
-
-  const [paidOrders, printedOrders] = await Promise.all([
-    supabase
-      .from("orders")
-      .select("id", { count: "exact", head: true })
-      .eq("tenant_id", input.tenantId)
-      .eq("status", "PAID")
-      .gte("created_at", startIso)
-      .lt("created_at", endExclusiveIso),
-    supabase
-      .from("orders")
-      .select("id", { count: "exact", head: true })
-      .eq("tenant_id", input.tenantId)
-      .eq("status", "PAID")
-      .eq("print_status", "SENT")
-      .gte("created_at", startIso)
-      .lt("created_at", endExclusiveIso),
-  ]);
-
-  if (paidOrders.error) {
-    throw new Error(`Unable to count paid simple POS orders: ${paidOrders.error.message}`);
-  }
-
-  if (printedOrders.error) {
-    throw new Error(`Unable to count printed simple POS orders: ${printedOrders.error.message}`);
-  }
+  const paidOrders = await listSimplePaidOrdersForRange(input);
 
   return {
-    paidOrdersCount: paidOrders.count ?? 0,
-    printedOrdersCount: printedOrders.count ?? 0,
+    paidOrdersCount: paidOrders.length,
+    printedOrdersCount: paidOrders.filter((order) => order.print_status === "SENT").length,
+  };
+}
+
+function buildSimplePaidOrdersSummary(orders: SimplePaidOrderSourceRow[]) {
+  const grossCents = orders.reduce((sum, order) => sum + Number(order.total_cents ?? 0), 0);
+  const paidOrdersCount = orders.length;
+  const printedOrdersCount = orders.filter((order) => order.print_status === "SENT").length;
+
+  return {
+    gross_cents: grossCents,
+    paid_orders_count: paidOrdersCount,
+    average_ticket_cents: paidOrdersCount > 0 ? Math.round(grossCents / paidOrdersCount) : 0,
+    printed_orders_count: printedOrdersCount,
   };
 }
 
@@ -454,66 +506,73 @@ async function listSimpleProductRows(input: {
   filters: SimplePosReportsFilters;
 }): Promise<ProductSourceRow[]> {
   const supabase = getSupabaseAdminClient();
-  const { startIso, endExclusiveIso } = buildUtcRange(input.filters);
+  const orders = await listSimplePaidOrdersForRange(input);
+  const orderIds = orders.map((order) => order.id);
+
+  if (orderIds.length === 0) {
+    return [];
+  }
+
   const rows: ProductSourceRow[] = [];
-  let from = 0;
+  for (let index = 0; index < orderIds.length; index += 200) {
+    const chunk = orderIds.slice(index, index + 200);
+    let from = 0;
 
-  while (true) {
-    const to = from + PRODUCT_FETCH_PAGE_SIZE - 1;
-    const { data, error } = await supabase
-      .from("order_items")
-      .select(
-        `
-          order_id,
-          catalog_item_id,
-          qty,
-          unit_price_cents,
-          line_total_cents,
-          orders!order_items_tenant_order_fkey(id, created_at, status, folio_text),
-          catalog_items!order_items_catalog_item_id_fkey(
-            id,
-            name,
-            type,
-            class,
-            is_active,
-            is_sold_out,
-            is_popular,
-            catalog_categories!catalog_items_tenant_category_fkey(name)
-          )
-        `,
-      )
-      .eq("tenant_id", input.tenantId)
-      .eq("orders.status", "PAID")
-      .gte("orders.created_at", startIso)
-      .lt("orders.created_at", endExclusiveIso)
-      .range(from, to);
+    while (true) {
+      const to = from + PRODUCT_FETCH_PAGE_SIZE - 1;
+      const { data, error } = await supabase
+        .from("order_items")
+        .select(
+          `
+            order_id,
+            catalog_item_id,
+            qty,
+            unit_price_cents,
+            line_total_cents,
+            orders!order_items_tenant_order_fkey(id, created_at, closed_at, status, folio_text),
+            catalog_items!order_items_catalog_item_id_fkey(
+              id,
+              name,
+              type,
+              class,
+              is_active,
+              is_sold_out,
+              is_popular,
+              catalog_categories!catalog_items_tenant_category_fkey(name)
+            )
+          `,
+        )
+        .eq("tenant_id", input.tenantId)
+        .in("order_id", chunk)
+        .range(from, to);
 
-    if (error) {
-      throw new Error(`Unable to load simple POS product rows: ${error.message}`);
+      if (error) {
+        throw new Error(`Unable to load simple POS product rows: ${error.message}`);
+      }
+
+      const page: ProductSourceRow[] = ((data ?? []) as RawProductSourceRow[]).map((row) => ({
+        ...row,
+        orders: firstEmbedded(row.orders),
+        catalog_items: (() => {
+          const catalogItem = firstEmbedded(row.catalog_items);
+          if (!catalogItem) {
+            return null;
+          }
+
+          return {
+            ...catalogItem,
+            catalog_categories: firstEmbedded(catalogItem.catalog_categories),
+          };
+        })(),
+      }));
+      rows.push(...page);
+
+      if (page.length < PRODUCT_FETCH_PAGE_SIZE) {
+        break;
+      }
+
+      from += PRODUCT_FETCH_PAGE_SIZE;
     }
-
-    const page: ProductSourceRow[] = ((data ?? []) as RawProductSourceRow[]).map((row) => ({
-      ...row,
-      orders: firstEmbedded(row.orders),
-      catalog_items: (() => {
-        const catalogItem = firstEmbedded(row.catalog_items);
-        if (!catalogItem) {
-          return null;
-        }
-
-        return {
-          ...catalogItem,
-          catalog_categories: firstEmbedded(catalogItem.catalog_categories),
-        };
-      })(),
-    }));
-    rows.push(...page);
-
-    if (page.length < PRODUCT_FETCH_PAGE_SIZE) {
-      break;
-    }
-
-    from += PRODUCT_FETCH_PAGE_SIZE;
   }
 
   return rows;
@@ -623,18 +682,16 @@ async function getSimplePosOrderDetail(input: {
   orderId: string;
 }): Promise<SimplePosOrderDetail | null> {
   const supabase = getSupabaseAdminClient();
-  const { startIso, endExclusiveIso } = buildUtcRange(input.filters);
 
   const { data: orderData, error: orderError } = await supabase
     .from("orders")
     .select(
-      "id, folio_number, folio_text, status, total_cents, payment_received_cents, change_cents, payment_method, print_status, created_at, is_tab",
+      "id, folio_number, folio_text, status, total_cents, payment_received_cents, change_cents, payment_method, print_status, created_at, closed_at, is_tab",
     )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderId)
     .eq("status", "PAID")
-    .gte("created_at", startIso)
-    .lt("created_at", endExclusiveIso)
+    .or(buildPaidOrdersDateOrFilter(input.filters))
     .maybeSingle();
 
   if (orderError) {
@@ -695,35 +752,20 @@ export async function getSimplePosOrdersReport(input: {
   page: number;
   orderId: string | null;
 }): Promise<SimplePosOrdersReport> {
-  const supabase = getSupabaseAdminClient();
-  const { startIso, endExclusiveIso } = buildUtcRange(input.filters);
+  const allOrders = await listSimplePaidOrdersForRange({
+    tenantId: input.tenantId,
+    filters: input.filters,
+  });
   const from = (input.page - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
-
-  const { data, error, count } = await supabase
-    .from("orders")
-    .select(
-      "id, folio_number, folio_text, status, total_cents, payment_received_cents, change_cents, payment_method, print_status, created_at, is_tab",
-      { count: "exact" },
-    )
-    .eq("tenant_id", input.tenantId)
-    .eq("status", "PAID")
-    .gte("created_at", startIso)
-    .lt("created_at", endExclusiveIso)
-    .order("created_at", { ascending: false })
-    .range(from, to);
-
-  if (error) {
-    throw new Error(`Unable to load simple POS orders: ${error.message}`);
-  }
-
-  const rows = (data ?? []).map((row) => mapOrderRow(row as Record<string, unknown>));
-  const totalCount = count ?? 0;
+  const rows = allOrders.slice(from, to + 1).map((row) => mapOrderRow(row as Record<string, unknown>));
+  const totalCount = allOrders.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const safePage = Math.min(input.page, totalPages);
 
   return {
     filters: input.filters,
+    totals: buildSimplePaidOrdersSummary(allOrders),
     page: safePage,
     page_size: PAGE_SIZE,
     total_count: totalCount,

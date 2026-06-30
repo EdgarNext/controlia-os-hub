@@ -275,6 +275,68 @@ function SimpleMetricCards({
   );
 }
 
+function SimpleOrdersMetricCards({
+  grossCents,
+  paidOrdersCount,
+  averageTicketCents,
+  printedOrdersCount,
+}: {
+  grossCents: number;
+  paidOrdersCount: number;
+  averageTicketCents: number;
+  printedOrdersCount: number;
+}) {
+  const cards = [
+    {
+      label: "Ingresos",
+      value: formatCurrency(grossCents),
+      helper: "Venta total del periodo",
+      icon: CreditCard,
+    },
+    {
+      label: "Ordenes pagadas",
+      value: integerFormatter.format(paidOrdersCount),
+      helper: "Tickets cobrados en el rango",
+      icon: Receipt,
+    },
+    {
+      label: "Ticket promedio",
+      value: formatCurrency(averageTicketCents),
+      helper: "Promedio por orden pagada",
+      icon: TrendingUp,
+    },
+    {
+      label: "Impresas",
+      value: integerFormatter.format(printedOrdersCount),
+      helper: "Ordenes con print_status SENT",
+      icon: Printer,
+    },
+  ] as const;
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      {cards.map((card) => {
+        const Icon = card.icon;
+
+        return (
+          <Card key={card.label} className="space-y-3 p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-muted">{card.label}</p>
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-[calc(var(--radius-base)-4px)] bg-surface-2 text-primary">
+                <Icon className="h-4 w-4" aria-hidden="true" />
+              </span>
+            </div>
+            <div className="space-y-1">
+              <p className="text-2xl font-semibold text-foreground">{card.value}</p>
+              <p className="text-xs text-muted">{card.helper}</p>
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 function SimpleProductsTable({
   tenantSlug,
   rows,
@@ -620,7 +682,15 @@ async function renderSimpleReports(tenantSlug: string, tenantId: string, state: 
             message="Ajusta el periodo para revisar otra ventana operativa."
           />
         ) : (
-          <SimpleOrdersTable tenantSlug={tenantSlug} state={state} report={report} />
+          <>
+            <SimpleOrdersMetricCards
+              grossCents={report.totals.gross_cents}
+              paidOrdersCount={report.totals.paid_orders_count}
+              averageTicketCents={report.totals.average_ticket_cents}
+              printedOrdersCount={report.totals.printed_orders_count}
+            />
+            <SimpleOrdersTable tenantSlug={tenantSlug} state={state} report={report} />
+          </>
         )}
       </div>
     );

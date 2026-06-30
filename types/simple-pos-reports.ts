@@ -93,6 +93,12 @@ export type SimplePosOrderDetail = {
 
 export type SimplePosOrdersReport = {
   filters: SimplePosReportsFilters;
+  totals: {
+    gross_cents: number;
+    paid_orders_count: number;
+    average_ticket_cents: number;
+    printed_orders_count: number;
+  };
   page: number;
   page_size: number;
   total_count: number;
