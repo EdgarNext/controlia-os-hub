@@ -5,8 +5,12 @@ export function isRetailPosCanonicalQuantity(value: string): boolean {
   return RETAIL_POS_CANONICAL_QUANTITY_PATTERN.test(value) && value !== "0.000";
 }
 
-export function normalizeRetailPosQuantity(input: string): string | null {
-  const normalizedInput = input.trim();
+export function normalizeRetailPosQuantity(input: unknown): string | null {
+  if (typeof input !== "string" && typeof input !== "number") {
+    return null;
+  }
+
+  const normalizedInput = String(input).trim();
   const match = RETAIL_POS_NORMALIZABLE_QUANTITY_PATTERN.exec(normalizedInput);
 
   if (!match) {

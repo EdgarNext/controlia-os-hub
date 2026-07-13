@@ -1,5 +1,5 @@
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { RetailPosZReportV1 } from "@/shared/types/retail-pos";
+import type { RetailPosDeviceRole, RetailPosZReportV1 } from "@/shared/types/retail-pos";
 
 type RetailReportsFiltersInput = {
   dateFrom?: string | null;
@@ -18,7 +18,7 @@ type RetailReportsFilters = {
 type RetailDeviceOption = {
   id: string;
   name: string;
-  role: "order_station" | "cashier_station" | "backoffice_station";
+  role: RetailPosDeviceRole;
 };
 
 type RetailOrderRow = {
@@ -101,7 +101,7 @@ type DeviceRow = {
 
 type DeviceSettingsRow = {
   device_id: string;
-  device_role: "order_station" | "cashier_station" | "backoffice_station";
+  device_role: RetailPosDeviceRole;
 };
 
 type TenantRow = {

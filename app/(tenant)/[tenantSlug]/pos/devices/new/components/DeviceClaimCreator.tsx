@@ -7,7 +7,10 @@ import {
   type IssueClaimFormState,
   type PosKioskOption,
 } from "@/actions/pos/devices/actions";
-import type { RetailClaimDeviceRole } from "@/lib/pos/device-claims";
+import {
+  RETAIL_CLAIM_DEVICE_ROLES,
+  type RetailClaimDeviceRole,
+} from "@/lib/pos/device-claims";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +29,21 @@ type DeviceClaimCreatorProps = {
   canManageRetailPosDevices: boolean;
 };
 
+function formatClaimExpiry(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  const year = parsed.getUTCFullYear();
+  const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getUTCDate()).padStart(2, "0");
+  const hours = String(parsed.getUTCHours()).padStart(2, "0");
+  const minutes = String(parsed.getUTCMinutes()).padStart(2, "0");
+
+  return `${year}-${month}-${day} ${hours}:${minutes} UTC`;
+}
+
 export function DeviceClaimCreator({
   tenantSlug,
   kiosks,
@@ -39,7 +57,7 @@ export function DeviceClaimCreator({
     ...(canManageRetailPosDevices ? (["retail_pos"] as const) : []),
   ];
   const [moduleKey, setModuleKey] = useState<DeviceModuleKey>(allowedModuleKeys[0] ?? "sales_pos");
-  const [deviceRole, setDeviceRole] = useState<RetailClaimDeviceRole>("order_station");
+  const [deviceRole, setDeviceRole] = useState<RetailClaimDeviceRole>(RETAIL_CLAIM_DEVICE_ROLES[0]);
   const claimResult = state.result;
 
   async function handleCopy(value: string) {
@@ -124,9 +142,11 @@ export function DeviceClaimCreator({
               className="h-11 w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 text-sm text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
               aria-invalid={Boolean(state.fieldErrors.deviceRole) || undefined}
             >
-              <option value="order_station">order_station</option>
-              <option value="cashier_station">cashier_station</option>
-              <option value="backoffice_station">backoffice_station</option>
+              {RETAIL_CLAIM_DEVICE_ROLES.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
+              ))}
             </select>
             {state.fieldErrors.deviceRole ? <p className="text-sm text-danger">{state.fieldErrors.deviceRole}</p> : null}
           </div>
@@ -191,7 +211,7 @@ export function DeviceClaimCreator({
                 Rol retail: <span className="font-medium text-foreground">{claimResult.deviceRole}</span>
               </p>
             ) : null}
-            <p>Vence: <span className="font-medium text-foreground">{new Date(claimResult.claimExpiresAt).toLocaleString("es-MX")}</span></p>
+            <p>Vence: <span className="font-medium text-foreground">{formatClaimExpiry(claimResult.claimExpiresAt)}</span></p>
             <p className="mt-2">En el POS local abre Activación, captura tenant y este código para completar el claiming.</p>
           </div>
         </div>

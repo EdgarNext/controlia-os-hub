@@ -41,6 +41,8 @@ type DeviceSettingsRow = {
   tenant_id: string;
   device_role: RetailPosDeviceRole;
   allow_order_entry: boolean;
+  can_apply_discounts?: boolean;
+  can_view_cost?: boolean;
   is_active: boolean;
 };
 
@@ -275,7 +277,7 @@ export async function authenticateRetailPosDeviceActor(input: {
       query: (signal) =>
         supabase
           .from("retail_pos_device_settings")
-          .select("device_id, tenant_id, device_role, allow_order_entry, is_active")
+          .select("device_id, tenant_id, device_role, allow_order_entry, can_apply_discounts, can_view_cost, is_active")
           .abortSignal(signal)
           .eq("tenant_id", tenant.id)
           .eq("device_id", device.id)
@@ -427,6 +429,7 @@ export function canReadRetailPosOperators(actor: RetailPosRuntimeActor) {
   return (
     actor.deviceRole === "order_station" ||
     actor.deviceRole === "cashier_station" ||
+    actor.deviceRole === "counter_station" ||
     (actor.deviceRole === "backoffice_station" && actor.allowOrderEntry)
   );
 }
@@ -526,7 +529,7 @@ export async function resolveRetailPosTargetDevice(input: {
 
   const { data: settings, error: settingsError } = await supabase
     .from("retail_pos_device_settings")
-    .select("device_id, tenant_id, device_role, allow_order_entry, is_active")
+    .select("device_id, tenant_id, device_role, allow_order_entry, can_apply_discounts, can_view_cost, is_active")
     .eq("tenant_id", input.actor.tenantId)
     .eq("device_id", device.id)
     .eq("is_active", true)

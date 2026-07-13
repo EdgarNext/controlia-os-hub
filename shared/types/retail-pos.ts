@@ -10,6 +10,7 @@ export const RETAIL_POS_DEVICE_ROLES = [
   "order_station",
   "cashier_station",
   "backoffice_station",
+  "counter_station",
 ] as const;
 
 export const RETAIL_POS_CASH_SHIFT_STATUSES = [
@@ -35,6 +36,8 @@ export const RETAIL_POS_RUNTIME_COMMAND_TYPES = [
   "open_shift",
   "close_shift",
   "pay",
+  "discount_checkout",
+  "create_paid_counter_sale",
 ] as const;
 
 export const RETAIL_POS_COMMAND_RESULT_STATUSES = [
@@ -42,6 +45,43 @@ export const RETAIL_POS_COMMAND_RESULT_STATUSES = [
   "completed",
   "replayed",
   "rejected",
+] as const;
+
+export const RETAIL_POS_DISCOUNT_SCOPES = ["line", "order"] as const;
+export const RETAIL_POS_DISCOUNT_CAPTURE_TYPES = [
+  "percentage",
+  "fixed_amount",
+] as const;
+export const RETAIL_POS_DISCOUNT_REASON_CODES = [
+  "volume",
+  "frequent_customer",
+  "authorized_wholesale",
+  "price_adjustment",
+  "damaged_product",
+  "manual_promotion",
+  "rounding",
+  "capture_error",
+  "cashier_authorization",
+  "other",
+] as const;
+export const RETAIL_POS_DISCOUNT_AUTHORIZATION_STATUSES = [
+  "not_required",
+  "pending",
+  "approved",
+  "rejected",
+  "expired",
+  "cancelled",
+] as const;
+export const RETAIL_POS_DISCOUNT_AUTHORIZATION_METHODS = [
+  "role_capability",
+  "supervisor_pin",
+  "remote_approval",
+  "system_policy",
+] as const;
+export const RETAIL_POS_DISCOUNT_COST_EVALUATIONS = [
+  "above_or_equal_cost",
+  "below_cost",
+  "unknown",
 ] as const;
 
 export type RetailPosQuantityString = string;
@@ -59,6 +99,18 @@ export type RetailPosCommandType =
   (typeof RETAIL_POS_RUNTIME_COMMAND_TYPES)[number];
 export type RetailPosCommandResultStatus =
   (typeof RETAIL_POS_COMMAND_RESULT_STATUSES)[number];
+export type RetailPosDiscountScope =
+  (typeof RETAIL_POS_DISCOUNT_SCOPES)[number];
+export type RetailPosDiscountCaptureType =
+  (typeof RETAIL_POS_DISCOUNT_CAPTURE_TYPES)[number];
+export type RetailPosDiscountReasonCode =
+  (typeof RETAIL_POS_DISCOUNT_REASON_CODES)[number];
+export type RetailPosDiscountAuthorizationStatus =
+  (typeof RETAIL_POS_DISCOUNT_AUTHORIZATION_STATUSES)[number];
+export type RetailPosDiscountAuthorizationMethod =
+  (typeof RETAIL_POS_DISCOUNT_AUTHORIZATION_METHODS)[number];
+export type RetailPosDiscountCostEvaluation =
+  (typeof RETAIL_POS_DISCOUNT_COST_EVALUATIONS)[number];
 
 export type RetailPosCategory = {
   id: string;
@@ -130,6 +182,9 @@ export type RetailPosOrder = {
   subtotal_cents: number;
   discount_cents: number;
   total_cents: number;
+  revision?: number;
+  direct_discount_cents?: number;
+  order_discount_cents?: number;
   paid_at: string | null;
   cancelled_at: string | null;
   cancelled_by_pos_user_id: string | null;
@@ -159,6 +214,12 @@ export type RetailPosOrderLine = {
   line_subtotal_cents: number;
   discount_cents: number;
   line_total_cents: number;
+  direct_discount_cents?: number;
+  order_discount_allocation_cents?: number;
+  total_discount_cents?: number;
+  unit_cost_snapshot_cents?: number | null;
+  cost_evaluation?: RetailPosDiscountCostEvaluation;
+  below_cost_after_discount?: boolean;
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -223,6 +284,8 @@ export type RetailPosDeviceSettings = {
   tenant_id: string;
   device_role: RetailPosDeviceRole;
   allow_order_entry: boolean;
+  can_apply_discounts: boolean;
+  can_view_cost: boolean;
   printer_name: string | null;
   printer_driver: string | null;
   auto_print_order_ticket: boolean;
@@ -246,6 +309,8 @@ export type RetailPosCatalogDeviceSettings = Pick<
   | "tenant_id"
   | "device_role"
   | "allow_order_entry"
+  | "can_apply_discounts"
+  | "can_view_cost"
   | "printer_name"
   | "printer_driver"
   | "auto_print_order_ticket"
@@ -708,9 +773,237 @@ export type RetailPosCapability =
   | "cashier.status.read"
   | "cashier.shift.open"
   | "cashier.shift.close"
+  | "discounts.apply"
+  | "discounts.view_cost"
+  | "discounts.authorize"
   | "payments.collect"
   | "tickets.print.order"
-  | "tickets.print.payment";
+  | "tickets.print.payment"
+  | "counter_sale.create_offline"
+  | "counter_sale.sync";
+
+export type RetailPosDiscountAuthorizationRecord = {
+  required: boolean;
+  status: RetailPosDiscountAuthorizationStatus;
+  method: RetailPosDiscountAuthorizationMethod | null;
+  policy_key: string | null;
+  requested_by_pos_user_id: string | null;
+  authorized_by_pos_user_id: string | null;
+  authorized_at: string | null;
+  reference: string | null;
+  note: string | null;
+  context: Record<string, unknown>;
+};
+
+export type RetailPosDiscountIntentDraft = {
+  id: string;
+  scope: RetailPosDiscountScope;
+  order_line_id: string | null;
+  capture_type: RetailPosDiscountCaptureType;
+  percentage_bps: number | null;
+  amount_cents: number | null;
+  reason_code: RetailPosDiscountReasonCode;
+  comment: string | null;
+  source: "manual";
+  authorization: RetailPosDiscountAuthorizationRecord | null;
+};
+
+export type RetailPosDiscountAllocationSnapshot = {
+  order_line_id: string;
+  line_number: number;
+  allocation_base_cents: number;
+  allocated_discount_cents: number;
+};
+
+export type RetailPosPersistedOrderDiscount = {
+  id: string;
+  tenant_id: string;
+  order_id: string;
+  order_revision: number;
+  lifecycle_status: "active" | "cleared" | "superseded";
+  scope: RetailPosDiscountScope;
+  order_line_id: string | null;
+  capture_type: RetailPosDiscountCaptureType;
+  percentage_bps: number | null;
+  amount_cents: number | null;
+  base_amount_cents: number;
+  effective_discount_cents: number;
+  reason_code: RetailPosDiscountReasonCode;
+  comment: string | null;
+  source: "manual";
+  applied_by_pos_user_id: string | null;
+  applied_by_device_id: string | null;
+  applied_at: string;
+  expected_revision: number;
+  authorization: RetailPosDiscountAuthorizationRecord;
+  allocations: RetailPosDiscountAllocationSnapshot[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type RetailPosDiscountLineSnapshot = {
+  order_line_id: string;
+  line_number: number;
+  gross_cents: number;
+  direct_discount_cents: number;
+  order_discount_allocation_cents: number;
+  total_discount_cents: number;
+  net_cents: number;
+  unit_cost_snapshot_cents: number | null;
+  total_cost_cents: number | null;
+  margin_delta_cents: number | null;
+  cost_evaluation: RetailPosDiscountCostEvaluation;
+  below_cost_after_discount: boolean;
+};
+
+export type RetailPosDiscountWarningSnapshot = {
+  code: string;
+  message: string;
+  order_line_id: string | null;
+};
+
+export type RetailPosDiscountCalculationSummary = {
+  order_id: string;
+  expected_revision: number;
+  subtotal_gross_cents: number;
+  direct_discount_cents: number;
+  order_discount_cents: number;
+  total_discount_cents: number;
+  total_cents: number;
+  lines: RetailPosDiscountLineSnapshot[];
+  warnings: RetailPosDiscountWarningSnapshot[];
+};
+
+export type RetailPosDiscountPreviewRequest = {
+  order_id: string;
+  cash_shift_id: string;
+  expected_revision: number;
+  discount_intents: RetailPosDiscountIntentDraft[];
+};
+
+export type RetailPosDiscountPreviewLine = {
+  order_line_id: string;
+  line_number: number;
+  product_id: string;
+  product_variant_id: string | null;
+  product_name: string;
+  variant_name: string | null;
+  sku: string | null;
+  barcode: string | null;
+  sales_unit_code: string;
+  sales_unit_label: string;
+  allow_decimal_quantity: boolean;
+  quantity: RetailPosQuantityString;
+  unit_price_cents: number;
+  gross_cents: number;
+  direct_discount_cents: number;
+  order_discount_allocation_cents: number;
+  total_discount_cents: number;
+  net_cents: number;
+  unit_cost_snapshot_cents: number | null;
+  total_cost_cents: number | null;
+  margin_delta_cents: number | null;
+  cost_evaluation: RetailPosDiscountCostEvaluation;
+  below_cost_after_discount: boolean;
+  warnings: RetailPosDiscountWarningSnapshot[];
+};
+
+export type RetailPosDiscountPreviewAuthorization = {
+  required: false;
+  method: "role_capability";
+  future_policy_supported: true;
+};
+
+export type RetailPosDiscountPreviewResponse = {
+  order_id: string;
+  revision: number;
+  calculation_fingerprint: string;
+  subtotal_cents: number;
+  line_discount_cents: number;
+  order_discount_cents: number;
+  total_discount_cents: number;
+  total_cents: number;
+  has_below_cost_lines: boolean;
+  requires_below_cost_acknowledgement: boolean;
+  below_cost_line_ids: string[];
+  lines: RetailPosDiscountPreviewLine[];
+  warnings: RetailPosDiscountWarningSnapshot[];
+  authorization: RetailPosDiscountPreviewAuthorization;
+};
+
+export type RetailPosCheckoutWithDiscountsRequest = {
+  order_id: string;
+  expected_revision: number;
+  intents: RetailPosDiscountIntentDraft[];
+  payment: {
+    payment_method: RetailPosPaymentMethod;
+    amount_cents: number;
+    received_amount_cents: number | null;
+    card_reference: string | null;
+  };
+};
+
+export type RetailPosBelowCostAcknowledgement = {
+  accepted: boolean;
+  calculation_fingerprint: string | null;
+};
+
+export type RetailPosDiscountCheckoutRequest = {
+  order_id: string;
+  cash_shift_id: string;
+  expected_revision: number;
+  payment_method: RetailPosPaymentMethod;
+  payment_amount_cents: number;
+  cash_received_cents: number | null;
+  discount_intents: RetailPosDiscountIntentDraft[];
+  below_cost_acknowledgement: RetailPosBelowCostAcknowledgement | null;
+  external_payment_reference: string | null;
+};
+
+export type RetailPosDiscountCheckoutResponse = {
+  order: RetailPosOrder;
+  payment: RetailPosPayment;
+  previous_revision: number;
+  final_revision: number;
+  subtotal_cents: number;
+  line_discount_cents: number;
+  order_discount_cents: number;
+  total_discount_cents: number;
+  total_cents: number;
+  change_cents: number;
+  below_cost: boolean;
+  below_cost_line_ids: string[];
+  discount_snapshot: RetailPosDiscountCalculationSummary;
+};
+
+export type RetailPosDiscountCheckoutCommandPayload = {
+  order_id: string;
+  payment_method: RetailPosPaymentMethod;
+  payment_amount_cents: number;
+  cash_received_cents: number | null;
+  expected_revision: number;
+  discount_intents: RetailPosDiscountIntentDraft[];
+  below_cost_acknowledgement: RetailPosBelowCostAcknowledgement | null;
+  external_payment_reference: string | null;
+};
+
+export type RetailPosClearDiscountDraftRequest = {
+  order_id: string;
+  expected_revision: number;
+  scope: RetailPosDiscountScope | "all";
+  order_line_id: string | null;
+};
+
+export type RetailPosOrderDiscountHistoryRequest = {
+  order_id: string;
+};
+
+export type RetailPosOrderDiscountHistoryResponse = {
+  order_id: string;
+  revision: number | null;
+  discounts: RetailPosPersistedOrderDiscount[];
+  summary: RetailPosDiscountCalculationSummary | null;
+};
 
 export type RetailPosBootstrapResponse = {
   tenant: RetailPosRuntimeTenantSummary;
@@ -749,6 +1042,14 @@ export type RetailPosCommandResult<TResult = Record<string, unknown>> = {
 
 export type RetailPosPayCommand = RetailPosRuntimeCommand<RetailPosPayCommandPayload>;
 export type RetailPosPayCommandResult = RetailPosCommandResult<PayRetailPosOrderResponse>;
+
+export type RetailPosDiscountCheckoutCommand =
+  RetailPosRuntimeCommand<RetailPosDiscountCheckoutCommandPayload> & {
+    command_type: "discount_checkout";
+  };
+
+export type RetailPosDiscountCheckoutCommandResult =
+  RetailPosCommandResult<RetailPosDiscountCheckoutResponse>;
 
 export type RetailPosDaySummaryResponse = {
   tenant_id: string;
@@ -834,6 +1135,69 @@ export type RetailPosTicketEventResponse = {
   synced_at: string;
 };
 
+export type RetailPosCounterSaleCompletedV1 = {
+  schema_version: 1;
+  command_id: string;
+  local_sale_id: string;
+  origin_local_folio: string;
+  tenant_id: string;
+  device_id: string;
+  created_by_pos_user_id: string;
+  shift: {
+    local_shift_id: string;
+    opened_at: string;
+    business_date: string;
+    opening_cash_cents: number;
+    closed_at?: string | null;
+  };
+  completed_at: string;
+  subtotal_cents: number;
+  discount_total_cents: 0;
+  total_cents: number;
+  payment: {
+    local_payment_id: string;
+    method: RetailPosPaymentMethod;
+    amount_cents: number;
+    received_amount_cents?: number | null;
+    change_cents?: number;
+    externally_confirmed: boolean;
+    external_reference?: string | null;
+  };
+  lines: Array<{
+    local_line_id: string;
+    product_id: string;
+    variant_id?: string | null;
+    sku?: string | null;
+    description_snapshot: string;
+    sales_unit_code: string;
+    sales_unit_label: string;
+    allow_decimal_quantity: boolean;
+    quantity: RetailPosQuantityString;
+    unit_price_cents: number;
+    discount_cents: 0;
+    line_total_cents: number;
+  }>;
+};
+
+export type RetailPosCounterSaleSyncResult = {
+  status: "created" | "already_processed";
+  command_id: string;
+  local_sale_id: string;
+  remote_sale_id: string;
+  remote_folio: string;
+  remote_payment_id: string;
+  remote_shift_id: string;
+  processed_at: string;
+};
+
+export type RetailPosCounterSaleCompletedCommand =
+  RetailPosRuntimeCommand<RetailPosCounterSaleCompletedV1> & {
+    command_type: "create_paid_counter_sale";
+  };
+
+export type RetailPosCounterSaleCompletedCommandResult =
+  RetailPosCommandResult<RetailPosCounterSaleSyncResult>;
+
 export type RetailPosZReportWarning = {
   code: string;
   message: string;
@@ -848,7 +1212,6 @@ export type RetailPosZReportV1 = {
   deviceName: string | null;
   deviceRole:
     | RetailPosDeviceRole
-    | "counter_station_future"
     | null;
   openedAt: string;
   closedAt: string | null;
@@ -920,6 +1283,48 @@ export function isRetailPosDeviceRole(value: string): value is RetailPosDeviceRo
   return RETAIL_POS_DEVICE_ROLES.indexOf(value as RetailPosDeviceRole) !== -1;
 }
 
+export function isRetailPosDiscountScope(
+  value: string,
+): value is RetailPosDiscountScope {
+  return RETAIL_POS_DISCOUNT_SCOPES.indexOf(value as RetailPosDiscountScope) !== -1;
+}
+
+export function isRetailPosDiscountCaptureType(
+  value: string,
+): value is RetailPosDiscountCaptureType {
+  return RETAIL_POS_DISCOUNT_CAPTURE_TYPES.indexOf(value as RetailPosDiscountCaptureType) !== -1;
+}
+
+export function isRetailPosDiscountReasonCode(
+  value: string,
+): value is RetailPosDiscountReasonCode {
+  return RETAIL_POS_DISCOUNT_REASON_CODES.indexOf(value as RetailPosDiscountReasonCode) !== -1;
+}
+
+export function isRetailPosDiscountAuthorizationStatus(
+  value: string,
+): value is RetailPosDiscountAuthorizationStatus {
+  return RETAIL_POS_DISCOUNT_AUTHORIZATION_STATUSES.indexOf(
+    value as RetailPosDiscountAuthorizationStatus,
+  ) !== -1;
+}
+
+export function isRetailPosDiscountAuthorizationMethod(
+  value: string,
+): value is RetailPosDiscountAuthorizationMethod {
+  return RETAIL_POS_DISCOUNT_AUTHORIZATION_METHODS.indexOf(
+    value as RetailPosDiscountAuthorizationMethod,
+  ) !== -1;
+}
+
+export function isRetailPosDiscountCostEvaluation(
+  value: string,
+): value is RetailPosDiscountCostEvaluation {
+  return RETAIL_POS_DISCOUNT_COST_EVALUATIONS.indexOf(
+    value as RetailPosDiscountCostEvaluation,
+  ) !== -1;
+}
+
 export function isRetailPosCashShiftStatus(
   value: string,
 ): value is RetailPosCashShiftStatus {
@@ -932,10 +1337,104 @@ export function isRetailPosCanonicalQuantity(
   return RETAIL_POS_CANONICAL_QUANTITY_PATTERN.test(value) && value !== "0.000";
 }
 
+export function hasRetailPosCapability(
+  capabilities: readonly RetailPosCapability[],
+  capability: RetailPosCapability,
+): boolean {
+  return capabilities.includes(capability);
+}
+
+export function canRetailPosApplyDiscounts(
+  deviceRole: RetailPosDeviceRole,
+  capabilities: readonly RetailPosCapability[],
+): boolean {
+  return deviceRole === "cashier_station" && hasRetailPosCapability(capabilities, "discounts.apply");
+}
+
+export function canRetailPosViewDiscountCosts(
+  capabilities: readonly RetailPosCapability[],
+): boolean {
+  return hasRetailPosCapability(capabilities, "discounts.view_cost");
+}
+
+export function validateRetailPosDiscountIntentDraft(
+  input: RetailPosDiscountIntentDraft,
+): string[] {
+  const errors: string[] = [];
+
+  if (!isRetailPosDiscountScope(input.scope)) {
+    errors.push("scope must be 'line' or 'order'");
+  }
+
+  if (input.scope === "line" && !input.order_line_id) {
+    errors.push("line scope requires order_line_id");
+  }
+
+  if (input.scope === "order" && input.order_line_id !== null) {
+    errors.push("order scope cannot include order_line_id");
+  }
+
+  if (!isRetailPosDiscountCaptureType(input.capture_type)) {
+    errors.push("capture_type must be 'percentage' or 'fixed_amount'");
+  }
+
+  if (!isRetailPosDiscountReasonCode(input.reason_code)) {
+    errors.push("reason_code is invalid");
+  }
+
+  if (input.capture_type === "percentage") {
+    const percentageBps = input.percentage_bps;
+
+    if (
+      percentageBps === null ||
+      !Number.isInteger(percentageBps) ||
+      percentageBps < 0 ||
+      percentageBps > 10000
+    ) {
+      errors.push("percentage_bps must be an integer between 0 and 10000");
+    }
+
+    if (input.amount_cents !== null) {
+      errors.push("percentage discounts cannot include amount_cents");
+    }
+  }
+
+  if (input.capture_type === "fixed_amount") {
+    const amountCents = input.amount_cents;
+
+    if (amountCents === null || !Number.isInteger(amountCents) || amountCents < 0) {
+      errors.push("amount_cents must be a non-negative integer");
+    }
+
+    if (input.percentage_bps !== null) {
+      errors.push("fixed amount discounts cannot include percentage_bps");
+    }
+  }
+
+  if (input.authorization) {
+    if (!isRetailPosDiscountAuthorizationStatus(input.authorization.status)) {
+      errors.push("authorization.status is invalid");
+    }
+
+    if (
+      input.authorization.method !== null &&
+      !isRetailPosDiscountAuthorizationMethod(input.authorization.method)
+    ) {
+      errors.push("authorization.method is invalid");
+    }
+  }
+
+  return errors;
+}
+
 export function normalizeRetailPosQuantity(
-  input: string,
+  input: unknown,
 ): RetailPosQuantityString | null {
-  const normalizedInput = input.trim();
+  if (typeof input !== "string" && typeof input !== "number") {
+    return null;
+  }
+
+  const normalizedInput = String(input).trim();
   const match = RETAIL_POS_NORMALIZABLE_QUANTITY_PATTERN.exec(normalizedInput);
 
   if (!match) {

@@ -5,8 +5,24 @@ import { createRuntimePerfTrace } from "@/lib/retail-pos/runtime-perf";
 
 type RouteParams = { tenantSlug: string; folio: string };
 
-function jsonError(status: number, message: string) {
-  return NextResponse.json({ ok: false, error: message }, { status });
+function jsonError(input: {
+  status: number;
+  message: string;
+  code?: string | null;
+  details?: Record<string, unknown> | null;
+  requestId?: string | null;
+}) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: input.message,
+      code: input.code ?? null,
+      status: input.status,
+      details: input.details ?? null,
+      request_id: input.requestId ?? null,
+    },
+    { status: input.status },
+  );
 }
 
 function getOptionalSearchParam(request: NextRequest, key: string) {
@@ -54,7 +70,13 @@ export async function GET(request: NextRequest, context: { params: Promise<Route
     return response;
   } catch (error) {
     if (error instanceof RetailPosRuntimeError) {
-      const response = jsonError(error.status, error.message);
+      const response = jsonError({
+        status: error.status,
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        requestId: trace.requestId,
+      });
       const headers = trace.headers();
       Object.entries(headers).forEach(([key, value]) => response.headers.set(key, value));
       trace.log({ step: "route_total", ok: false, status: error.status, error });
@@ -62,7 +84,11 @@ export async function GET(request: NextRequest, context: { params: Promise<Route
     }
 
     const message = error instanceof Error ? error.message : "Unexpected retail_pos order folio lookup error.";
-    const response = jsonError(500, message);
+    const response = jsonError({
+      status: 500,
+      message,
+      requestId: trace.requestId,
+    });
     const headers = trace.headers();
     Object.entries(headers).forEach(([key, value]) => response.headers.set(key, value));
     trace.log({ step: "route_total", ok: false, status: 500, error });

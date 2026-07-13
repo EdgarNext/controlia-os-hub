@@ -1161,7 +1161,7 @@ export async function getRetailPosCatalogForTenant(input: {
               supabase
                 .from("retail_pos_device_settings")
                 .select(
-                  "device_id, tenant_id, device_role, allow_order_entry, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, updated_at",
+                  "device_id, tenant_id, device_role, allow_order_entry, can_apply_discounts, can_view_cost, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, updated_at",
                 )
                 .abortSignal(signal)
                 .eq("tenant_id", actor.tenantId)
@@ -1173,7 +1173,7 @@ export async function getRetailPosCatalogForTenant(input: {
         : supabase
             .from("retail_pos_device_settings")
             .select(
-              "device_id, tenant_id, device_role, allow_order_entry, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, updated_at",
+              "device_id, tenant_id, device_role, allow_order_entry, can_apply_discounts, can_view_cost, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, updated_at",
             )
             .eq("tenant_id", actor.tenantId)
             .eq("device_id", actor.deviceRecordId)

@@ -71,7 +71,8 @@ function assertSupportedDeviceRole(
   if (
     deviceRole !== "order_station" &&
     deviceRole !== "cashier_station" &&
-    deviceRole !== "backoffice_station"
+    deviceRole !== "backoffice_station" &&
+    deviceRole !== "counter_station"
   ) {
     throw new RetailPosRuntimeError(403, "POS device role is not supported for retail_pos bootstrap.");
   }
@@ -100,6 +101,21 @@ const ORDER_STATION_CAPABILITIES: RetailPosCapability[] = [
   "tickets.print.order",
 ];
 
+const COUNTER_STATION_CAPABILITIES: RetailPosCapability[] = [
+  "catalog.read",
+  "orders.create",
+  "orders.sync",
+  "orders.lookup",
+  "cashier.status.read",
+  "cashier.shift.open",
+  "cashier.shift.close",
+  "payments.collect",
+  "tickets.print.order",
+  "tickets.print.payment",
+  "counter_sale.create_offline",
+  "counter_sale.sync",
+];
+
 const BACKOFFICE_ORDER_ENTRY_CAPABILITIES: RetailPosCapability[] = [
   "orders.create",
   "orders.sync",
@@ -109,11 +125,27 @@ const BACKOFFICE_ORDER_ENTRY_CAPABILITIES: RetailPosCapability[] = [
 function buildCapabilities(input: {
   deviceRole: RetailPosDeviceRole;
   allowOrderEntry: boolean;
+  canApplyDiscounts: boolean;
+  canViewCost: boolean;
   deviceStatus: string;
   settingsActive: boolean;
 }): RetailPosCapability[] {
   if (input.deviceRole === "cashier_station") {
-    return CASHIER_CAPABILITIES;
+    const capabilities = [...CASHIER_CAPABILITIES];
+
+    if (input.canApplyDiscounts) {
+      capabilities.push("discounts.apply");
+    }
+
+    if (input.canViewCost) {
+      capabilities.push("discounts.view_cost");
+    }
+
+    return capabilities;
+  }
+
+  if (input.deviceRole === "counter_station") {
+    return COUNTER_STATION_CAPABILITIES;
   }
 
   if (input.deviceRole === "backoffice_station") {
@@ -150,6 +182,8 @@ function buildConfigVersion(input: {
     settings: {
       device_role: input.settings.device_role,
       allow_order_entry: input.settings.allow_order_entry,
+      can_apply_discounts: input.settings.can_apply_discounts,
+      can_view_cost: input.settings.can_view_cost,
       printer_name: input.settings.printer_name,
       printer_driver: input.settings.printer_driver,
       auto_print_order_ticket: input.settings.auto_print_order_ticket,
@@ -222,7 +256,10 @@ function buildCashRegisterSummary(input: {
   kiosk: BootstrapKioskRow | null;
   device: BootstrapDeviceRow;
 }) {
-  if (input.deviceRole !== "cashier_station" || !input.kiosk) {
+  if (
+    (input.deviceRole !== "cashier_station" && input.deviceRole !== "counter_station") ||
+    !input.kiosk
+  ) {
     return null;
   }
 
@@ -242,7 +279,7 @@ function buildCashierState(input: {
   currentShift: RetailPosCashShift | null;
   operator: BootstrapPosUserRow | null;
 }): RetailPosCashierState | null {
-  if (input.deviceRole !== "cashier_station") {
+  if (input.deviceRole !== "cashier_station" && input.deviceRole !== "counter_station") {
     return null;
   }
 
@@ -321,7 +358,7 @@ async function loadBootstrapDeviceSettings(input: {
         supabase
         .from("retail_pos_device_settings")
         .select(
-          "device_id, tenant_id, device_role, allow_order_entry, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, updated_at",
+          "device_id, tenant_id, device_role, allow_order_entry, can_apply_discounts, can_view_cost, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, updated_at",
         )
         .abortSignal(signal)
         .eq("tenant_id", input.tenantId)
@@ -461,7 +498,7 @@ export async function getRetailPosBootstrap(input: {
     trace: input.trace,
   });
   const currentShift =
-    settings.device_role === "cashier_station"
+    settings.device_role === "cashier_station" || settings.device_role === "counter_station"
       ? await getOpenRetailPosCashShiftForDevice({
           tenantId: tenant.id,
           deviceRecordId: device.id,
@@ -491,6 +528,8 @@ export async function getRetailPosBootstrap(input: {
   const capabilities = buildCapabilities({
     deviceRole: settings.device_role,
     allowOrderEntry: settings.allow_order_entry,
+    canApplyDiscounts: settings.can_apply_discounts,
+    canViewCost: settings.can_view_cost,
     deviceStatus: device.status,
     settingsActive: settings.is_active,
   });
