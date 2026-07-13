@@ -28,6 +28,10 @@ type TicketEventRow = RetailPosTicketEvent & {
   payload: Record<string, unknown>;
 };
 
+type ExistingSuccessfulTicketEventRow = {
+  id: string;
+};
+
 function normalizeRequiredString(value: unknown, field: string) {
   if (typeof value !== "string") {
     throw new RetailPosRuntimeError(400, `${field} must be a string.`);
@@ -159,6 +163,29 @@ async function findExistingTicketEventByClientEventId(input: {
   return data ?? null;
 }
 
+async function hasSuccessfulTicketEvidence(input: {
+  tenantId: string;
+  orderId: string;
+  ticketType: RetailPosTicketType;
+}) {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("retail_pos_ticket_events")
+    .select("id")
+    .eq("tenant_id", input.tenantId)
+    .eq("order_id", input.orderId)
+    .eq("ticket_type", input.ticketType)
+    .in("event_type", ["printed", "reprinted"])
+    .limit(1)
+    .maybeSingle<ExistingSuccessfulTicketEventRow>();
+
+  if (error) {
+    throw new RetailPosRuntimeError(500, `Unable to resolve prior retail_pos ticket evidence: ${error.message}`);
+  }
+
+  return Boolean(data?.id);
+}
+
 export async function recordRetailPosTicketEvent(input: {
   tenantSlug: string;
   request: RetailPosTicketEventRequest;
@@ -211,6 +238,16 @@ export async function recordRetailPosTicketEvent(input: {
     }
   }
 
+  let storedEventType = eventType;
+  if (eventType === "printed" || eventType === "reprinted") {
+    const alreadyPrinted = await hasSuccessfulTicketEvidence({
+      tenantId: actor.tenantId,
+      orderId: order.id,
+      ticketType,
+    });
+    storedEventType = alreadyPrinted ? "reprinted" : "printed";
+  }
+
   const payload: Record<string, unknown> = {
     client_event_id: clientEventId,
     printed_at: printedAt,
@@ -227,7 +264,7 @@ export async function recordRetailPosTicketEvent(input: {
       device_id: actor.deviceRecordId,
       pos_user_id: null,
       ticket_type: ticketType,
-      event_type: eventType,
+      event_type: storedEventType,
       printer_name: printerName,
       payload,
       occurred_at: printedAt,

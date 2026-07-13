@@ -834,6 +834,75 @@ export type RetailPosTicketEventResponse = {
   synced_at: string;
 };
 
+export type RetailPosZReportWarning = {
+  code: string;
+  message: string;
+};
+
+export type RetailPosZReportV1 = {
+  tenantId: string;
+  tenantName: string | null;
+  cashShiftId: string;
+  status: "open" | "closed" | "canceled";
+  deviceId: string;
+  deviceName: string | null;
+  deviceRole:
+    | RetailPosDeviceRole
+    | "counter_station_future"
+    | null;
+  openedAt: string;
+  closedAt: string | null;
+  generatedAt: string;
+  openedByPosUserId: string | null;
+  openedByName: string | null;
+  closedByPosUserId: string | null;
+  closedByName: string | null;
+  openingFloatCents: number;
+  cashSalesCents: number;
+  cardSalesCents: number;
+  totalSalesCents: number;
+  expectedCashCents: number | null;
+  declaredCashCents: number | null;
+  differenceCents: number | null;
+  paymentsCount: number;
+  paidOrdersCount: number;
+  averageTicketCents: number;
+  closingNote: string | null;
+  future: {
+    discountsCents: number | null;
+    cancellationsCount: number | null;
+    cancellationsAmountCents: number | null;
+    returnsCount: number | null;
+    returnsAmountCents: number | null;
+    pendingSyncPaymentsCount: number | null;
+    pendingSyncAmountCents: number | null;
+  };
+  printEvidence: {
+    status: "not_available" | "no_evidence" | "printed" | "reprinted" | "print_failed" | "mixed";
+    printedCount: number | null;
+    reprintedCount: number | null;
+    failedCount: number | null;
+    note: string;
+  };
+  paymentMethods: Array<{
+    method: "cash" | "card";
+    paymentsCount: number;
+    totalCents: number;
+  }>;
+  orders: Array<{
+    orderId: string;
+    folio: string;
+    paidAt: string | null;
+    totalCents: number;
+    paymentMethod: "cash" | "card" | null;
+  }>;
+  linesSummary: {
+    soldLinesCount: number;
+    soldUnits: number;
+  };
+  warnings: RetailPosZReportWarning[];
+};
+
 const RETAIL_POS_CANONICAL_QUANTITY_PATTERN = /^(0|[1-9]\d*)\.\d{3}$/;
 const RETAIL_POS_NORMALIZABLE_QUANTITY_PATTERN = /^(0|[1-9]\d*)(?:\.(\d{1,3}))?$/;
 

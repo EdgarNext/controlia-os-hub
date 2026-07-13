@@ -1,17 +1,17 @@
 import {
   DeviceAdminDetailPage,
-  posDeviceAdminRouteContext,
+  retailDeviceAdminRouteContext,
 } from "@/app/(tenant)/[tenantSlug]/_components/device-admin/DeviceAdminPages";
 
-type PosDeviceDetailPageProps = {
+type RetailDeviceDetailPageProps = {
   params: Promise<{ tenantSlug: string; deviceId: string }>;
 };
 
-export default async function PosDeviceDetailPage({ params }: PosDeviceDetailPageProps) {
+export default async function RetailDeviceDetailPage({ params }: RetailDeviceDetailPageProps) {
   const { tenantSlug, deviceId } = await params;
   return DeviceAdminDetailPage({
     tenantSlug,
     deviceId,
-    context: posDeviceAdminRouteContext,
+    context: retailDeviceAdminRouteContext,
   });
 }

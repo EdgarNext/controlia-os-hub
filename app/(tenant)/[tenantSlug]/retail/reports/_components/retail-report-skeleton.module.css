@@ -1,0 +1,42 @@
+.skeletonBlock {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.skeletonBlock::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    110deg,
+    transparent 0%,
+    rgb(from var(--surface-2) r g b / 0.06) 28%,
+    rgb(from var(--foreground) r g b / 0.12) 50%,
+    rgb(from var(--surface-2) r g b / 0.06) 72%,
+    transparent 100%
+  );
+  opacity: 0.9;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeletonBlock::after {
+    animation: retail-report-shimmer 1.5s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonBlock::after {
+    animation: none;
+    opacity: 0.35;
+    transform: translateX(0);
+  }
+}
+
+@keyframes retail-report-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}

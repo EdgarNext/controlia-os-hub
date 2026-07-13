@@ -88,6 +88,13 @@ Temporary compatibility fallback:
 - Direct URL access is blocked by route loaders/pages that resolve tenant context and validate the effective module role before rendering data.
 - Event and venue Server Actions repeat the same modular check server-side so a blocked user cannot bypass the UI by posting forms manually.
 
+## Provisioning Runbooks
+
+- For Cocina e Inventarios provisioning, use `apps/hub/docs/rbac/kitchen-inventory-user-provisioning.md`.
+- That runbook includes two variants:
+  - additive kitchen access while preserving existing permissions;
+  - Kitchen Only / No POS provisioning for new operational users.
+
 ## Compatibility With POS Type
 
 - `tenant_user_module_roles` decides whether a user can enter `sales_pos` or `retail_pos`.

@@ -16,6 +16,7 @@ type TenantNavItemConfig = {
   label: string;
   iconKey: NavItem["iconKey"];
   match?: "exact" | "prefix";
+  requiresPlatformOwner?: boolean;
   requiredRoles?: TenantRole[];
   moduleKeys: string[];
   pageKey?: string;
@@ -177,6 +178,7 @@ const cafeUnknownNavDomain: TenantNavDomainConfig = {
       label: "Dispositivos",
       iconKey: "devices",
       match: "prefix",
+      requiresPlatformOwner: true,
       moduleKeys: ["sales_pos"],
       pageKey: "devices",
     },
@@ -261,6 +263,45 @@ const retailNavDomain: TenantNavDomainConfig = {
   accentToken: "--nav-accent-commercial",
   moduleKeys: ["retail_pos"],
   items: [
+    {
+      href: (tenantSlug) => `/${tenantSlug}/retail/reports`,
+      label: "Reportes retail",
+      iconKey: "reports",
+      match: "prefix",
+      moduleKeys: ["retail_pos"],
+      pageKey: "catalog",
+      children: [
+        {
+          href: (tenantSlug) => `/${tenantSlug}/retail/reports`,
+          label: "Resumen",
+          match: "exact",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/retail/reports/sales`,
+          label: "Ventas",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/retail/reports/cash`,
+          label: "Caja",
+          match: "prefix",
+        },
+        {
+          href: (tenantSlug) => `/${tenantSlug}/retail/reports/products`,
+          label: "Productos",
+          match: "prefix",
+        },
+      ],
+    },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/retail/devices`,
+      label: "Terminales",
+      iconKey: "devices",
+      match: "prefix",
+      requiresPlatformOwner: true,
+      moduleKeys: ["retail_pos"],
+      pageKey: "settings",
+    },
     {
       href: (tenantSlug) => `/${tenantSlug}/retail/products`,
       label: "Productos",
@@ -432,6 +473,10 @@ async function buildItem(
   item: TenantNavItemConfig,
 ): Promise<NavItem | null> {
   if (!hasAnyAccessibleModule(item.moduleKeys, enabledModules, moduleRoleByKey)) {
+    return null;
+  }
+
+  if (item.requiresPlatformOwner && !isPlatformOwner) {
     return null;
   }
 

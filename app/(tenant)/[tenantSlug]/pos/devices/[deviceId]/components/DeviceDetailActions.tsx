@@ -6,8 +6,10 @@ import {
   reissueClaimAction,
   type DisableDeviceFormState,
   type IssueClaimFormState,
+  type DeviceModuleKey,
   type PosKioskOption,
 } from "@/actions/pos/devices/actions";
+import type { RetailClaimDeviceRole } from "@/lib/pos/device-claims";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +29,8 @@ const initialReissueState: IssueClaimFormState = {
 type DeviceDetailActionsProps = {
   tenantSlug: string;
   deviceRecordId: string;
+  moduleKey: DeviceModuleKey;
+  deviceRole: RetailClaimDeviceRole | null;
   kioskId: string;
   deviceName: string;
   kiosks: PosKioskOption[];
@@ -36,6 +40,8 @@ type DeviceDetailActionsProps = {
 export function DeviceDetailActions({
   tenantSlug,
   deviceRecordId,
+  moduleKey,
+  deviceRole,
   kioskId,
   deviceName,
   kiosks,
@@ -67,27 +73,49 @@ export function DeviceDetailActions({
         <form action={reissueFormAction} className="space-y-3">
           <input type="hidden" name="tenantSlug" value={tenantSlug} />
           <input type="hidden" name="deviceRecordId" value={deviceRecordId} />
+          <input type="hidden" name="moduleKey" value={moduleKey} />
 
           <div className="space-y-1">
-            <Label htmlFor="kioskId">Kiosco destino</Label>
-            <select
-              id="kioskId"
-              name="kioskId"
-              defaultValue={kioskId}
-              className="h-11 w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 text-sm text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
-              aria-invalid={Boolean(reissueState.fieldErrors.kioskId) || undefined}
-              required
-            >
-              {kiosks.map((kiosk) => (
-                <option key={kiosk.id} value={kiosk.id}>
-                  {kiosk.name ?? `Kiosco ${kiosk.number}`}
-                </option>
-              ))}
-            </select>
-            {reissueState.fieldErrors.kioskId ? (
-              <p className="text-sm text-danger">{reissueState.fieldErrors.kioskId}</p>
-            ) : null}
+            <Label>Módulo</Label>
+            <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-3 text-sm text-foreground">
+              {moduleKey}
+            </div>
+            {reissueState.fieldErrors.moduleKey ? <p className="text-sm text-danger">{reissueState.fieldErrors.moduleKey}</p> : null}
           </div>
+
+          {moduleKey === "sales_pos" ? (
+            <div className="space-y-1">
+              <Label htmlFor="kioskId">Kiosco destino</Label>
+              <select
+                id="kioskId"
+                name="kioskId"
+                defaultValue={kioskId}
+                className="h-11 w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 text-sm text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+                aria-invalid={Boolean(reissueState.fieldErrors.kioskId) || undefined}
+                required
+              >
+                {kiosks.map((kiosk) => (
+                  <option key={kiosk.id} value={kiosk.id}>
+                    {kiosk.name ?? `Kiosco ${kiosk.number}`}
+                  </option>
+                ))}
+              </select>
+              {reissueState.fieldErrors.kioskId ? (
+                <p className="text-sm text-danger">{reissueState.fieldErrors.kioskId}</p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <input type="hidden" name="deviceRole" value={deviceRole ?? "order_station"} />
+              <Label htmlFor="deviceRole">Rol retail</Label>
+              <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-3 text-sm text-foreground">
+                {deviceRole ?? "order_station"}
+              </div>
+              {reissueState.fieldErrors.deviceRole ? (
+                <p className="text-sm text-danger">{reissueState.fieldErrors.deviceRole}</p>
+              ) : null}
+            </div>
+          )}
 
           <Field label="Nombre del dispositivo" htmlFor="name" errorText={reissueState.fieldErrors.name}>
             <Input id="name" name="name" defaultValue={deviceName} invalid={Boolean(reissueState.fieldErrors.name)} required />
