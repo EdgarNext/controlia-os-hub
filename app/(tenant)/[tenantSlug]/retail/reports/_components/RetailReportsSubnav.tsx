@@ -16,6 +16,10 @@ function resolveActiveKey(pathname: string) {
     return "cash";
   }
 
+  if (pathname.endsWith("/retail/reports/post-sale")) {
+    return "post-sale";
+  }
+
   if (pathname.endsWith("/retail/reports/sales")) {
     return "sales";
   }
@@ -48,6 +52,11 @@ export function RetailReportsSubnav({ tenantSlug }: RetailReportsSubnavProps) {
       key: "cash",
       label: "Caja",
       href: buildHref(`/${tenantSlug}/retail/reports/cash`, query),
+    },
+    {
+      key: "post-sale",
+      label: "Postventa",
+      href: buildHref(`/${tenantSlug}/retail/reports/post-sale`, query),
     },
     {
       key: "products",

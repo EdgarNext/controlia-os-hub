@@ -9,24 +9,63 @@ import {
 export default function RetailReportsSalesLoading() {
   return (
     <RetailReportLoadingState
-      title="Ventas y pedidos cobrados"
-      description="Corte operativo centrado en venta neta, metodo de pago y detalle de pedidos dentro del rango seleccionado."
+      title="Ventas"
+      description="Lectura comercial para venta bruta, descuento concedido, venta cobrada, ticket promedio, postventa registrada y resultado del periodo."
     >
       <RetailReportsFiltersSkeleton />
       <RetailMetricGridSkeleton />
 
+      <div className="grid gap-4 xl:grid-cols-2">
+        <RetailSectionCardSkeleton
+          title="Actividad de ventas"
+          description="Desglose compacto de venta bruta, descuento concedido, venta cobrada y ventas pagadas."
+        >
+          <RetailTableSkeleton columns={2} rows={4} />
+        </RetailSectionCardSkeleton>
+
+        <RetailSectionCardSkeleton
+          title="Postventa registrada"
+          description="Anulaciones y devoluciones registradas durante el periodo."
+        >
+          <RetailTableSkeleton columns={2} rows={5} />
+        </RetailSectionCardSkeleton>
+      </div>
+
       <RetailSectionCardSkeleton
-        title="Metodos de pago"
-        description="Totales y volumen de pagos conciliables con el corte de caja."
+        title="Resultado"
+        description="Relación compacta entre venta cobrada, postventa y resultado comercial."
       >
-        <RetailTableSkeleton columns={3} rows={2} />
+        <RetailTableSkeleton columns={1} rows={1} />
+      </RetailSectionCardSkeleton>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <RetailSectionCardSkeleton
+          title="Venta cobrada y ticket promedio por periodo"
+          description="Serie temporal de venta cobrada y ticket promedio."
+        >
+          <div className="h-[340px] rounded-[var(--radius-base)] bg-surface-2/80" />
+        </RetailSectionCardSkeleton>
+
+        <RetailSectionCardSkeleton
+          title="Descuentos y postventa por periodo"
+          description="Comparación de descuentos, anulaciones y devoluciones."
+        >
+          <div className="h-[320px] rounded-[var(--radius-base)] bg-surface-2/80" />
+        </RetailSectionCardSkeleton>
+      </div>
+
+      <RetailSectionCardSkeleton
+        title="Descuentos y operaciones debajo del costo"
+        description="Indicadores y desglose por motivo y usuario."
+      >
+        <RetailTableSkeleton columns={3} rows={4} />
       </RetailSectionCardSkeleton>
 
       <RetailSectionCardSkeleton
-        title="Pedidos del rango"
-        description="Tabla operativa para revisar folio, estado, terminales involucradas y fecha de pago o cancelacion."
+        title="Ventas del rango"
+        description="Tabla operativa para revisar fecha de cobro, montos, método y estado de postventa."
       >
-        <RetailTableSkeleton columns={9} rows={6} titleLines={2} />
+        <RetailTableSkeleton columns={8} rows={6} titleLines={2} />
       </RetailSectionCardSkeleton>
     </RetailReportLoadingState>
   );

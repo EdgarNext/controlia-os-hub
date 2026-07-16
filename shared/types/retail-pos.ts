@@ -1,6 +1,7 @@
 export const RETAIL_POS_ORDER_STATUSES = [
   "pending_payment",
   "paid",
+  "voided",
   "cancelled",
 ] as const;
 
@@ -19,7 +20,7 @@ export const RETAIL_POS_CASH_SHIFT_STATUSES = [
   "canceled",
 ] as const;
 
-export const RETAIL_POS_TICKET_TYPES = ["order", "payment"] as const;
+export const RETAIL_POS_TICKET_TYPES = ["order", "payment", "post_sale"] as const;
 
 export const RETAIL_POS_TICKET_EVENT_TYPES = [
   "printed",
@@ -30,6 +31,7 @@ export const RETAIL_POS_TICKET_EVENT_TYPES = [
 export const RETAIL_POS_TICKET_EVENT_REQUEST_TYPES = [
   "order_ticket",
   "payment_ticket",
+  "post_sale_ticket",
 ] as const;
 
 export const RETAIL_POS_RUNTIME_COMMAND_TYPES = [
@@ -38,6 +40,9 @@ export const RETAIL_POS_RUNTIME_COMMAND_TYPES = [
   "pay",
   "discount_checkout",
   "create_paid_counter_sale",
+  "post_sale.sale_cancellation.commit",
+  "post_sale.return.commit",
+  "post_sale.card_refund.confirm",
 ] as const;
 
 export const RETAIL_POS_COMMAND_RESULT_STATUSES = [
@@ -83,6 +88,45 @@ export const RETAIL_POS_DISCOUNT_COST_EVALUATIONS = [
   "below_cost",
   "unknown",
 ] as const;
+export const RETAIL_POS_POST_SALE_DOCUMENT_TYPES = [
+  "sale_cancellation",
+  "return_full",
+  "return_partial",
+  "payment_method_correction",
+  "exchange",
+] as const;
+export const RETAIL_POS_POST_SALE_DOCUMENT_STATUSES = [
+  "draft",
+  "pending_confirmation",
+  "completed",
+  "rejected",
+  "cancelled",
+  "failed",
+] as const;
+export const RETAIL_POS_POST_SALE_REFUND_STATUSES = [
+  "not_required",
+  "pending",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+export const RETAIL_POS_POST_SALE_REFUND_METHODS = [
+  "cash",
+  "card_external",
+  "store_credit_future",
+] as const;
+export const RETAIL_POS_POST_SALE_REASON_CODES = [
+  "duplicate_charge",
+  "wrong_order",
+  "wrong_payment_method",
+  "customer_cancelled_immediately",
+  "operator_error",
+  "system_error",
+  "other",
+] as const;
+export const RETAIL_POS_POST_SALE_CASH_MOVEMENT_TYPES = [
+  "post_sale_cash_refund",
+] as const;
 
 export type RetailPosQuantityString = string;
 export type RetailPosOrderStatus = (typeof RETAIL_POS_ORDER_STATUSES)[number];
@@ -111,6 +155,18 @@ export type RetailPosDiscountAuthorizationMethod =
   (typeof RETAIL_POS_DISCOUNT_AUTHORIZATION_METHODS)[number];
 export type RetailPosDiscountCostEvaluation =
   (typeof RETAIL_POS_DISCOUNT_COST_EVALUATIONS)[number];
+export type RetailPosPostSaleDocumentType =
+  (typeof RETAIL_POS_POST_SALE_DOCUMENT_TYPES)[number];
+export type RetailPosPostSaleDocumentStatus =
+  (typeof RETAIL_POS_POST_SALE_DOCUMENT_STATUSES)[number];
+export type RetailPosPostSaleRefundStatus =
+  (typeof RETAIL_POS_POST_SALE_REFUND_STATUSES)[number];
+export type RetailPosPostSaleRefundMethod =
+  (typeof RETAIL_POS_POST_SALE_REFUND_METHODS)[number];
+export type RetailPosPostSaleReasonCode =
+  (typeof RETAIL_POS_POST_SALE_REASON_CODES)[number];
+export type RetailPosPostSaleCashMovementType =
+  (typeof RETAIL_POS_POST_SALE_CASH_MOVEMENT_TYPES)[number];
 
 export type RetailPosCategory = {
   id: string;
@@ -186,6 +242,9 @@ export type RetailPosOrder = {
   direct_discount_cents?: number;
   order_discount_cents?: number;
   paid_at: string | null;
+  voided_at: string | null;
+  voided_by_pos_user_id: string | null;
+  void_reason: string | null;
   cancelled_at: string | null;
   cancelled_by_pos_user_id: string | null;
   cancel_reason: string | null;
@@ -599,17 +658,19 @@ export type UpdateRetailPosOrderRequest = {
   lines: CreateRetailPosOrderLineInput[];
 };
 
-export type CancelRetailPosOrderRequest = {
+export type VoidRetailPosOrderRequest = {
   tenant_id: string;
   order_id: string;
-  cancelled_by_pos_user_id: string;
-  cancel_reason: string | null;
+  voided_by_pos_user_id: string;
+  void_reason: string | null;
 };
 
 export type GetRetailPosOrderResponse = {
   order: RetailPosOrder;
   lines: RetailPosOrderLine[];
   payment: RetailPosPayment | null;
+  discounts?: RetailPosPersistedOrderDiscount[];
+  discount_overview?: RetailPosOrderDiscountOverview | null;
 };
 
 export type PayRetailPosOrderRequest = {
@@ -769,10 +830,16 @@ export type RetailPosCapability =
   | "orders.create"
   | "orders.sync"
   | "orders.lookup"
-  | "orders.cancel"
+  | "orders.void"
   | "cashier.status.read"
   | "cashier.shift.open"
   | "cashier.shift.close"
+  | "post_sale.view"
+  | "post_sale.cancel_sale"
+  | "post_sale.return"
+  | "post_sale.refund"
+  | "post_sale.view_cost"
+  | "post_sale.authorize"
   | "discounts.apply"
   | "discounts.view_cost"
   | "discounts.authorize"
@@ -793,6 +860,293 @@ export type RetailPosDiscountAuthorizationRecord = {
   reference: string | null;
   note: string | null;
   context: Record<string, unknown>;
+};
+
+export type RetailPosPostSaleDocument = {
+  id: string;
+  tenant_id: string;
+  original_order_id: string;
+  original_payment_id: string;
+  document_type: RetailPosPostSaleDocumentType;
+  status: RetailPosPostSaleDocumentStatus;
+  refund_status: RetailPosPostSaleRefundStatus;
+  refund_method: RetailPosPostSaleRefundMethod;
+  currency_code: string;
+  gross_amount_cents: number;
+  discount_amount_cents: number;
+  net_amount_cents: number;
+  eligible_paid_amount_cents: number;
+  refund_amount_cents: number;
+  reason_code: RetailPosPostSaleReasonCode;
+  comment: string | null;
+  created_by_pos_user_id: string;
+  created_by_device_id: string;
+  cash_shift_id: string | null;
+  confirmed_by_pos_user_id: string | null;
+  confirmed_at: string | null;
+  origin_command_id: string;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RetailPosPostSaleLine = {
+  id: string;
+  tenant_id: string;
+  post_sale_document_id: string;
+  original_order_line_id: string;
+  line_number: number;
+  quantity_sold: RetailPosQuantityString;
+  quantity_previously_returned: RetailPosQuantityString;
+  quantity_returned_now: RetailPosQuantityString;
+  line_subtotal_cents_historical: number;
+  direct_discount_cents_historical: number;
+  order_discount_allocated_cents_historical: number;
+  line_net_cents_historical: number;
+  returned_gross_amount_cents: number;
+  returned_direct_discount_cents: number;
+  returned_order_discount_cents: number;
+  returned_total_discount_cents: number;
+  returned_net_amount_cents: number;
+  created_at: string;
+};
+
+export type RetailPosPostSaleRefund = {
+  id: string;
+  tenant_id: string;
+  post_sale_document_id: string;
+  refund_method: RetailPosPostSaleRefundMethod;
+  status: RetailPosPostSaleRefundStatus;
+  amount_cents: number;
+  currency_code: string;
+  cash_shift_id: string | null;
+  external_reference: string | null;
+  processed_by_pos_user_id: string;
+  processed_by_device_id: string;
+  processed_at: string | null;
+  origin_command_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RetailPosCashMovement = {
+  id: string;
+  tenant_id: string;
+  cash_shift_id: string;
+  post_sale_document_id: string | null;
+  post_sale_refund_id: string | null;
+  movement_type: RetailPosPostSaleCashMovementType;
+  amount_cents: number;
+  note: string | null;
+  created_by_pos_user_id: string;
+  created_by_device_id: string;
+  occurred_at: string;
+  origin_command_id: string;
+  created_at: string;
+};
+
+export type RetailPosPostSaleWarning = {
+  code: string;
+  message: string;
+};
+
+export type RetailPosPostSaleExistingState = {
+  has_any_post_sale: boolean;
+  active_sale_cancellation_document_id: string | null;
+  active_sale_cancellation_status: RetailPosPostSaleDocumentStatus | null;
+  refund_status: RetailPosPostSaleRefundStatus | null;
+};
+
+export type RetailPosPostSaleReturnState =
+  | "not_returned"
+  | "partially_returned"
+  | "fully_returned";
+
+export type RetailPosPostSalePreviewLine = {
+  original_order_line_id: string;
+  line_number: number;
+  product_name: string;
+  variant_name: string | null;
+  quantity_sold: RetailPosQuantityString;
+  line_subtotal_cents_historical: number;
+  direct_discount_cents_historical: number;
+  order_discount_allocated_cents_historical: number;
+  line_net_cents_historical: number;
+};
+
+export type RetailPosPostSaleReturnSelectionLine = {
+  order_line_id: string;
+  quantity: RetailPosQuantityString;
+};
+
+export type RetailPosPostSaleReturnPreviewLine = {
+  original_order_line_id: string;
+  line_number: number;
+  product_name: string;
+  variant_name: string | null;
+  quantity_sold: RetailPosQuantityString;
+  quantity_previously_returned: RetailPosQuantityString;
+  quantity_available: RetailPosQuantityString;
+  quantity_selected: RetailPosQuantityString;
+  line_subtotal_cents_historical: number;
+  direct_discount_cents_historical: number;
+  order_discount_allocated_cents_historical: number;
+  line_net_cents_historical: number;
+  gross_available_cents: number;
+  direct_discount_available_cents: number;
+  order_discount_available_cents: number;
+  total_discount_available_cents: number;
+  net_available_cents: number;
+  gross_selected_cents: number;
+  direct_discount_selected_cents: number;
+  order_discount_selected_cents: number;
+  total_discount_selected_cents: number;
+  net_selected_cents: number;
+};
+
+export type RetailPosPostSaleReturnTotals = {
+  gross_previously_returned_cents: number;
+  direct_discount_previously_returned_cents: number;
+  order_discount_previously_returned_cents: number;
+  total_discount_previously_returned_cents: number;
+  net_previously_returned_cents: number;
+  gross_available_cents: number;
+  direct_discount_available_cents: number;
+  order_discount_available_cents: number;
+  total_discount_available_cents: number;
+  net_available_cents: number;
+  gross_selected_cents: number;
+  direct_discount_selected_cents: number;
+  order_discount_selected_cents: number;
+  total_discount_selected_cents: number;
+  net_selected_cents: number;
+};
+
+export type RetailPosPostSaleReturnAccumulatedLine = {
+  original_order_line_id: string;
+  line_number: number;
+  quantity_sold: RetailPosQuantityString;
+  quantity_returned: RetailPosQuantityString;
+  quantity_remaining: RetailPosQuantityString;
+  net_cents_sold: number;
+  net_cents_returned: number;
+  net_cents_remaining: number;
+};
+
+export type RetailPosPostSaleCancellationPreviewRequest = {
+  order_id: string;
+  reason_code: RetailPosPostSaleReasonCode;
+  comment: string | null;
+};
+
+export type RetailPosPostSaleReturnPreviewRequest = {
+  order_id: string;
+  lines: RetailPosPostSaleReturnSelectionLine[];
+  reason_code: RetailPosPostSaleReasonCode;
+  comment: string | null;
+  refund_method?: Extract<RetailPosPostSaleRefundMethod, "cash" | "card_external"> | null;
+};
+
+export type RetailPosPostSaleCancellationPreviewResponse = {
+  original_order: RetailPosOrder;
+  original_payment: RetailPosPayment;
+  lines: RetailPosPostSalePreviewLine[];
+  gross_amount_cents: number;
+  discount_amount_cents: number;
+  net_amount_cents: number;
+  eligible_paid_amount_cents: number;
+  expected_order_revision: number | null;
+  allowed_refund_methods: Extract<
+    RetailPosPostSaleRefundMethod,
+    "cash" | "card_external"
+  >[];
+  existing_post_sale: RetailPosPostSaleExistingState;
+  warnings: RetailPosPostSaleWarning[];
+};
+
+export type RetailPosPostSaleReturnPreviewResponse = {
+  original_order: RetailPosOrder;
+  original_payment: RetailPosPayment;
+  lines: RetailPosPostSaleReturnPreviewLine[];
+  totals: RetailPosPostSaleReturnTotals;
+  expected_order_revision: number | null;
+  fingerprint: string;
+  suggested_document_type: Extract<
+    RetailPosPostSaleDocumentType,
+    "return_full" | "return_partial"
+  >;
+  allowed_refund_methods: Extract<
+    RetailPosPostSaleRefundMethod,
+    "cash" | "card_external"
+  >[];
+  existing_post_sale: RetailPosPostSaleExistingState;
+  return_state: RetailPosPostSaleReturnState;
+  warnings: RetailPosPostSaleWarning[];
+};
+
+export type RetailPosPostSaleCancellationCommitRequest = {
+  order_id: string;
+  cash_shift_id: string;
+  expected_order_revision: number;
+  reason_code: RetailPosPostSaleReasonCode;
+  comment: string | null;
+  refund_method: Extract<RetailPosPostSaleRefundMethod, "cash" | "card_external">;
+};
+
+export type RetailPosPostSaleReturnCommitRequest = {
+  order_id: string;
+  cash_shift_id: string | null;
+  expected_order_revision: number;
+  fingerprint: string;
+  lines: RetailPosPostSaleReturnSelectionLine[];
+  reason_code: RetailPosPostSaleReasonCode;
+  comment: string | null;
+  refund_method: Extract<RetailPosPostSaleRefundMethod, "cash" | "card_external">;
+};
+
+export type RetailPosPostSaleCancellationCommitResponse = {
+  document: RetailPosPostSaleDocument;
+  lines: RetailPosPostSaleLine[];
+  refund: RetailPosPostSaleRefund;
+  cash_movement: RetailPosCashMovement | null;
+  replayed: boolean;
+  gross_amount_cents: number;
+  discount_amount_cents: number;
+  net_amount_cents: number;
+};
+
+export type RetailPosPostSaleReturnCommitResponse = {
+  document: RetailPosPostSaleDocument;
+  lines: RetailPosPostSaleLine[];
+  refund: RetailPosPostSaleRefund;
+  cash_movement: RetailPosCashMovement | null;
+  replayed: boolean;
+  return_state: RetailPosPostSaleReturnState;
+  accumulated_lines: RetailPosPostSaleReturnAccumulatedLine[];
+  totals: RetailPosPostSaleReturnTotals;
+};
+
+export type RetailPosPostSaleCardRefundConfirmRequest = {
+  post_sale_document_id: string;
+  refund_id: string;
+  external_reference: string;
+};
+
+export type RetailPosPostSaleCardRefundConfirmResponse = {
+  document: RetailPosPostSaleDocument;
+  refund: RetailPosPostSaleRefund;
+  replayed: boolean;
+};
+
+export type RetailPosPostSaleDetailResponse = {
+  document: RetailPosPostSaleDocument;
+  lines: RetailPosPostSaleLine[];
+  refund: RetailPosPostSaleRefund | null;
+  original_order: RetailPosOrder;
+  original_payment: RetailPosPayment;
+  original_order_lines: RetailPosOrderLine[];
+  accumulated_lines?: RetailPosPostSaleReturnAccumulatedLine[];
+  return_state?: RetailPosPostSaleReturnState;
 };
 
 export type RetailPosDiscountIntentDraft = {
@@ -998,6 +1352,15 @@ export type RetailPosOrderDiscountHistoryRequest = {
   order_id: string;
 };
 
+export type RetailPosOrderDiscountOverview = {
+  subtotal_gross_cents: number;
+  line_discount_cents: number;
+  order_discount_cents: number;
+  total_discount_cents: number;
+  total_cents: number;
+  has_below_cost_lines: boolean;
+};
+
 export type RetailPosOrderDiscountHistoryResponse = {
   order_id: string;
   revision: number | null;
@@ -1105,6 +1468,37 @@ export type RetailPosPaymentTicketPayload = RetailPosTicketPayload & {
   cashier_pos_user_id: string;
 };
 
+export type RetailPosPostSaleTicketPayload = {
+  ticket_type: "post_sale";
+  tenant_id: string;
+  order_id: string;
+  folio: string;
+  printed_at: string;
+  post_sale_document_id: string;
+  post_sale_document_status: RetailPosPostSaleDocumentStatus;
+  post_sale_document_type: Extract<
+    RetailPosPostSaleDocumentType,
+    "sale_cancellation" | "return_full" | "return_partial"
+  >;
+  refund_status: RetailPosPostSaleRefundStatus;
+  refund_method: RetailPosPostSaleRefundMethod;
+  refund_amount_cents: number;
+  reason_code: RetailPosPostSaleReasonCode;
+  original_paid_at: string | null;
+  refund_processed_at: string | null;
+  original_payment_method: RetailPosPaymentMethod;
+  original_subtotal_cents: number;
+  original_discount_cents: number;
+  original_total_cents: number;
+  lines: Array<{
+    line_number: number;
+    product_name: string;
+    variant_name: string | null;
+    quantity_returned: RetailPosQuantityString;
+    returned_net_amount_cents: number;
+  }>;
+};
+
 export type RecordRetailPosTicketEventRequest = {
   tenant_id: string;
   order_id: string;
@@ -1113,7 +1507,10 @@ export type RecordRetailPosTicketEventRequest = {
   ticket_type: RetailPosTicketType;
   event_type: RetailPosTicketEventType;
   printer_name: string | null;
-  payload: RetailPosOrderTicketPayload | RetailPosPaymentTicketPayload;
+  payload:
+    | RetailPosOrderTicketPayload
+    | RetailPosPaymentTicketPayload
+    | RetailPosPostSaleTicketPayload;
 };
 
 export type RetailPosTicketEventRequest = {
@@ -1235,6 +1632,15 @@ export type RetailPosZReportV1 = {
     discountsCents: number | null;
     cancellationsCount: number | null;
     cancellationsAmountCents: number | null;
+    fullReturnsCount: number | null;
+    partialReturnsCount: number | null;
+    returnedAmountCents: number | null;
+    commercialNetCents: number | null;
+    cancellationRefundsCashCents: number | null;
+    cancellationRefundsCardCents: number | null;
+    returnRefundsCashCents: number | null;
+    returnRefundsCardCompletedCents: number | null;
+    returnRefundsCardPendingCents: number | null;
     returnsCount: number | null;
     returnsAmountCents: number | null;
     pendingSyncPaymentsCount: number | null;

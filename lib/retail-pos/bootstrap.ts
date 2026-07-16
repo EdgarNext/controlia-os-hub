@@ -81,9 +81,13 @@ function assertSupportedDeviceRole(
 const CASHIER_CAPABILITIES: RetailPosCapability[] = [
   "catalog.read",
   "orders.lookup",
+  "orders.void",
   "cashier.status.read",
   "cashier.shift.open",
   "cashier.shift.close",
+  "post_sale.view",
+  "post_sale.cancel_sale",
+  "post_sale.refund",
   "payments.collect",
   "tickets.print.payment",
 ];
@@ -97,7 +101,7 @@ const ORDER_STATION_CAPABILITIES: RetailPosCapability[] = [
   "orders.create",
   "orders.sync",
   "orders.lookup",
-  "orders.cancel",
+  "orders.void",
   "tickets.print.order",
 ];
 
@@ -139,6 +143,7 @@ function buildCapabilities(input: {
 
     if (input.canViewCost) {
       capabilities.push("discounts.view_cost");
+      capabilities.push("post_sale.view_cost");
     }
 
     return capabilities;

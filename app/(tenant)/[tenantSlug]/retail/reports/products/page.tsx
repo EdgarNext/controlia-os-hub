@@ -1,6 +1,8 @@
 import { StatePanel } from "@/components/ui/state-panel";
 import { resolveRetailPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getRetailProductsReport } from "@/lib/retail-pos/reports";
+import { RETAIL_REPORTING_PERIOD_NOTES, getRetailReportingLabel } from "@/lib/retail-pos/reporting-semantics";
+import { RetailReportPeriodContext } from "../_components/RetailReportPeriodContext";
 import {
   RetailMetricGrid,
   RetailProductsTable,
@@ -28,8 +30,8 @@ export default async function RetailProductsPage({ params, searchParams }: Retai
     <div className="space-y-4">
       <RetailReportsHeader
         title="Productos vendidos"
-        description="Concentrado de productos y variantes vendidas solo en pedidos pagados, con cantidad, total y precio promedio."
-        metadata={`Tenant ${tenant.tenantName} · ${report.filters.dateFrom} a ${report.filters.dateTo}`}
+        description="Concentrado de productos y variantes cobradas, con cantidad, venta cobrada y precio promedio."
+        metadata={`${tenant.tenantName} · ${report.filters.dateFrom} a ${report.filters.dateTo}`}
       />
 
       <RetailReportsFiltersCard
@@ -39,18 +41,24 @@ export default async function RetailProductsPage({ params, searchParams }: Retai
         basePath="/retail/reports/products"
       />
 
+      <RetailReportPeriodContext
+        periodLabel={`${report.filters.dateFrom} -> ${report.filters.dateTo}`}
+        primaryDateLabel={RETAIL_REPORTING_PERIOD_NOTES.products.primaryDateLabel}
+        note={RETAIL_REPORTING_PERIOD_NOTES.products.note}
+      />
+
       <RetailMetricGrid
         items={[
           {
-            label: "Productos distintos",
+            label: getRetailReportingLabel("distinct_collected_products"),
             value: formatNumber(report.totals.distinctProducts),
           },
           {
-            label: "Unidades vendidas",
+            label: getRetailReportingLabel("collected_units"),
             value: formatNumber(report.totals.quantitySold),
           },
           {
-            label: "Venta total",
+            label: getRetailReportingLabel("collected_sales"),
             value: formatCurrency(report.totals.totalSoldCents),
           },
         ]}
@@ -58,15 +66,15 @@ export default async function RetailProductsPage({ params, searchParams }: Retai
 
       <RetailSectionCard
         title="Ranking de productos"
-        description="Solo se consideran ordenes pagadas. Cancelados y pendientes quedan fuera del agregado."
+        description="Solo se consideran ventas cobradas. Los pedidos pendientes o anulados antes del pago quedan fuera del agregado."
       >
         {report.rows.length > 0 ? (
           <RetailProductsTable report={report} />
         ) : (
           <StatePanel
             kind="empty"
-            title="Sin productos vendidos en el rango"
-            message="No existen lineas de pedidos pagados para los filtros seleccionados."
+            title="Sin productos cobrados en el periodo"
+            message="No hay productos cobrados para los filtros seleccionados."
           />
         )}
       </RetailSectionCard>

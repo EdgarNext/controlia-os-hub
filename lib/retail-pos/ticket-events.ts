@@ -16,7 +16,7 @@ import { RetailPosRuntimeError } from "./errors";
 type OrderRow = {
   id: string;
   tenant_id: string;
-  status: "pending_payment" | "paid" | "cancelled";
+  status: "pending_payment" | "paid" | "voided" | "cancelled";
 };
 
 type PaymentRow = {
@@ -58,6 +58,10 @@ function normalizeTicketType(value: unknown): RetailPosTicketType {
 
   if (normalized === "payment_ticket" || normalized === "payment") {
     return "payment";
+  }
+
+  if (normalized === "post_sale_ticket" || normalized === "post_sale") {
+    return "post_sale";
   }
 
   throw new RetailPosRuntimeError(400, "ticket_type is invalid.");
@@ -211,7 +215,7 @@ export async function recordRetailPosTicketEvent(input: {
   const errorMessage = normalizeOptionalString(input.request.error_message);
   const metadata = normalizeMetadata(input.request.metadata);
 
-  if (ticketType === "payment") {
+  if (ticketType === "payment" || ticketType === "post_sale") {
     assertRetailPosDeviceRole(actor, ["cashier_station"]);
   } else {
     assertRetailPosOrderTicketAccess(actor);
@@ -231,8 +235,18 @@ export async function recordRetailPosTicketEvent(input: {
   }
 
   const order = await loadOrder(actor.tenantId, orderId);
+  const payment =
+    ticketType === "payment" || ticketType === "post_sale"
+      ? await loadPaymentForOrder(actor.tenantId, orderId)
+      : null;
+
+  if (ticketType === "payment" || ticketType === "post_sale") {
+    if (!payment) {
+      throw new RetailPosRuntimeError(409, "ticket_event requires a retail_pos order with confirmed payment.");
+    }
+  }
+
   if (ticketType === "payment") {
-    const payment = await loadPaymentForOrder(actor.tenantId, orderId);
     if (order.status !== "paid" || !payment) {
       throw new RetailPosRuntimeError(409, "payment_ticket requires a paid retail_pos order with confirmed payment.");
     }

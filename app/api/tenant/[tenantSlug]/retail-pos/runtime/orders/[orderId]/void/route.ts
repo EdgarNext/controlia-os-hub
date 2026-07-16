@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cancelRetailPosOrder } from "@/lib/retail-pos/orders";
+import { voidRetailPosOrder } from "@/lib/retail-pos/orders";
 import { RetailPosRuntimeError } from "@/lib/retail-pos/errors";
 
 type RouteParams = { tenantSlug: string; orderId: string };
 
-type CancelOrderBody = {
+type VoidOrderBody = {
   tenant_id: string;
   order_id: string;
-  cancelled_by_pos_user_id: string;
-  cancel_reason: string | null;
+  voided_by_pos_user_id: string;
+  void_reason: string | null;
   deviceId?: unknown;
   deviceSecret?: unknown;
 };
@@ -24,13 +24,13 @@ function asTrimmedString(value: unknown) {
 export async function POST(request: NextRequest, context: { params: Promise<RouteParams> }) {
   try {
     const { tenantSlug, orderId } = await context.params;
-    const body = (await request.json()) as CancelOrderBody | null;
+    const body = (await request.json()) as VoidOrderBody | null;
 
     if (!body || typeof body !== "object") {
       return jsonError(400, "Invalid request body.");
     }
 
-    const payload = await cancelRetailPosOrder({
+    const payload = await voidRetailPosOrder({
       tenantSlug,
       orderId,
       request: body,
@@ -44,7 +44,8 @@ export async function POST(request: NextRequest, context: { params: Promise<Rout
       return jsonError(error.status, error.message);
     }
 
-    const message = error instanceof Error ? error.message : "Unexpected retail_pos order cancellation error.";
+    const message =
+      error instanceof Error ? error.message : "Unexpected retail_pos order void error.";
     return jsonError(500, message);
   }
 }

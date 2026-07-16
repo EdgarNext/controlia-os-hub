@@ -1,12 +1,15 @@
 import type {
-  CancelRetailPosOrderRequest,
   CreateRetailPosOrderLineInput,
   CreateRetailPosOrderRequest,
   CreateRetailPosOrderResponse,
   GetRetailPosOrderResponse,
+  RetailPosDiscountAllocationSnapshot,
+  RetailPosOrderDiscountOverview,
   RetailPosOrder,
   RetailPosOrderLine,
+  RetailPosPersistedOrderDiscount,
   UpdateRetailPosOrderRequest,
+  VoidRetailPosOrderRequest,
 } from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
@@ -66,6 +69,31 @@ type PaymentRow = {
   created_by: string | null;
 };
 
+type PersistedOrderDiscountRow = Omit<
+  RetailPosPersistedOrderDiscount,
+  "allocations" | "authorization"
+> & {
+  authorization_required: boolean;
+  authorization_status: RetailPosPersistedOrderDiscount["authorization"]["status"];
+  authorization_method: RetailPosPersistedOrderDiscount["authorization"]["method"];
+  authorization_policy_key: string | null;
+  authorization_note: string | null;
+  authorization_requested_by_pos_user_id: string | null;
+  authorized_by_pos_user_id: string | null;
+  authorized_at: string | null;
+  authorization_reference: string | null;
+  authorization_context: Record<string, unknown> | null;
+};
+
+type PersistedOrderDiscountAllocationRow = RetailPosDiscountAllocationSnapshot & {
+  id: string;
+  tenant_id: string;
+  order_id: string;
+  order_discount_id: string;
+  created_at: string;
+  created_by: string | null;
+};
+
 type ResolvedOrderInputLine = {
   line_number: number;
   product_id: string;
@@ -104,7 +132,13 @@ type ExistingOrderComparableLine = {
 };
 
 const ORDER_SELECT =
-  "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
+  "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, revision, direct_discount_cents, order_discount_cents, paid_at, voided_at, voided_by_pos_user_id, void_reason, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
+
+const ORDER_LINE_SELECT =
+  "id, tenant_id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, barcode, sales_unit_code, sales_unit_label, allow_decimal_quantity, quantity, unit_price_cents, line_subtotal_cents, discount_cents, line_total_cents, direct_discount_cents, order_discount_allocation_cents, total_discount_cents, unit_cost_snapshot_cents, cost_evaluation, below_cost_after_discount, created_at, updated_at, created_by, updated_by";
+
+const ORDER_DISCOUNT_SELECT =
+  "id, tenant_id, order_id, order_revision, lifecycle_status, scope, order_line_id, capture_type, percentage_bps, amount_cents, base_amount_cents, effective_discount_cents, reason_code, comment, source, applied_by_pos_user_id, applied_by_device_id, applied_at, expected_revision, authorization_required, authorization_status, authorization_method, authorization_policy_key, authorization_note, authorization_requested_by_pos_user_id, authorized_by_pos_user_id, authorized_at, authorization_reference, authorization_context, created_at, updated_at";
 
 const REMOTE_FOLIO_COMPACT_PATTERN = /^([A-Z]+)(\d{6})(\d{4,})$/;
 const REMOTE_FOLIO_DASHED_PATTERN = /^([A-Z]+)-(\d{6})-(\d{4,})$/;
@@ -179,6 +213,92 @@ function normalizeOriginLocalFolio(value: unknown): string | null {
 
 function asArray<T>(value: T[] | null | undefined) {
   return Array.isArray(value) ? value : [];
+}
+
+function mapPersistedOrderDiscount(
+  discount: PersistedOrderDiscountRow,
+): RetailPosPersistedOrderDiscount {
+  return {
+    id: discount.id,
+    tenant_id: discount.tenant_id,
+    order_id: discount.order_id,
+    order_revision: discount.order_revision,
+    lifecycle_status: discount.lifecycle_status,
+    scope: discount.scope,
+    order_line_id: discount.order_line_id,
+    capture_type: discount.capture_type,
+    percentage_bps: discount.percentage_bps,
+    amount_cents: discount.amount_cents,
+    base_amount_cents: discount.base_amount_cents,
+    effective_discount_cents: discount.effective_discount_cents,
+    reason_code: discount.reason_code,
+    comment: discount.comment,
+    source: discount.source,
+    applied_by_pos_user_id: discount.applied_by_pos_user_id,
+    applied_by_device_id: discount.applied_by_device_id,
+    applied_at: discount.applied_at,
+    expected_revision: discount.expected_revision,
+    authorization: {
+      required: discount.authorization_required,
+      status: discount.authorization_status,
+      method: discount.authorization_method,
+      policy_key: discount.authorization_policy_key,
+      requested_by_pos_user_id: discount.authorization_requested_by_pos_user_id,
+      authorized_by_pos_user_id: discount.authorized_by_pos_user_id,
+      authorized_at: discount.authorized_at,
+      reference: discount.authorization_reference,
+      note: discount.authorization_note,
+      context: discount.authorization_context ?? {},
+    },
+    allocations: [],
+    created_at: discount.created_at,
+    updated_at: discount.updated_at,
+  };
+}
+
+function sumLineDiscountCents(lines: OrderLineRow[]) {
+  return lines.reduce((sum, line) => sum + (line.direct_discount_cents ?? 0), 0);
+}
+
+function sumOrderDiscountAllocationCents(lines: OrderLineRow[]) {
+  return lines.reduce((sum, line) => sum + (line.order_discount_allocation_cents ?? 0), 0);
+}
+
+function buildOrderDiscountOverview(input: {
+  order: OrderRow;
+  lines: OrderLineRow[];
+  discounts: RetailPosPersistedOrderDiscount[];
+}): RetailPosOrderDiscountOverview | null {
+  const lineDiscountCents =
+    typeof input.order.direct_discount_cents === "number"
+      ? input.order.direct_discount_cents
+      : sumLineDiscountCents(input.lines);
+  const fallbackOrderDiscountCents =
+    input.discounts
+      .filter((discount) => discount.scope === "order")
+      .reduce((sum, discount) => sum + discount.effective_discount_cents, 0) ||
+    sumOrderDiscountAllocationCents(input.lines);
+  const orderDiscountCents =
+    typeof input.order.order_discount_cents === "number"
+      ? input.order.order_discount_cents
+      : fallbackOrderDiscountCents;
+  const totalDiscountCents =
+    typeof input.order.discount_cents === "number"
+      ? input.order.discount_cents
+      : lineDiscountCents + orderDiscountCents;
+
+  if (totalDiscountCents <= 0 && !input.lines.some((line) => line.below_cost_after_discount === true)) {
+    return null;
+  }
+
+  return {
+    subtotal_gross_cents: input.order.subtotal_cents,
+    line_discount_cents: lineDiscountCents,
+    order_discount_cents: orderDiscountCents,
+    total_discount_cents: totalDiscountCents,
+    total_cents: input.order.total_cents,
+    has_below_cost_lines: input.lines.some((line) => line.below_cost_after_discount === true),
+  };
 }
 
 function ensureNonNegativeInteger(value: unknown, field: string) {
@@ -326,9 +446,7 @@ async function loadOrderContext(
         query: (signal) =>
           supabase
             .from("retail_pos_order_lines")
-            .select(
-              "id, tenant_id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, barcode, sales_unit_code, sales_unit_label, allow_decimal_quantity, quantity, unit_price_cents, line_subtotal_cents, discount_cents, line_total_cents, created_at, updated_at, created_by, updated_by",
-            )
+            .select(ORDER_LINE_SELECT)
             .abortSignal(signal)
             .eq("tenant_id", tenantId)
             .eq("order_id", orderId)
@@ -336,9 +454,7 @@ async function loadOrderContext(
       })
     : supabase
         .from("retail_pos_order_lines")
-        .select(
-          "id, tenant_id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, barcode, sales_unit_code, sales_unit_label, allow_decimal_quantity, quantity, unit_price_cents, line_subtotal_cents, discount_cents, line_total_cents, created_at, updated_at, created_by, updated_by",
-        )
+        .select(ORDER_LINE_SELECT)
         .eq("tenant_id", tenantId)
         .eq("order_id", orderId)
         .order("line_number", { ascending: true });
@@ -362,6 +478,76 @@ async function loadOrderContext(
   };
 }
 
+async function loadPersistedOrderDiscounts(input: {
+  tenantId: string;
+  orderId: string;
+  trace?: RuntimePerfTrace;
+}): Promise<RetailPosPersistedOrderDiscount[]> {
+  const supabase = getSupabaseAdminClient({ trace: input.trace });
+  const [discountsResult, allocationsResult] = await Promise.all([
+    runSupabaseReadWithRetry<PersistedOrderDiscountRow[]>({
+      trace: input.trace,
+      step: "order_discounts",
+      query: (signal) =>
+        supabase
+          .from("retail_pos_order_discounts")
+          .select(ORDER_DISCOUNT_SELECT)
+          .abortSignal(signal)
+          .eq("tenant_id", input.tenantId)
+          .eq("order_id", input.orderId)
+          .eq("lifecycle_status", "active")
+          .order("created_at", { ascending: true })
+          .returns<PersistedOrderDiscountRow[]>(),
+    }),
+    runSupabaseReadWithRetry<PersistedOrderDiscountAllocationRow[]>({
+      trace: input.trace,
+      step: "order_discount_allocations",
+      query: (signal) =>
+        supabase
+          .from("retail_pos_order_discount_allocations")
+          .select(
+            "id, tenant_id, order_id, order_discount_id, order_line_id, line_number, allocation_base_cents, allocated_discount_cents, created_at, created_by",
+          )
+          .abortSignal(signal)
+          .eq("tenant_id", input.tenantId)
+          .eq("order_id", input.orderId)
+          .order("created_at", { ascending: true })
+          .returns<PersistedOrderDiscountAllocationRow[]>(),
+    }),
+  ]);
+
+  if (discountsResult.error) {
+    throw new RetailPosRuntimeError(
+      500,
+      `Unable to load retail_pos order discounts: ${discountsResult.error.message}`,
+    );
+  }
+
+  if (allocationsResult.error) {
+    throw new RetailPosRuntimeError(
+      500,
+      `Unable to load retail_pos order discount allocations: ${allocationsResult.error.message}`,
+    );
+  }
+
+  const allocationsByDiscountId = new Map<string, RetailPosDiscountAllocationSnapshot[]>();
+  for (const allocation of allocationsResult.data ?? []) {
+    const bucket = allocationsByDiscountId.get(allocation.order_discount_id) ?? [];
+    bucket.push({
+      order_line_id: allocation.order_line_id,
+      line_number: allocation.line_number,
+      allocation_base_cents: allocation.allocation_base_cents,
+      allocated_discount_cents: allocation.allocated_discount_cents,
+    });
+    allocationsByDiscountId.set(allocation.order_discount_id, bucket);
+  }
+
+  return (discountsResult.data ?? []).map((discount) => ({
+    ...mapPersistedOrderDiscount(discount),
+    allocations: allocationsByDiscountId.get(discount.id) ?? [],
+  }));
+}
+
 async function loadOrderDetail(
   tenantId: string,
   orderId: string,
@@ -372,21 +558,24 @@ async function loadOrderDetail(
   const supabase = getSupabaseAdminClient({ trace });
   const context = await loadOrderContext(tenantId, orderId, trace);
 
-  const { data: payment, error: paymentError } = await runSupabaseReadWithRetry<PaymentRow>({
-    trace,
-    step: "payment_lookup",
-    query: (signal) =>
-      supabase
-        .from("retail_pos_payments")
-        .select(
-          "id, tenant_id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, card_reference, paid_at, created_at, created_by",
-        )
-        .abortSignal(signal)
-        .eq("tenant_id", tenantId)
-        .eq("order_id", orderId)
-        .limit(1)
-        .maybeSingle<PaymentRow>(),
-  });
+  const [{ data: payment, error: paymentError }, discounts] = await Promise.all([
+    runSupabaseReadWithRetry<PaymentRow>({
+      trace,
+      step: "payment_lookup",
+      query: (signal) =>
+        supabase
+          .from("retail_pos_payments")
+          .select(
+            "id, tenant_id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, card_reference, paid_at, created_at, created_by",
+          )
+          .abortSignal(signal)
+          .eq("tenant_id", tenantId)
+          .eq("order_id", orderId)
+          .limit(1)
+          .maybeSingle<PaymentRow>(),
+    }),
+    loadPersistedOrderDiscounts({ tenantId, orderId, trace }),
+  ]);
 
   if (paymentError) {
     throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment: ${paymentError.message}`);
@@ -401,6 +590,12 @@ async function loadOrderDetail(
     order: context.order,
     lines: context.lines,
     payment: payment ?? null,
+    discounts,
+    discount_overview: buildOrderDiscountOverview({
+      order: context.order,
+      lines: context.lines,
+      discounts,
+    }),
   };
 }
 
@@ -415,16 +610,14 @@ async function loadOrderDetailFromOrderContext(
     typeof performance !== "undefined" ? performance.now() : Date.now();
   const supabase = getSupabaseAdminClient({ trace: input.trace });
 
-  const [linesResult, paymentResult] = await Promise.all([
+  const [linesResult, paymentResult, discounts] = await Promise.all([
     runSupabaseReadWithRetry<OrderLineRow[]>({
       trace: input.trace,
       step: "order_lines",
       query: (signal) =>
         supabase
           .from("retail_pos_order_lines")
-          .select(
-            "id, tenant_id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, barcode, sales_unit_code, sales_unit_label, allow_decimal_quantity, quantity, unit_price_cents, line_subtotal_cents, discount_cents, line_total_cents, created_at, updated_at, created_by, updated_by",
-          )
+          .select(ORDER_LINE_SELECT)
           .abortSignal(signal)
           .eq("tenant_id", input.tenantId)
           .eq("order_id", input.order.id)
@@ -444,6 +637,11 @@ async function loadOrderDetailFromOrderContext(
           .eq("order_id", input.order.id)
           .limit(1)
           .maybeSingle<PaymentRow>(),
+    }),
+    loadPersistedOrderDiscounts({
+      tenantId: input.tenantId,
+      orderId: input.order.id,
+      trace: input.trace,
     }),
   ]);
 
@@ -465,6 +663,12 @@ async function loadOrderDetailFromOrderContext(
     order: input.order,
     lines: asArray(linesResult.data),
     payment: paymentResult.data ?? null,
+    discounts,
+    discount_overview: buildOrderDiscountOverview({
+      order: input.order,
+      lines: asArray(linesResult.data),
+      discounts,
+    }),
   };
 }
 
@@ -993,6 +1197,22 @@ function assertPendingPaymentStatus(status: string) {
   }
 }
 
+function assertRetailPosOrderVoidAccess(actor: RetailPosRuntimeActor) {
+  if (actor.mode !== "device") {
+    return;
+  }
+
+  if (actor.deviceRole === "order_station" || actor.deviceRole === "cashier_station") {
+    return;
+  }
+
+  throw new RetailPosRuntimeError(
+    403,
+    "ORDER_VOID_CAPABILITY_REQUIRED",
+    "ORDER_VOID_CAPABILITY_REQUIRED",
+  );
+}
+
 export async function createRetailPosOrder(input: {
   tenantSlug: string;
   request: CreateRetailPosOrderRequest;
@@ -1238,10 +1458,10 @@ export async function getRetailPosOrderByFolio(input: {
   return detail;
 }
 
-export async function cancelRetailPosOrder(input: {
+export async function voidRetailPosOrder(input: {
   tenantSlug: string;
   orderId: string;
-  request: CancelRetailPosOrderRequest;
+  request: VoidRetailPosOrderRequest;
   deviceId?: string | null;
   deviceSecret?: string | null;
 }) {
@@ -1251,7 +1471,7 @@ export async function cancelRetailPosOrder(input: {
     deviceSecret: input.deviceSecret,
   });
 
-  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station"]);
+  assertRetailPosOrderVoidAccess(actor);
 
   if (input.request.tenant_id !== actor.tenantId) {
     throw new RetailPosRuntimeError(400, "tenant_id does not match runtime tenant.");
@@ -1261,27 +1481,44 @@ export async function cancelRetailPosOrder(input: {
     throw new RetailPosRuntimeError(400, "order_id does not match route parameter.");
   }
 
-  await assertPosUser(actor.tenantId, input.request.cancelled_by_pos_user_id);
+  await assertPosUser(actor.tenantId, input.request.voided_by_pos_user_id);
 
   const context = await loadOrderContext(actor.tenantId, input.orderId);
-  assertPendingPaymentStatus(context.order.status);
+  if (context.order.status === "voided") {
+    throw new RetailPosRuntimeError(409, "ORDER_ALREADY_VOIDED", "ORDER_ALREADY_VOIDED");
+  }
+
+  if (context.order.status !== "pending_payment") {
+    throw new RetailPosRuntimeError(409, "ORDER_NOT_VOIDABLE", "ORDER_NOT_VOIDABLE");
+  }
 
   const supabase = getSupabaseAdminClient();
-  const cancelledAt = new Date().toISOString();
-  const { error } = await supabase
+  const voidedAt = new Date().toISOString();
+  const { data, error } = await supabase
     .from("retail_pos_orders")
     .update({
-      status: "cancelled",
-      cancelled_at: cancelledAt,
-      cancelled_by_pos_user_id: input.request.cancelled_by_pos_user_id,
-      cancel_reason: input.request.cancel_reason,
+      status: "voided",
+      voided_at: voidedAt,
+      voided_by_pos_user_id: input.request.voided_by_pos_user_id,
+      void_reason: input.request.void_reason,
     })
     .eq("tenant_id", actor.tenantId)
     .eq("id", input.orderId)
-    .eq("status", "pending_payment");
+    .eq("status", "pending_payment")
+    .select("id")
+    .limit(1)
+    .maybeSingle<{ id: string }>();
 
   if (error) {
-    throw new RetailPosRuntimeError(400, `Unable to cancel retail_pos order: ${error.message}`);
+    throw new RetailPosRuntimeError(
+      409,
+      `Unable to void retail_pos order: ${error.message}`,
+      "ORDER_VOID_CONFLICT",
+    );
+  }
+
+  if (!data) {
+    throw new RetailPosRuntimeError(409, "ORDER_VOID_CONFLICT", "ORDER_VOID_CONFLICT");
   }
 
   return loadOrderDetail(actor.tenantId, input.orderId);

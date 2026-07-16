@@ -3,6 +3,9 @@ import { notFound } from "next/navigation";
 import { StatePanel } from "@/components/ui/state-panel";
 import { resolveRetailPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getRetailPosZReportByCashShift } from "@/lib/retail-pos/reports";
+import { RETAIL_REPORTING_PERIOD_NOTES, getRetailReportingLabel } from "@/lib/retail-pos/reporting-semantics";
+import { formatRetailReportAuditNote } from "@/lib/retail-pos/reporting-ui";
+import { RetailReportPeriodContext } from "../../_components/RetailReportPeriodContext";
 import {
   RetailMetricGrid,
   RetailPaymentMethodsTable,
@@ -11,6 +14,8 @@ import {
   formatCurrency,
   formatDateTime,
   formatNumber,
+  formatPaymentMethodLabel,
+  formatPrintEvidenceStatus,
 } from "../../_components/retail-reports-ui";
 
 type RetailZReportPageProps = {
@@ -65,9 +70,9 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
 
   const statusDescription =
     report.status === "closed"
-      ? "Reporte Z final v1 calculado desde cash shift cerrado."
+      ? "Cierre operativo del turno calculado desde un turno cerrado."
       : report.status === "open"
-        ? "El turno sigue abierto. Esta vista muestra un corte operativo, no un Z final."
+        ? "El turno sigue abierto. Esta vista muestra un corte operativo y no un cierre definitivo."
         : "El turno fue cancelado. La lectura se conserva como referencia administrativa.";
 
   return (
@@ -75,9 +80,9 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-2">
           <RetailReportsHeader
-            title="Reporte Z"
-            description="Vista solo lectura por turno de caja calculada directamente desde pagos, órdenes y líneas asociadas al cash shift."
-            metadata={`Tenant ${tenant.tenantName} · Turno ${report.cashShiftId}`}
+            title={getRetailReportingLabel("shift_operational_close")}
+            description="Vista de solo lectura por turno de caja, también conocida como Reporte Z."
+            metadata={`${tenant.tenantName} · Turno ${report.cashShiftId}`}
           />
           <div className="flex flex-wrap items-center gap-2">
             <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${getStatusTone(report.status)}`}>
@@ -95,25 +100,40 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
         </Link>
       </div>
 
+      <RetailReportPeriodContext
+        periodLabel={`Turno ${report.cashShiftId}`}
+        primaryDateLabel={RETAIL_REPORTING_PERIOD_NOTES.z_report.primaryDateLabel}
+        note={RETAIL_REPORTING_PERIOD_NOTES.z_report.note}
+      />
+
       <RetailMetricGrid
         items={[
           {
-            label: "Total vendido",
+            label: getRetailReportingLabel("collected_sales"),
             value: formatCurrency(report.totalSalesCents),
-            detail: `${formatNumber(report.paidOrdersCount)} ordenes pagadas`,
+            detail: `${getRetailReportingLabel("gross_sales")} ${formatCurrency(report.totalSalesCents + (report.future.discountsCents ?? 0))}`,
           },
           {
-            label: "Efectivo",
-            value: formatCurrency(report.cashSalesCents),
-            detail: `Tarjeta ${formatCurrency(report.cardSalesCents)}`,
+            label: getRetailReportingLabel("cash_collections"),
+            value: formatCurrency(
+              report.cashSalesCents -
+                (report.future.cancellationRefundsCashCents ?? 0) -
+                (report.future.returnRefundsCashCents ?? 0),
+            ),
+            detail: `${getRetailReportingLabel("card_collections")} ${formatCurrency(report.cardSalesCents)} · ya descuenta reembolsos en efectivo`,
           },
           {
-            label: "Tarjeta",
-            value: formatCurrency(report.cardSalesCents),
+            label: getRetailReportingLabel("commercial_result"),
+            value: formatCurrency(report.future.commercialNetCents ?? 0),
             detail: `${formatNumber(report.paymentsCount)} pagos`,
           },
           {
-            label: "Diferencia",
+            label: getRetailReportingLabel("returned_amount"),
+            value: formatCurrency(report.future.returnedAmountCents ?? 0),
+            detail: `${formatNumber(report.future.fullReturnsCount ?? 0)} totales · ${formatNumber(report.future.partialReturnsCount ?? 0)} parciales`,
+          },
+          {
+            label: getRetailReportingLabel("cash_difference"),
             value: formatPendingCurrency(report.differenceCents),
             tone: report.differenceCents !== null && report.differenceCents !== 0 ? "warning" : "default",
           },
@@ -121,10 +141,10 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
       />
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <RetailSectionCard title="Identificacion del turno" description="Contexto operativo y administrativo del cash shift.">
+        <RetailSectionCard title="Identificación del turno" description="Contexto operativo y administrativo del turno.">
           <dl className="grid gap-3 sm:grid-cols-2">
             <div>
-              <dt className="text-xs font-medium text-muted">cashShiftId</dt>
+              <dt className="text-xs font-medium text-muted">Identificador del turno</dt>
               <dd className="text-sm text-foreground">{report.cashShiftId}</dd>
             </div>
             <div>
@@ -154,22 +174,22 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
           </dl>
         </RetailSectionCard>
 
-        <RetailSectionCard title="Resumen de caja" description="Montos base del cierre y lectura de diferencia.">
+        <RetailSectionCard title="Resumen de caja" description="Montos base del cierre y lectura de diferencia de caja.">
           <dl className="grid gap-3 sm:grid-cols-2">
             <div>
               <dt className="text-xs font-medium text-muted">Fondo inicial</dt>
               <dd className="text-sm text-foreground">{formatCurrency(report.openingFloatCents)}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-muted">Efectivo esperado</dt>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("expected_cash_from_sales_and_reimbursements")}</dt>
               <dd className="text-sm text-foreground">{formatPendingCurrency(report.expectedCashCents)}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-muted">Efectivo declarado</dt>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("declared_cash")}</dt>
               <dd className="text-sm text-foreground">{formatPendingCurrency(report.declaredCashCents)}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-muted">Diferencia</dt>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("cash_difference")}</dt>
               <dd className="text-sm font-medium text-foreground">{formatPendingCurrency(report.differenceCents)}</dd>
             </div>
           </dl>
@@ -177,12 +197,42 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-        <RetailSectionCard title="Metodos de pago" description="Totales del shift por metodo.">
+        <RetailSectionCard title="Cobros por método" description="Totales del turno por tipo de cobro.">
           <RetailPaymentMethodsTable paymentMethods={report.paymentMethods} />
         </RetailSectionCard>
 
         <RetailSectionCard title="Operaciones" description="Volumen operativo consolidado del turno.">
           <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("gross_sales")}</dt>
+              <dd className="text-lg font-semibold text-foreground">
+                {formatCurrency(report.totalSalesCents + (report.future.discountsCents ?? 0))}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("granted_discount")}</dt>
+              <dd className="text-lg font-semibold text-foreground">
+                {formatCurrency(report.future.discountsCents ?? 0)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("paid_sale_cancellation")}</dt>
+              <dd className="text-lg font-semibold text-foreground">
+                {formatCurrency(report.future.cancellationsAmountCents ?? 0)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("return_operation")}</dt>
+              <dd className="text-lg font-semibold text-foreground">
+                {formatCurrency(report.future.returnedAmountCents ?? 0)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("commercial_result")}</dt>
+              <dd className="text-lg font-semibold text-foreground">
+                {formatCurrency(report.future.commercialNetCents ?? 0)}
+              </dd>
+            </div>
             <div>
               <dt className="text-xs font-medium text-muted">Pagos</dt>
               <dd className="text-lg font-semibold text-foreground">{formatNumber(report.paymentsCount)}</dd>
@@ -196,18 +246,42 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
               <dd className="text-lg font-semibold text-foreground">{formatCurrency(report.averageTicketCents)}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-muted">Lineas vendidas</dt>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("collected_lines")}</dt>
               <dd className="text-lg font-semibold text-foreground">{formatNumber(report.linesSummary.soldLinesCount)}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-muted">Unidades vendidas</dt>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("collected_units")}</dt>
               <dd className="text-lg font-semibold text-foreground">{formatNumber(report.linesSummary.soldUnits)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-muted">Reembolsos en efectivo por anulación</dt>
+              <dd className="text-lg font-semibold text-foreground">
+                {formatCurrency(report.future.cancellationRefundsCashCents ?? 0)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-muted">Reembolsos en efectivo por devolución</dt>
+              <dd className="text-lg font-semibold text-foreground">
+                {formatCurrency(report.future.returnRefundsCashCents ?? 0)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("card_reimbursements")}</dt>
+              <dd className="text-lg font-semibold text-foreground">
+                {formatCurrency(report.future.returnRefundsCardCompletedCents ?? 0)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-muted">{getRetailReportingLabel("pending_reimbursements")}</dt>
+              <dd className="text-lg font-semibold text-foreground">
+                {formatCurrency(report.future.returnRefundsCardPendingCents ?? 0)}
+              </dd>
             </div>
           </dl>
         </RetailSectionCard>
       </div>
 
-      <RetailSectionCard title="Ordenes incluidas" description="Solo se consideran ordenes asociadas a pagos del cash shift.">
+      <RetailSectionCard title="Órdenes incluidas" description="Solo se consideran órdenes asociadas a cobros del turno.">
         {report.orders.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -215,7 +289,7 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
                 <tr className="border-b border-border text-left text-muted">
                   <th className="px-2 py-2">Folio</th>
                   <th className="px-2 py-2">Pagado en</th>
-                  <th className="px-2 py-2">Metodo</th>
+                  <th className="px-2 py-2">Tipo de cobro</th>
                   <th className="px-2 py-2">Total</th>
                 </tr>
               </thead>
@@ -225,11 +299,7 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
                     <td className="px-2 py-2 font-medium">{order.folio}</td>
                     <td className="px-2 py-2">{formatDateTime(order.paidAt)}</td>
                     <td className="px-2 py-2">
-                      {order.paymentMethod === "cash"
-                        ? "Efectivo"
-                        : order.paymentMethod === "card"
-                          ? "Tarjeta"
-                          : "—"}
+                      {formatPaymentMethodLabel(order.paymentMethod)}
                     </td>
                     <td className="px-2 py-2">{formatCurrency(order.totalCents)}</td>
                   </tr>
@@ -240,14 +310,14 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
         ) : (
           <StatePanel
             kind="empty"
-            title="Sin ordenes asociadas"
-            message="Este turno no tiene ordenes pagadas asociadas o no fue posible cargarlas."
+            title="Sin operaciones asociadas a este turno"
+            message="No se encontraron operaciones asociadas a este turno."
           />
         )}
       </RetailSectionCard>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <RetailSectionCard title="Observaciones" description="Notas operativas, warnings y campos futuros.">
+        <RetailSectionCard title="Observaciones" description="Notas operativas y asuntos detectados en este cierre.">
           <div className="space-y-3">
             <div>
               <p className="text-xs font-medium text-muted">Nota de cierre</p>
@@ -255,7 +325,7 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
             </div>
 
             <div>
-              <p className="text-xs font-medium text-muted">Warnings</p>
+              <p className="text-xs font-medium text-muted">Asuntos a revisar</p>
               {report.warnings.length > 0 ? (
                 <ul className="space-y-2">
                   {report.warnings.map((warning) => (
@@ -270,18 +340,18 @@ export default async function RetailZReportPage({ params }: RetailZReportPagePro
             </div>
 
             <div>
-              <p className="text-xs font-medium text-muted">Campos futuros</p>
+              <p className="text-xs font-medium text-muted">Observación de alcance</p>
               <p className="text-sm text-muted">
-                Cancelaciones, devoluciones, pending sync y descuentos operativos siguen fuera de alcance en v1.
+                Devoluciones parciales y sincronizaciones pendientes siguen fuera de alcance en v1.
               </p>
             </div>
           </div>
         </RetailSectionCard>
 
-        <RetailSectionCard title="Evidencia de impresion" description="El ticket termico de corte no es la fuente oficial del Reporte Z.">
+        <RetailSectionCard title="Evidencia de impresión" description="El comprobante térmico no es la fuente oficial del cierre operativo del turno.">
           <div className="space-y-2">
-            <p className="text-sm text-foreground">Estado: {report.printEvidence.status}</p>
-            <p className="text-sm text-muted">{report.printEvidence.note}</p>
+            <p className="text-sm text-foreground">Estado: {formatPrintEvidenceStatus(report.printEvidence.status)}</p>
+            <p className="text-sm text-muted">{formatRetailReportAuditNote(report.printEvidence.note)}</p>
           </div>
         </RetailSectionCard>
       </div>

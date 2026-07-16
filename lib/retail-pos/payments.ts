@@ -317,8 +317,8 @@ export async function payRetailPosOrder(input: {
     throw new RetailPosRuntimeError(409, "retail_pos order is already paid.");
   }
 
-  if (order.status === "cancelled") {
-    throw new RetailPosRuntimeError(409, "Cancelled retail_pos orders cannot be paid.");
+  if (order.status === "cancelled" || order.status === "voided") {
+    throw new RetailPosRuntimeError(409, "Voided retail_pos orders cannot be paid.");
   }
 
   if (order.status !== "pending_payment") {

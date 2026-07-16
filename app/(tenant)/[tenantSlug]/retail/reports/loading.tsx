@@ -1,6 +1,5 @@
 import {
   RetailAuditSkeleton,
-  RetailInlineStatsSkeleton,
   RetailMetricGridSkeleton,
   RetailReportLoadingState,
   RetailReportsFiltersSkeleton,
@@ -11,40 +10,54 @@ import {
 export default function RetailReportsOverviewLoading() {
   return (
     <RetailReportLoadingState
-      title="Resumen retail del dia"
-      description="Vista ejecutiva minima para cierre operativo: ventas, pedidos, metodos de pago y lectura de auditoria sin bloquear por falta de evidencia de impresion."
+      title="Resumen retail"
+      description="Vista ejecutiva y operativa para venta cobrada, resultado comercial, descuentos concedidos, asuntos de atención y tendencia del periodo."
     >
       <RetailReportsFiltersSkeleton />
       <RetailMetricGridSkeleton />
 
       <RetailSectionCardSkeleton
-        title="Estado de pedidos"
-        description="Conteo operativo para confirmar cuanto se cobro, cuanto se cancelo y si hay pendientes por revisar."
+        title="Desglose del resultado comercial"
+        description="Ajustes incluidos en el resultado y movimientos financieros pendientes."
       >
-        <RetailInlineStatsSkeleton count={3} />
+        <RetailTableSkeleton columns={2} rows={3} />
       </RetailSectionCardSkeleton>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.9fr)]">
         <RetailSectionCardSkeleton
-          title="Ventas por metodo"
-          description="Lectura minima para distinguir efectivo contra tarjeta."
+          title="Construcción del resultado comercial"
+          description="Waterfall operativo con venta bruta, descuentos, venta cobrada y postventa."
         >
-          <RetailTableSkeleton columns={3} rows={2} />
+          <div className="h-[320px] rounded-[var(--radius-base)] bg-surface-2/80" />
         </RetailSectionCardSkeleton>
 
         <RetailSectionCardSkeleton
-          title="Auditoria"
-          description="Si no hay `ticket_events`, el reporte mantiene metrica en cero y agrega contexto."
+          title="Mezcla de cobro"
+          description="Distribución de cobros en efectivo y con tarjeta."
         >
-          <RetailAuditSkeleton />
+          <div className="h-[240px] rounded-[var(--radius-base)] bg-surface-2/80" />
         </RetailSectionCardSkeleton>
       </div>
 
       <RetailSectionCardSkeleton
-        title="Pedidos recientes"
-        description="Muestra pedidos pagados, pendientes y cancelados con terminal de origen, terminal de cobro y marcas de tiempo."
+        title="Tendencia de venta cobrada y resultado comercial"
+        description="Serie temporal agregada según el rango seleccionado."
       >
-        <RetailTableSkeleton columns={9} rows={6} titleLines={2} />
+        <div className="h-[320px] rounded-[var(--radius-base)] bg-surface-2/80" />
+      </RetailSectionCardSkeleton>
+
+      <RetailSectionCardSkeleton
+        title="Pedidos recientes"
+        description="Folio, estado, fecha relevante, total, método de cobro y señales rápidas del pedido."
+      >
+        <RetailTableSkeleton columns={8} rows={6} titleLines={2} />
+      </RetailSectionCardSkeleton>
+
+      <RetailSectionCardSkeleton
+        title="Auditoría de impresión"
+        description="Sección secundaria para impresiones, reimpresiones y fallos registrados."
+      >
+        <RetailAuditSkeleton />
       </RetailSectionCardSkeleton>
     </RetailReportLoadingState>
   );

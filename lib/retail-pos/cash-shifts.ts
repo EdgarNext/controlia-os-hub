@@ -563,7 +563,7 @@ export async function getRetailPosDaySummary(input: {
   }
 
   const orders = (ordersResult.data ?? []) as Array<{
-    status: "pending_payment" | "paid" | "cancelled";
+    status: "pending_payment" | "paid" | "voided" | "cancelled";
     total_cents: number;
     discount_cents: number;
   }>;
@@ -571,7 +571,9 @@ export async function getRetailPosDaySummary(input: {
 
   const pendingPaymentOrdersCount = orders.filter((order) => order.status === "pending_payment").length;
   const paidOrders = orders.filter((order) => order.status === "paid");
-  const cancelledOrdersCount = orders.filter((order) => order.status === "cancelled").length;
+  const cancelledOrdersCount = orders.filter(
+    (order) => order.status === "cancelled" || order.status === "voided",
+  ).length;
   const grossSalesCents = paidOrders.reduce((sum, order) => sum + order.total_cents + order.discount_cents, 0);
   const discountsCents = paidOrders.reduce((sum, order) => sum + order.discount_cents, 0);
   const netSalesCents = paidOrders.reduce((sum, order) => sum + order.total_cents, 0);

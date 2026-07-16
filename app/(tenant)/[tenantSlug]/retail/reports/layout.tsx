@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { isTenantAccessDeniedError } from "@/app/(tenant)/lib/access-errors";
 import { StatePanel } from "@/components/ui/state-panel";
 import { resolveRetailPosTypePageContext } from "@/lib/auth/tenant-pos-access";
+import { RetailReportGlossaryButton } from "./_components/RetailReportGlossaryButton";
 import { RetailReportsSubnav } from "./_components/RetailReportsSubnav";
 
 type RetailReportsLayoutProps = {
@@ -30,7 +31,10 @@ export default async function RetailReportsLayout({ children, params }: RetailRe
 
   return (
     <div className="space-y-4">
-      <RetailReportsSubnav tenantSlug={tenantSlug} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <RetailReportsSubnav tenantSlug={tenantSlug} />
+        <RetailReportGlossaryButton />
+      </div>
       {children}
     </div>
   );

@@ -10,14 +10,14 @@ export default function RetailReportsProductsLoading() {
   return (
     <RetailReportLoadingState
       title="Productos vendidos"
-      description="Concentrado de productos y variantes vendidas solo en pedidos pagados, con cantidad, total y precio promedio."
+      description="Concentrado de productos y variantes cobradas en ventas pagadas, con cantidad, venta cobrada y precio promedio."
     >
       <RetailReportsFiltersSkeleton />
       <RetailMetricGridSkeleton count={3} columnsClassName="xl:grid-cols-3" />
 
       <RetailSectionCardSkeleton
         title="Ranking de productos"
-        description="Solo se consideran ordenes pagadas. Cancelados y pendientes quedan fuera del agregado."
+        description="Solo se consideran ventas cobradas. Los pedidos pendientes o anulados antes del pago quedan fuera del agregado."
       >
         <RetailTableSkeleton columns={7} rows={8} titleLines={2} />
       </RetailSectionCardSkeleton>
