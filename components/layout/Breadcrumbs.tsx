@@ -39,7 +39,11 @@ export function Breadcrumbs() {
               {isLast ? (
                 <span className="truncate text-foreground">{crumb.label}</span>
               ) : (
-                <Link href={crumb.href} className="truncate transition-colors duration-200 hover:text-foreground">
+                <Link
+                  href={crumb.href}
+                  prefetch={false}
+                  className="truncate transition-colors duration-200 hover:text-foreground"
+                >
                   {crumb.label}
                 </Link>
               )}

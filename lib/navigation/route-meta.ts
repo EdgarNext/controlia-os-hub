@@ -37,6 +37,7 @@ export function getSegmentLabel(segment: string) {
   if (segment === "kitchen") return "Cocina";
   if (segment === "inventory") return "Inventario";
   if (segment === "setup") return "Configuración";
+  if (segment === "price-updates") return "Actualizar precios";
   if (segment === "purchase-options") return "Opciones compra";
   if (segment === "supplier-prices") return "Precios proveedor";
   if (segment === "recipes") return "Recetas";

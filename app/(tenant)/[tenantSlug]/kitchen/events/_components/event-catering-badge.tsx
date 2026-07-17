@@ -9,9 +9,9 @@ type EventCateringBadgeTone =
 const toneClasses: Record<EventCateringBadgeTone, string> = {
   default: "text-foreground",
   muted: "text-muted",
-  warning: "text-amber-700",
-  success: "text-emerald-700",
-  info: "text-sky-700",
+  warning: "text-warning",
+  success: "text-success",
+  info: "text-primary",
   danger: "text-danger",
 };
 
@@ -28,4 +28,3 @@ export function EventCateringBadge({
     </span>
   );
 }
-

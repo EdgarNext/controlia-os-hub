@@ -78,6 +78,10 @@ export function SearchableSelect({
   const selectedOption = uniqueOptions.find((option) => option.value === selectedValue) ?? null;
 
   useEffect(() => {
+    setSelectedValue(defaultValue);
+  }, [defaultValue]);
+
+  useEffect(() => {
     function handlePointer(event: MouseEvent) {
       if (!rootRef.current?.contains(event.target as Node)) {
         setIsOpen(false);

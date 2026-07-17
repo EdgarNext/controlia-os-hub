@@ -1,7 +1,8 @@
 "use client";
 
+import { ActionFeedbackForm } from "@/app/(tenant)/[tenantSlug]/kitchen/events/_components/action-feedback-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { addReadyRecipeToCateringPlanAction } from "@/lib/kitchen/event-catering/actions";
+import { addReadyRecipeToCateringPlanWithFeedbackAction } from "@/lib/kitchen/event-catering/actions";
 import { KitchenSubmitButton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-submit-button";
 
 type ReadyRecipeOption = {
@@ -22,7 +23,10 @@ export function AddReadyRecipeToPlanForm({
   recipes: ReadyRecipeOption[];
 }) {
   return (
-    <form action={addReadyRecipeToCateringPlanAction} className="space-y-2 rounded-[var(--radius-base)] border border-border bg-surface p-4">
+    <ActionFeedbackForm
+      action={addReadyRecipeToCateringPlanWithFeedbackAction}
+      className="space-y-2 rounded-[var(--radius-base)] border border-border bg-surface p-4"
+    >
       <input type="hidden" name="tenantSlug" value={tenantSlug} />
       <input type="hidden" name="planId" value={planId} />
       <p className="text-sm font-semibold text-foreground">Agregar receta ready</p>
@@ -33,15 +37,15 @@ export function AddReadyRecipeToPlanForm({
         required
         options={recipes.map((recipe) => ({
           value: recipe.recipe_id,
-          label: `${recipe.recipe_name} · costo base $${Number(recipe.snapshot_total_cost).toLocaleString("es-MX", {
+          label: `${recipe.recipe_name} · versión activa · $${Number(recipe.snapshot_total_cost).toLocaleString("es-MX", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
-          })}`,
+          })} base`,
         }))}
       />
       <div className="space-y-1">
         <label htmlFor="plannedServings" className="text-sm font-medium text-muted">
-          Base de cálculo para esta receta
+          Porciones para esta receta
         </label>
         <input
           id="plannedServings"
@@ -55,10 +59,10 @@ export function AddReadyRecipeToPlanForm({
           required
         />
         <p className="text-xs text-muted">
-          Usamos los invitados/base del plan como sugerencia. Puedes ajustar si esta receta aplica solo a parte del evento.
+          Usamos las personas del servicio como sugerencia. Puedes ajustar si esta receta aplica solo a una parte del servicio.
         </p>
       </div>
-      <KitchenSubmitButton pendingLabel="Guardando...">Agregar receta</KitchenSubmitButton>
-    </form>
+      <KitchenSubmitButton pendingLabel="Agregando receta...">Agregar receta</KitchenSubmitButton>
+    </ActionFeedbackForm>
   );
 }

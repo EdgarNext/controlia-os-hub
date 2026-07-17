@@ -63,6 +63,7 @@ export function SidebarItem({ item, collapsed, accentToken, onNavigate }: Sideba
     <div className="space-y-1">
       <Link
         href={item.href}
+        prefetch={false}
         title={collapsed ? item.label : undefined}
         onClick={onNavigate}
         aria-current={isActive ? "page" : undefined}
@@ -96,6 +97,7 @@ export function SidebarItem({ item, collapsed, accentToken, onNavigate }: Sideba
               <Link
                 key={child.href}
                 href={child.href}
+                prefetch={false}
                 onClick={onNavigate}
                 aria-current={childActive ? "page" : undefined}
                 className={cn(

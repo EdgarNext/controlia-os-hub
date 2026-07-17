@@ -4,7 +4,11 @@ import { revalidatePath } from "next/cache";
 import { resolveTenantModulePageActor } from "@/lib/auth/module-page-access";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { listKitchenRecipeReadiness } from "@/lib/kitchen/recipes/readiness";
+import { createInitialEventCostingSnapshot, createUpdatedEventCostingSnapshot } from "./costing";
+import { getChefEventDetail } from "./chef-costing";
+import type { KitchenMutationActionState } from "./mutation-action-state";
 import { toPositiveCateringNumber } from "./normalizers";
+import type { UpdateEventCostingActionState } from "./update-costing-action-state";
 import { calculateCateringRequirements } from "./requirements";
 import {
   classifyRequisitionLineProcurement,
@@ -55,6 +59,24 @@ function resolveEmbeddedEventId(value: unknown): string | undefined {
     return (value as { event_id?: string }).event_id;
   }
   return undefined;
+}
+
+async function buildKitchenMutationState(
+  action: () => Promise<void>,
+  successMessage: string,
+): Promise<KitchenMutationActionState> {
+  try {
+    await action();
+    return {
+      error: null,
+      success: successMessage,
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Ocurrió un error inesperado.",
+      success: null,
+    };
+  }
 }
 
 async function autoAssignConsumptionLocationsForRecord(
@@ -783,6 +805,16 @@ export async function createCateringPlanAction(formData: FormData): Promise<void
   revalidateCateringPaths(tenant.tenantSlug, eventId, plan.id);
 }
 
+export async function createCateringPlanWithFeedbackAction(
+  _previousState: KitchenMutationActionState,
+  formData: FormData,
+): Promise<KitchenMutationActionState> {
+  return buildKitchenMutationState(
+    () => createCateringPlanAction(formData),
+    "Servicio agregado al evento.",
+  );
+}
+
 export async function updateCateringPlanAction(formData: FormData): Promise<void> {
   const tenantSlug = toText(formData.get("tenantSlug")).toLowerCase();
   const planId = toText(formData.get("planId"));
@@ -820,6 +852,19 @@ export async function updateCateringPlanAction(formData: FormData): Promise<void
   }
 
   revalidateCateringPaths(tenant.tenantSlug, updated.event_id, updated.id);
+}
+
+export async function updateCateringPlanWithFeedbackAction(
+  _previousState: KitchenMutationActionState,
+  formData: FormData,
+): Promise<KitchenMutationActionState> {
+  const status = toText(formData.get("status"));
+  return buildKitchenMutationState(
+    () => updateCateringPlanAction(formData),
+    status === "canceled"
+      ? "Servicio retirado del evento. Los costos históricos permanecen disponibles."
+      : "Servicio actualizado correctamente.",
+  );
 }
 
 export async function addReadyRecipeToCateringPlanAction(formData: FormData): Promise<void> {
@@ -913,6 +958,16 @@ export async function addReadyRecipeToCateringPlanAction(formData: FormData): Pr
   revalidateCateringPaths(tenant.tenantSlug, plan.event_id, plan.id);
 }
 
+export async function addReadyRecipeToCateringPlanWithFeedbackAction(
+  _previousState: KitchenMutationActionState,
+  formData: FormData,
+): Promise<KitchenMutationActionState> {
+  return buildKitchenMutationState(
+    () => addReadyRecipeToCateringPlanAction(formData),
+    "Receta agregada al servicio.",
+  );
+}
+
 export async function removeRecipeFromCateringPlanAction(formData: FormData): Promise<void> {
   const tenantSlug = toText(formData.get("tenantSlug")).toLowerCase();
   const planId = toText(formData.get("planId"));
@@ -950,6 +1005,16 @@ export async function removeRecipeFromCateringPlanAction(formData: FormData): Pr
     .eq("id", planId);
 
   revalidateCateringPaths(tenant.tenantSlug, plan.event_id, plan.id);
+}
+
+export async function removeRecipeFromCateringPlanWithFeedbackAction(
+  _previousState: KitchenMutationActionState,
+  formData: FormData,
+): Promise<KitchenMutationActionState> {
+  return buildKitchenMutationState(
+    () => removeRecipeFromCateringPlanAction(formData),
+    "Receta retirada del servicio. La receta continúa disponible en el catálogo.",
+  );
 }
 
 export async function updatePlanRecipeServingsAction(formData: FormData): Promise<void> {
@@ -1029,6 +1094,16 @@ export async function updatePlanRecipeServingsAction(formData: FormData): Promis
     .eq("id", planId);
 
   revalidateCateringPaths(tenant.tenantSlug, plan.event_id, plan.id);
+}
+
+export async function updatePlanRecipeServingsWithFeedbackAction(
+  _previousState: KitchenMutationActionState,
+  formData: FormData,
+): Promise<KitchenMutationActionState> {
+  return buildKitchenMutationState(
+    () => updatePlanRecipeServingsAction(formData),
+    "Porciones de la receta actualizadas correctamente.",
+  );
 }
 
 
@@ -3262,4 +3337,127 @@ export async function cancelCateringRequisitionAction(formData: FormData): Promi
   revalidateCateringPaths(tenant.tenantSlug);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/requisitions`);
   revalidatePath(`/${tenant.tenantSlug}/kitchen/events/requisitions/${requisition.id}`);
+}
+
+export async function createInitialEventCostingSnapshotAction(formData: FormData) {
+  const tenantSlug = toText(formData.get("tenantSlug")).toLowerCase();
+  const eventId = toText(formData.get("eventId"));
+  if (!tenantSlug || !eventId) throw new Error("Tenant y evento son obligatorios.");
+
+  const { tenant, user } = await resolveTenantModulePageActor(tenantSlug, "event_catering", "plans", "manage");
+  const result = await createInitialEventCostingSnapshot(tenant.tenantId, user.id, eventId);
+  const supabase = await getSupabaseServerClient();
+  const { data: snapshot, error: snapshotError } = await supabase
+    .from("event_catering_costing_snapshots")
+    .select("id,snapshot_status,total_cost,created_at")
+    .eq("tenant_id", tenant.tenantId)
+    .eq("id", result.snapshotId)
+    .maybeSingle();
+  if (snapshotError || !snapshot) {
+    throw new Error("No se confirmó el nuevo costeo. Inténtalo nuevamente.");
+  }
+  if (snapshot.snapshot_status !== "completed") {
+    throw new Error("El costo se generó, pero no pudo marcarse como vigente.");
+  }
+
+  const detail = await getChefEventDetail(tenant.tenantSlug, eventId);
+  if (!detail || detail.latestInitialSnapshot?.id !== result.snapshotId) {
+    throw new Error("El costo se generó, pero no pudo marcarse como vigente.");
+  }
+
+  revalidatePath(`/${tenant.tenantSlug}/kitchen/events`);
+  revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${eventId}/catering`);
+  revalidatePath(`/${tenant.tenantSlug}/kitchen/reports`);
+
+  return {
+    ...result,
+    status: "completed" as const,
+    completedAt: String(snapshot.created_at),
+    totalCost: Number(snapshot.total_cost ?? result.totalCost),
+  };
+}
+
+export async function createInitialEventCostingSnapshotWithFeedbackAction(
+  _previousState: KitchenMutationActionState,
+  formData: FormData,
+): Promise<KitchenMutationActionState> {
+  return buildKitchenMutationState(
+    async () => {
+      await createInitialEventCostingSnapshotAction(formData);
+    },
+    "Costo inicial guardado. El evento ya tiene un costo inicial vigente.",
+  );
+}
+
+export async function createUpdatedEventCostingSnapshotAction(formData: FormData) {
+  const tenantSlug = toText(formData.get("tenantSlug")).toLowerCase();
+  const baseSnapshotId = toText(formData.get("baseSnapshotId"));
+  if (!tenantSlug || !baseSnapshotId) throw new Error("Tenant y snapshot initial son obligatorios.");
+
+  const { tenant, user } = await resolveTenantModulePageActor(tenantSlug, "event_catering", "plans", "manage");
+  const result = await createUpdatedEventCostingSnapshot(tenant.tenantId, user.id, baseSnapshotId);
+
+  revalidatePath(`/${tenant.tenantSlug}/kitchen/events`);
+  revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${result.eventId}/catering`);
+  revalidatePath(`/${tenant.tenantSlug}/kitchen/reports`);
+
+  return result;
+}
+
+export async function updateEventCostingWithCurrentPricesAction(
+  _previousState: UpdateEventCostingActionState,
+  formData: FormData,
+): Promise<UpdateEventCostingActionState> {
+  try {
+    const tenantSlug = toText(formData.get("tenantSlug")).toLowerCase();
+    const eventId = toText(formData.get("eventId"));
+    if (!tenantSlug || !eventId) {
+      throw new Error("Tenant y evento son obligatorios.");
+    }
+
+    const { tenant, user } = await resolveTenantModulePageActor(
+      tenantSlug,
+      "event_catering",
+      "plans",
+      "manage",
+    );
+    const detail = await getChefEventDetail(tenant.tenantSlug, eventId);
+    if (!detail) throw new Error("No se encontró el evento de catering.");
+    if (!detail.latestInitialSnapshot) {
+      throw new Error("Primero genera un costo inicial vigente.");
+    }
+    if (detail.configurationChanged) {
+      throw new Error(
+        "Cambiaste servicios, recetas o cantidades después del último costeo. Genera un nuevo costo inicial para continuar.",
+      );
+    }
+    if (detail.priceUpdateStatus === "price_resolution_warning") {
+      throw new Error("Algunos precios necesitan revisión antes de actualizar el costo.");
+    }
+    if (
+      detail.priceUpdateStatus === "no_price_changes" ||
+      detail.priceUpdateStatus === "updated_cost_current"
+    ) {
+      return {
+        error: null,
+        success: "El costo ya utiliza los precios vigentes.",
+      };
+    }
+
+    await createUpdatedEventCostingSnapshot(tenant.tenantId, user.id, detail.latestInitialSnapshot.id);
+
+    revalidatePath(`/${tenant.tenantSlug}/kitchen/events`);
+    revalidatePath(`/${tenant.tenantSlug}/kitchen/events/${eventId}/catering`);
+    revalidatePath(`/${tenant.tenantSlug}/kitchen/reports`);
+
+    return {
+      error: null,
+      success: "Costo actualizado correctamente con los precios vigentes.",
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "No se pudo actualizar el costo.",
+      success: null,
+    };
+  }
 }

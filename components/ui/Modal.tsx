@@ -2,6 +2,7 @@
 
 import { X } from "lucide-react";
 import { type ReactNode, useEffect, useId } from "react";
+import { createPortal } from "react-dom";
 
 type ModalProps = {
   open: boolean;
@@ -12,6 +13,7 @@ type ModalProps = {
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
   const titleId = useId();
+  const portalTarget = typeof document !== "undefined" ? document.body : null;
 
   useEffect(() => {
     if (!open) {
@@ -43,13 +45,13 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     };
   }, [open]);
 
-  if (!open) {
+  if (!open || !portalTarget) {
     return null;
   }
 
-  return (
+  return createPortal(
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${open ? "pointer-events-auto" : "pointer-events-none"}`}
+      className={`fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center ${open ? "pointer-events-auto" : "pointer-events-none"}`}
       aria-hidden={!open}
     >
       <div
@@ -61,7 +63,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`relative z-10 w-full max-w-lg rounded-[var(--radius-base)] border border-border bg-surface p-5 text-foreground shadow-[var(--shadow-soft)] ${open ? "modal-panel-in" : "modal-panel-out"}`}
+        className={`relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius-base)] border border-border bg-surface p-5 text-foreground shadow-[var(--shadow-soft)] ${open ? "modal-panel-in" : "modal-panel-out"}`}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
@@ -79,8 +81,11 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
           </button>
         </div>
 
-        {children}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {children}
+        </div>
       </div>
-    </div>
+    </div>,
+    portalTarget,
   );
 }
