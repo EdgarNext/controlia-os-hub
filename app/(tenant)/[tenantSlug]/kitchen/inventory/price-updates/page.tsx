@@ -43,6 +43,7 @@ export default async function KitchenInventoryPriceUpdatesPage({
     <PriceUpdatesClient
       tenantSlug={result.tenant.tenantSlug}
       suppliers={viewData.suppliers}
+      units={viewData.units}
       items={viewData.items}
       suggestedItemIds={viewData.suggestedItemIds}
       upcomingEventsWithoutInitialSnapshot={viewData.upcomingEventsWithoutInitialSnapshot}

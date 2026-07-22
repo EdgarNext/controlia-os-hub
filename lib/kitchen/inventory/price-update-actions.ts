@@ -3,16 +3,12 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { resolveTenantModulePageActor } from "@/lib/auth/module-page-access";
+import {
+  parseNumericInput,
+  type PriceUpdateDraftLine,
+} from "@/lib/kitchen/inventory/price-update-drafts";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { KitchenInventoryActionState } from "./actions";
-
-type PriceUpdateDraftLine = {
-  itemId: string;
-  purchaseOptionId: string;
-  newPrice: string | number;
-  usedForCosting?: boolean;
-  notes?: string;
-};
 
 function toTrimmedString(input: FormDataEntryValue | null): string {
   return String(input ?? "").trim();
@@ -53,17 +49,53 @@ export async function applyKitchenInventoryPriceUpdateBatchAction(
 
     const parsedLines = JSON.parse(linesRaw) as PriceUpdateDraftLine[];
     const normalizedLines = parsedLines
-      .map((line) => ({
-        itemId: String(line.itemId ?? "").trim(),
-        purchaseOptionId: String(line.purchaseOptionId ?? "").trim(),
-        newPrice: Number(String(line.newPrice ?? "").trim()),
-        usedForCosting: line.usedForCosting !== false,
-        notes: String(line.notes ?? "").trim(),
-      }))
-      .filter((line) => line.itemId && line.purchaseOptionId && Number.isFinite(line.newPrice) && line.newPrice >= 0);
+      .map((line) => {
+        const itemId = String(line.itemId ?? "").trim();
+        const notes = String(line.notes ?? "").trim();
+        const usedForCosting = line.usedForCosting !== false;
+        const newPrice = parseNumericInput(line.newPrice);
+
+        if (line.mode === "new_purchase_option") {
+          return {
+            mode: "new_purchase_option" as const,
+            itemId,
+            newPurchaseOption: {
+              purchaseUnitId: String(line.newPurchaseOption?.purchaseUnitId ?? "").trim(),
+              quantityPerPurchaseUnit: parseNumericInput(line.newPurchaseOption?.quantityPerPurchaseUnit),
+              inventoryUnitId: String(line.newPurchaseOption?.inventoryUnitId ?? "").trim(),
+            },
+            newPrice,
+            usedForCosting,
+            notes,
+          };
+        }
+
+        return {
+          mode: "existing_purchase_option" as const,
+          itemId,
+          purchaseOptionId: String(line.purchaseOptionId ?? "").trim(),
+          newPrice,
+          usedForCosting,
+          notes,
+        };
+      })
+      .filter((line) => {
+        if (!line.itemId) return false;
+        if (line.mode === "new_purchase_option") {
+          return (
+            Boolean(line.newPurchaseOption.purchaseUnitId) &&
+            Boolean(line.newPurchaseOption.inventoryUnitId) &&
+            Number.isFinite(line.newPurchaseOption.quantityPerPurchaseUnit) &&
+            (line.newPurchaseOption.quantityPerPurchaseUnit ?? 0) > 0 &&
+            Number.isFinite(line.newPrice) &&
+            (line.newPrice ?? 0) > 0
+          );
+        }
+        return Boolean(line.purchaseOptionId) && (line.newPrice == null || (Number.isFinite(line.newPrice) && line.newPrice >= 0));
+      });
 
     if (normalizedLines.length === 0) {
-      return { ok: false, message: "Solo se aplican líneas con insumo, presentación y precio válidos." };
+      return { ok: false, message: "Solo se aplican líneas con insumo y datos válidos para la factura." };
     }
 
     const costingCountByItem = new Map<string, number>();
@@ -80,7 +112,7 @@ export async function applyKitchenInventoryPriceUpdateBatchAction(
 
     const { tenant, user } = await resolveTenantModulePageActor(tenantSlug, "kitchen_inventory", "items", "manage");
     const supabase = await getSupabaseServerClient();
-    const { data, error } = await supabase.rpc("apply_kitchen_inventory_price_update_batch", {
+    const { data, error } = await supabase.rpc("apply_kitchen_inventory_price_update_batch_v2", {
       p_tenant_id: tenant.tenantId,
       p_supplier_id: supplierId,
       p_invoice_ref: invoiceRef,
@@ -99,10 +131,24 @@ export async function applyKitchenInventoryPriceUpdateBatchAction(
       revalidatePath(path);
     }
 
-    const lineCount = Number((data as { line_count?: number } | null)?.line_count ?? normalizedLines.length);
+    const response = (data as {
+      line_count?: number;
+      created_purchase_option_count?: number;
+      updated_price_count?: number;
+    } | null) ?? {
+      line_count: normalizedLines.length,
+      created_purchase_option_count: 0,
+      updated_price_count: normalizedLines.length,
+    };
+    const lineCount = Number(response.line_count ?? normalizedLines.length);
+    const createdPurchaseOptionCount = Number(response.created_purchase_option_count ?? 0);
+    const updatedPriceCount = Number(response.updated_price_count ?? lineCount);
     return {
       ok: true,
-      message: `Factura aplicada. ${lineCount.toLocaleString("es-MX")} línea(s) actualizadas sin tocar inventario físico.`,
+      message:
+        createdPurchaseOptionCount > 0
+          ? `Factura aplicada. Se creó ${createdPurchaseOptionCount.toLocaleString("es-MX")} nueva(s) presentación(es) y se actualizaron ${updatedPriceCount.toLocaleString("es-MX")} precio(s).`
+          : `Factura aplicada. ${lineCount.toLocaleString("es-MX")} línea(s) actualizadas sin tocar inventario físico.`,
     };
   } catch (error) {
     return {

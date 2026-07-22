@@ -23,32 +23,52 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { StatePanel } from "@/components/ui/state-panel";
 import { initialKitchenInventoryActionState } from "@/lib/kitchen/inventory/action-state";
 import { applyKitchenInventoryPriceUpdateBatchAction } from "@/lib/kitchen/inventory/price-update-actions";
+import {
+  roundTo,
+  type ExistingPurchaseOptionDraftLine,
+  type NewPurchaseOptionDraftLine,
+} from "@/lib/kitchen/inventory/price-update-drafts";
 import type {
   KitchenInventoryPriceUpdateItem,
   KitchenInventoryPriceUpdateRecentBatch,
 } from "@/lib/kitchen/inventory/price-updates";
-import type { KitchenInventorySupplier } from "@/lib/kitchen/inventory/types";
+import type { KitchenInventorySupplier, KitchenInventoryUnit } from "@/lib/kitchen/inventory/types";
 
-type DraftLine = {
+type ExistingDraftLine = ExistingPurchaseOptionDraftLine & {
   id: string;
-  itemId: string;
-  purchaseOptionId: string;
-  newPrice: string;
-  usedForCosting: boolean;
   notes: string;
+  newPrice: string;
 };
 
+type NewDraftLine = NewPurchaseOptionDraftLine & {
+  id: string;
+  notes: string;
+  newPrice: string;
+  newPurchaseOption: {
+    purchaseUnitId: string;
+    quantityPerPurchaseUnit: string;
+    inventoryUnitId: string;
+  };
+};
+
+type DraftLine = ExistingDraftLine | NewDraftLine;
+
 type ManualDraft = {
+  mode: "existing_purchase_option" | "new_purchase_option";
+  scope: "available" | "all";
   itemId: string;
   purchaseOptionId: string;
+  purchaseUnitId: string;
+  quantityPerPurchaseUnit: string;
   newPrice: string;
   notes: string;
-  scope: "available" | "all";
+  usedForCosting: boolean;
 };
 
 type PriceUpdatesClientProps = {
   tenantSlug: string;
   suppliers: KitchenInventorySupplier[];
+  units: KitchenInventoryUnit[];
   items: KitchenInventoryPriceUpdateItem[];
   suggestedItemIds: string[];
   upcomingEventsWithoutInitialSnapshot: Array<{
@@ -60,9 +80,10 @@ type PriceUpdatesClientProps = {
   recentBatches: KitchenInventoryPriceUpdateRecentBatch[];
 };
 
-function createDraftLine(seed?: Partial<DraftLine>): DraftLine {
+function createExistingLine(seed?: Partial<ExistingDraftLine>): ExistingDraftLine {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    mode: "existing_purchase_option",
     itemId: seed?.itemId ?? "",
     purchaseOptionId: seed?.purchaseOptionId ?? "",
     newPrice: seed?.newPrice ?? "",
@@ -71,13 +92,33 @@ function createDraftLine(seed?: Partial<DraftLine>): DraftLine {
   };
 }
 
+function createNewLine(seed?: Partial<NewDraftLine>): NewDraftLine {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    mode: "new_purchase_option",
+    itemId: seed?.itemId ?? "",
+    newPurchaseOption: {
+      purchaseUnitId: seed?.newPurchaseOption?.purchaseUnitId ?? "",
+      quantityPerPurchaseUnit: seed?.newPurchaseOption?.quantityPerPurchaseUnit ?? "",
+      inventoryUnitId: seed?.newPurchaseOption?.inventoryUnitId ?? "",
+    },
+    newPrice: seed?.newPrice ?? "",
+    usedForCosting: seed?.usedForCosting ?? true,
+    notes: seed?.notes ?? "",
+  };
+}
+
 function createManualDraft(): ManualDraft {
   return {
+    mode: "existing_purchase_option",
+    scope: "available",
     itemId: "",
     purchaseOptionId: "",
+    purchaseUnitId: "",
+    quantityPerPurchaseUnit: "",
     newPrice: "",
     notes: "",
-    scope: "available",
+    usedForCosting: true,
   };
 }
 
@@ -135,9 +176,30 @@ function resolveLineOptionLabel(
   })} ${option.inventoryUnitCode ?? fallbackUnitCode ?? "ud"}`;
 }
 
+function parseDraftNumber(value: string): number | null {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function visibleCountForScope(items: KitchenInventoryPriceUpdateItem[], supplierId: string): number {
+  return items.filter((item) => item.options.some((option) => option.supplierId === supplierId)).length;
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[var(--radius-base)] border border-border bg-surface p-3">
+      <p className="text-xs text-muted">{label}</p>
+      <p className="mt-1 text-base font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
 export function PriceUpdatesClient({
   tenantSlug,
   suppliers,
+  units,
   items,
   suggestedItemIds,
   upcomingEventsWithoutInitialSnapshot,
@@ -160,17 +222,29 @@ export function PriceUpdatesClient({
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualDraft>(createManualDraft);
   const [flashInvoicePanel, setFlashInvoicePanel] = useState(false);
-  const [unavailableItemId, setUnavailableItemId] = useState<string | null>(null);
+  const [pendingSupplierId, setPendingSupplierId] = useState<string | null>(null);
   const previousMessage = useRef("");
   const invoicePanelRef = useRef<HTMLElement | null>(null);
 
   const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const supplierById = useMemo(() => new Map(suppliers.map((supplier) => [supplier.id, supplier])), [suppliers]);
+  const unitById = useMemo(() => new Map(units.map((unit) => [unit.id, unit])), [units]);
   const supplierOptions = useMemo(
     () => suppliers.map((supplier) => ({ value: supplier.id, label: supplier.name })),
     [suppliers],
   );
   const suggestedSet = useMemo(() => new Set(suggestedItemIds), [suggestedItemIds]);
+  const purchaseUnitOptions = useMemo(
+    () =>
+      units
+        .filter((unit) => unit.is_active)
+        .map((unit) => ({
+          value: unit.id,
+          label: unit.name,
+          keywords: [unit.code],
+        })),
+    [units],
+  );
 
   useEffect(() => {
     if (!flashInvoicePanel) return;
@@ -183,10 +257,7 @@ export function PriceUpdatesClient({
     previousMessage.current = state.message;
 
     if (state.ok) {
-      const supplierName = supplierById.get(supplierId)?.name ?? "Proveedor";
-      toast.success(
-        `Factura aplicada. Se actualizaron ${lines.length.toLocaleString("es-MX")} precio(s) del proveedor ${supplierName}.`,
-      );
+      toast.success(state.message);
       const timeoutId = window.setTimeout(() => {
         setLines([]);
         setInvoiceRef("");
@@ -196,20 +267,42 @@ export function PriceUpdatesClient({
         setFlashInvoicePanel(false);
       }, 0);
       return () => window.clearTimeout(timeoutId);
-    } else {
-      toast.error(
-        "No se pudo aplicar la factura. No se realizó ningún cambio. Revisa las líneas e inténtalo nuevamente.",
-      );
-      return;
     }
-  }, [lines.length, state.message, state.ok, supplierById, supplierId]);
+
+    toast.error("No se pudo aplicar la factura. No se creó ninguna presentación ni se actualizó ningún precio.");
+    return;
+  }, [state.message, state.ok]);
+
+  function getSupplierScopedOptions(itemId: string) {
+    const item = itemById.get(itemId);
+    if (!item) return [];
+    return item.options.filter((option) => option.supplierId === supplierId);
+  }
+
+  function focusInvoicePanel() {
+    invoicePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setFlashInvoicePanel(true);
+  }
+
+  function findEquivalentSupplierOption(itemId: string, purchaseUnitId: string, inventoryUnitId: string, quantity: number) {
+    const item = itemById.get(itemId);
+    if (!item) return null;
+    return (
+      item.options.find(
+        (option) =>
+          option.supplierId === supplierId &&
+          option.purchaseUnitId === purchaseUnitId &&
+          option.inventoryUnitId === inventoryUnitId &&
+          roundTo(option.quantityPerPurchaseUnit, 4) === roundTo(quantity, 4),
+      ) ?? null
+    );
+  }
 
   const visibleItems = (() => {
     const upcomingItems = suggestedItemIds
       .map((itemId) => itemById.get(itemId))
       .filter((item): item is KitchenInventoryPriceUpdateItem => Boolean(item));
     const source = scope === "all" ? items : upcomingItems;
-
     const normalizedQuery = query.trim().toLocaleLowerCase("es-MX");
     const filtered = !normalizedQuery
       ? source
@@ -218,119 +311,36 @@ export function PriceUpdatesClient({
           return haystack.includes(normalizedQuery);
         });
 
-    if (!supplierId) {
-      return filtered;
-    }
-
-    if (scope === "available") {
-      return filtered.filter((item) => getSupplierScopedOptions(item.id).length > 0);
-    }
-
+    if (!supplierId) return filtered;
+    if (scope === "available") return filtered.filter((item) => getSupplierScopedOptions(item.id).length > 0);
     return filtered;
   })();
 
-  function getSupplierScopedOptions(itemId: string) {
-    const item = itemById.get(itemId);
-    if (!item) return [];
-    return item.options.filter((option) => !supplierId || option.supplierId === supplierId);
-  }
-
-  function focusInvoicePanel() {
-    invoicePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    setFlashInvoicePanel(true);
-  }
-
-  function hasExactLine(itemId: string, purchaseOptionId: string) {
-    return lines.some((line) => line.itemId === itemId && line.purchaseOptionId === purchaseOptionId);
-  }
-
-  function addLine(seed?: Partial<DraftLine>) {
-    const nextLine = createDraftLine(seed);
-    setLines((current) => [...current, nextLine]);
-    setFlashInvoicePanel(true);
-  }
-
-  function handleAddSuggestedLine(
-    itemId: string,
-    purchaseOptionId: string,
-    itemName: string,
-  ) {
-    if (hasExactLine(itemId, purchaseOptionId)) {
-      focusInvoicePanel();
-      return;
-    }
-
-    addLine({
-      itemId,
-      purchaseOptionId,
-      usedForCosting: true,
-    });
-
-    if (lines.length === 0) {
-      toast.success(`Insumo agregado. ${itemName} se agregó a la factura.`);
-    }
-  }
-
-  function removeLine(lineId: string) {
-    setLines((current) => current.filter((line) => line.id !== lineId));
-  }
-
-  function updateLine(lineId: string, patch: Partial<DraftLine>) {
-    setLines((current) =>
-      current.map((line) => {
-        if (line.id !== lineId) return line;
-        const next = { ...line, ...patch };
-        if (patch.itemId != null && patch.itemId !== line.itemId) {
-          next.purchaseOptionId = "";
-          next.usedForCosting = true;
-        }
-        return next;
-      }),
-    );
-  }
-
-  function handleSupplierChange(nextSupplierId: string) {
-    if (nextSupplierId === supplierId) return;
-    if (supplierId && lines.length > 0) {
-      setLines([]);
-      toast.info("La factura se reinició para cambiar de proveedor.");
-    }
-    setSupplierId(nextSupplierId);
-    setScope("available");
-    setManualDraft(() => ({ ...createManualDraft(), scope: "available" }));
-  }
-
-  function handleAddManualLine() {
-    if (!manualDraft.itemId || !manualDraft.purchaseOptionId) return;
-    const item = itemById.get(manualDraft.itemId);
-    handleAddSuggestedLine(manualDraft.itemId, manualDraft.purchaseOptionId, item?.name ?? "Insumo");
-    setLines((current) =>
-      current.map((line, index) =>
-        index === current.length - 1
-          ? {
-              ...line,
-              newPrice: manualDraft.newPrice,
-              notes: manualDraft.notes,
-            }
-          : line,
-      ),
-    );
-    setManualDraft(createManualDraft());
-    setManualModalOpen(false);
-    focusInvoicePanel();
-  }
+  const selectedSupplierName = supplierById.get(supplierId)?.name ?? "Proveedor";
+  const stepOneComplete = Boolean(supplierId && invoiceRef.trim() && invoiceDate.trim());
+  const currentStep = !stepOneComplete ? 1 : lines.length === 0 ? 2 : 3;
 
   const encodedLines = useMemo(() => {
-    const payload = lines
-      .map((line) => ({
+    const payload = lines.map((line) => {
+      if (line.mode === "new_purchase_option") {
+        return {
+          mode: line.mode,
+          itemId: line.itemId,
+          newPurchaseOption: line.newPurchaseOption,
+          newPrice: line.newPrice,
+          usedForCosting: line.usedForCosting,
+          notes: line.notes,
+        };
+      }
+      return {
+        mode: line.mode,
         itemId: line.itemId,
         purchaseOptionId: line.purchaseOptionId,
         newPrice: line.newPrice,
         usedForCosting: line.usedForCosting,
         notes: line.notes,
-      }))
-      .filter((line) => line.itemId || line.purchaseOptionId || line.newPrice || line.notes);
-
+      };
+    });
     return JSON.stringify(payload);
   }, [lines]);
 
@@ -349,17 +359,55 @@ export function PriceUpdatesClient({
 
     for (const line of lines) {
       const item = itemById.get(line.itemId) ?? null;
-      const options = line.itemId ? getSupplierScopedOptions(line.itemId) : [];
-      const selectedOption = options.find((option) => option.id === line.purchaseOptionId) ?? null;
-      const newPrice = Number(line.newPrice);
-      const hasValidPrice = line.newPrice.trim().length > 0 && Number.isFinite(newPrice) && newPrice >= 0;
       const issuesForLine: string[] = [];
+      const itemCostingCount = line.itemId ? costingCountByItem.get(line.itemId) ?? 0 : 0;
 
       if (!line.itemId) issuesForLine.push("Selecciona un insumo.");
-      if (line.itemId && !line.purchaseOptionId) issuesForLine.push(`Selecciona la presentación para ${item?.name ?? "el insumo"}.`);
-      if (line.itemId && line.purchaseOptionId && !hasValidPrice) issuesForLine.push(`Completa el nuevo precio de ${item?.name ?? "la línea"}.`);
-      if (line.itemId && (costingCountByItem.get(line.itemId) ?? 0) !== 1) {
-        issuesForLine.push(`Selecciona la presentación principal para ${item?.name ?? "el insumo"}.`);
+      if (line.mode === "existing_purchase_option") {
+        const options = line.itemId ? getSupplierScopedOptions(line.itemId) : [];
+        const selectedOption = options.find((option) => option.id === line.purchaseOptionId) ?? null;
+        const newPrice = parseDraftNumber(line.newPrice);
+        const hasValidPrice = line.newPrice.trim().length > 0 && newPrice != null && newPrice >= 0;
+
+        if (line.itemId && !line.purchaseOptionId) issuesForLine.push(`Selecciona la presentación para ${item?.name ?? "el insumo"}.`);
+        if (line.itemId && line.purchaseOptionId && !hasValidPrice) issuesForLine.push(`Completa el nuevo precio de ${item?.name ?? "la línea"}.`);
+        if (line.itemId && itemCostingCount !== 1) issuesForLine.push(`Selecciona la presentación principal para ${item?.name ?? "el insumo"}.`);
+        if (!hasValidPrice) linesMissingPrice += 1;
+
+        if (item && selectedOption && newPrice != null && newPrice >= 0 && selectedOption.quantityPerPurchaseUnit > 0) {
+          const nextUnitCost = newPrice / selectedOption.quantityPerPurchaseUnit;
+          impactTotal += item.upcomingImpactLines.reduce(
+            (sum, impactLine) => sum + impactLine.requiredQuantity * (nextUnitCost - impactLine.snapshotUnitCost),
+            0,
+          );
+        }
+      } else {
+        const quantity = parseDraftNumber(line.newPurchaseOption.quantityPerPurchaseUnit);
+        const price = parseDraftNumber(line.newPrice);
+        const hasValidPrice = price != null && price > 0;
+        const duplicate = quantity
+          ? findEquivalentSupplierOption(
+              line.itemId,
+              line.newPurchaseOption.purchaseUnitId,
+              line.newPurchaseOption.inventoryUnitId,
+              quantity,
+            )
+          : null;
+
+        if (!line.newPurchaseOption.purchaseUnitId) issuesForLine.push("Selecciona el tipo de presentación.");
+        if (quantity == null || quantity <= 0) issuesForLine.push("Captura un contenido mayor a cero.");
+        if (price == null || price <= 0) issuesForLine.push("Captura el precio de esta presentación tal como aparece en la factura.");
+        if (duplicate) issuesForLine.push("Ya existe una presentación con esta equivalencia.");
+        if (line.itemId && itemCostingCount !== 1) issuesForLine.push(`Selecciona la presentación principal para ${item?.name ?? "el insumo"}.`);
+        if (!hasValidPrice) linesMissingPrice += 1;
+
+        if (item && quantity != null && quantity > 0 && price != null && price > 0) {
+          const nextUnitCost = price / quantity;
+          impactTotal += item.upcomingImpactLines.reduce(
+            (sum, impactLine) => sum + impactLine.requiredQuantity * (nextUnitCost - impactLine.snapshotUnitCost),
+            0,
+          );
+        }
       }
 
       if (issuesForLine.length === 0) {
@@ -368,26 +416,10 @@ export function PriceUpdatesClient({
         linesNeedingReview += 1;
         issues.push(...issuesForLine);
       }
-
-      if (!hasValidPrice) {
-        linesMissingPrice += 1;
-      }
-
-      if (item && selectedOption && hasValidPrice && selectedOption.quantityPerPurchaseUnit > 0) {
-        const nextUnitCost = newPrice / selectedOption.quantityPerPurchaseUnit;
-        impactTotal += item.upcomingImpactLines.reduce(
-          (sum, impactLine) => sum + impactLine.requiredQuantity * (nextUnitCost - impactLine.snapshotUnitCost),
-          0,
-        );
-      }
     }
 
-    if (lines.length === 0) {
-      issues.unshift("Agrega al menos un insumo.");
-    }
-    if (linesMissingPrice > 0) {
-      issues.unshift(`Completa el nuevo precio de ${linesMissingPrice.toLocaleString("es-MX")} línea(s).`);
-    }
+    if (lines.length === 0) issues.unshift("Agrega al menos un insumo.");
+    if (linesMissingPrice > 0) issues.unshift(`Completa el nuevo precio de ${linesMissingPrice.toLocaleString("es-MX")} línea(s).`);
 
     return {
       readyLines,
@@ -398,10 +430,6 @@ export function PriceUpdatesClient({
     };
   })();
 
-  const selectedSupplierName = supplierById.get(supplierId)?.name ?? "Proveedor";
-  const stepOneComplete = Boolean(supplierId && invoiceRef.trim() && invoiceDate.trim());
-  const currentStep =
-    !stepOneComplete ? 1 : lines.length === 0 ? 2 : 3;
   const applyBlockingReason = !supplierId
     ? "Selecciona un proveedor."
     : !invoiceRef.trim()
@@ -414,20 +442,173 @@ export function PriceUpdatesClient({
   const canApplyInvoice = applyBlockingReason == null;
 
   const manualItem = itemById.get(manualDraft.itemId) ?? null;
-  const manualAllOptions = manualItem?.options ?? [];
-  const manualOptions =
-    manualDraft.itemId && manualDraft.scope === "available"
-      ? getSupplierScopedOptions(manualDraft.itemId)
-      : manualAllOptions;
-  const manualSelectedOption = manualOptions.find((option) => option.id === manualDraft.purchaseOptionId) ?? null;
-  const manualNewUnitCost =
-    manualSelectedOption &&
-    manualDraft.newPrice.trim().length > 0 &&
-    Number.isFinite(Number(manualDraft.newPrice)) &&
-    Number(manualDraft.newPrice) >= 0 &&
-    manualSelectedOption.quantityPerPurchaseUnit > 0
-      ? Number(manualDraft.newPrice) / manualSelectedOption.quantityPerPurchaseUnit
+  const manualAvailableOptions =
+    manualDraft.itemId && manualDraft.scope === "available" ? getSupplierScopedOptions(manualDraft.itemId) : manualItem?.options ?? [];
+  const manualSelectedOption =
+    manualDraft.mode === "existing_purchase_option"
+      ? manualAvailableOptions.find((option) => option.id === manualDraft.purchaseOptionId) ?? null
       : null;
+  const manualQuantity = parseDraftNumber(manualDraft.quantityPerPurchaseUnit);
+  const manualPrice = parseDraftNumber(manualDraft.newPrice);
+  const manualNewUnitCost =
+    manualDraft.mode === "new_purchase_option"
+      ? manualQuantity != null && manualQuantity > 0 && manualPrice != null && manualPrice > 0
+        ? roundTo(manualPrice / manualQuantity, 4)
+        : null
+      : manualSelectedOption &&
+          manualPrice != null &&
+          manualPrice >= 0 &&
+          manualSelectedOption.quantityPerPurchaseUnit > 0
+        ? roundTo(manualPrice / manualSelectedOption.quantityPerPurchaseUnit, 4)
+        : null;
+  const manualDuplicate =
+    manualDraft.mode === "new_purchase_option" &&
+    manualItem &&
+    manualQuantity != null &&
+    manualQuantity > 0 &&
+    manualDraft.purchaseUnitId
+      ? findEquivalentSupplierOption(manualItem.id, manualDraft.purchaseUnitId, manualItem.defaultUnitId, manualQuantity)
+      : null;
+
+  function resetManualDraft(next?: Partial<ManualDraft>) {
+    setManualDraft({ ...createManualDraft(), ...next });
+  }
+
+  function addLine(line: DraftLine) {
+    setLines((current) => [...current, line]);
+    setFlashInvoicePanel(true);
+  }
+
+  function updateLine(lineId: string, patch: Partial<DraftLine>) {
+    setLines((current) =>
+      current.map((line) => {
+        if (line.id !== lineId) return line;
+        if (line.mode === "new_purchase_option") {
+          const nextLine = {
+            ...line,
+            ...patch,
+          } as NewDraftLine;
+          if ("newPurchaseOption" in patch && patch.newPurchaseOption) {
+            nextLine.newPurchaseOption = {
+              ...line.newPurchaseOption,
+              ...patch.newPurchaseOption,
+            };
+          }
+          return nextLine;
+        }
+        return { ...line, ...patch } as ExistingDraftLine;
+      }),
+    );
+  }
+
+  function removeLine(lineId: string) {
+    setLines((current) => current.filter((line) => line.id !== lineId));
+  }
+
+  function openManualModalForItem(itemId?: string, mode?: ManualDraft["mode"]) {
+    const item = itemId ? itemById.get(itemId) ?? null : null;
+    resetManualDraft({
+      itemId: itemId ?? "",
+      mode: mode ?? "existing_purchase_option",
+      purchaseUnitId: "",
+      quantityPerPurchaseUnit: "",
+      purchaseOptionId: "",
+      scope: mode === "new_purchase_option" ? "all" : "available",
+      usedForCosting: true,
+      ...(item
+        ? {
+            purchaseUnitId: "",
+          }
+        : {}),
+    });
+    setManualModalOpen(true);
+  }
+
+  function handleAddSuggestedLine(itemId: string, purchaseOptionId: string, itemName: string) {
+    const exists = lines.some(
+      (line) => line.mode === "existing_purchase_option" && line.itemId === itemId && line.purchaseOptionId === purchaseOptionId,
+    );
+    if (exists) {
+      focusInvoicePanel();
+      return;
+    }
+
+    addLine(
+      createExistingLine({
+        itemId,
+        purchaseOptionId,
+      }),
+    );
+    toast.success(`Insumo agregado a la factura. ${itemName} ya está en captura.`);
+  }
+
+  function confirmSupplierChange(nextSupplierId: string) {
+    if (nextSupplierId === supplierId) return;
+    if (supplierId && lines.length > 0) {
+      setPendingSupplierId(nextSupplierId);
+      return;
+    }
+    setSupplierId(nextSupplierId);
+    setScope("available");
+    resetManualDraft({ scope: "available" });
+  }
+
+  function applyConfirmedSupplierChange() {
+    if (!pendingSupplierId) return;
+    setLines([]);
+    setSupplierId(pendingSupplierId);
+    setPendingSupplierId(null);
+    setScope("available");
+    resetManualDraft({ scope: "available" });
+    toast.info("La factura en captura se limpió para cambiar de proveedor.");
+  }
+
+  function handleAddManualLine() {
+    if (!manualItem) return;
+
+    if (manualDraft.mode === "existing_purchase_option") {
+      if (!manualDraft.purchaseOptionId) return;
+      addLine(
+        createExistingLine({
+          itemId: manualItem.id,
+          purchaseOptionId: manualDraft.purchaseOptionId,
+          newPrice: manualDraft.newPrice,
+          notes: manualDraft.notes,
+          usedForCosting: manualDraft.usedForCosting,
+        }),
+      );
+      toast.success("Insumo agregado a la factura");
+      setManualModalOpen(false);
+      resetManualDraft();
+      focusInvoicePanel();
+      return;
+    }
+
+    if (!manualDraft.purchaseUnitId || manualQuantity == null || manualQuantity <= 0) return;
+    if (manualPrice == null || manualPrice <= 0) return;
+    if (manualDuplicate) {
+      toast.error("Ya existe una presentación con esta equivalencia.");
+      return;
+    }
+
+    addLine(
+      createNewLine({
+        itemId: manualItem.id,
+        newPurchaseOption: {
+          purchaseUnitId: manualDraft.purchaseUnitId,
+          quantityPerPurchaseUnit: manualDraft.quantityPerPurchaseUnit,
+          inventoryUnitId: manualItem.defaultUnitId,
+        },
+        newPrice: manualDraft.newPrice,
+        notes: manualDraft.notes,
+        usedForCosting: manualDraft.usedForCosting,
+      }),
+    );
+    toast.success("Nueva presentación agregada a la factura");
+    setManualModalOpen(false);
+    resetManualDraft();
+    focusInvoicePanel();
+  }
 
   return (
     <div className="space-y-4">
@@ -441,7 +622,7 @@ export function PriceUpdatesClient({
               <div>
                 <h1 className="text-xl font-semibold text-foreground">Actualizar precios por factura</h1>
                 <p className="text-sm text-muted">
-                  Captura los precios recibidos del proveedor. Los nuevos costos se usarán en los próximos costeos.
+                  Captura precios y nuevas presentaciones sin tocar inventario físico hasta aplicar la factura.
                 </p>
               </div>
             </div>
@@ -469,16 +650,13 @@ export function PriceUpdatesClient({
               label: "Agregar insumos",
               summary:
                 stepOneComplete && lines.length === 0
-                  ? "Agrega los insumos incluidos en la factura."
+                  ? "Agrega insumos o nuevas presentaciones."
                   : "Selecciona productos y presentaciones.",
             },
             {
               step: 3,
               label: "Revisar y aplicar",
-              summary:
-                lines.length > 0
-                  ? "Revisa precios y aplica la factura."
-                  : "Aplica la factura cuando existan líneas listas.",
+              summary: lines.length > 0 ? "Revisa líneas y aplica la factura." : "Aplica cuando existan líneas listas.",
             },
           ].map((step) => {
             const stateForStep =
@@ -559,7 +737,7 @@ export function PriceUpdatesClient({
             <div>
               <h2 className="text-sm font-semibold text-foreground">Datos de factura</h2>
               <p className="mt-1 text-sm text-muted">
-                Captura el proveedor, la referencia y la fecha para habilitar las presentaciones correctas.
+                El proveedor definido aquí aplica a todas las líneas de esta factura.
               </p>
             </div>
             {!supplierId ? (
@@ -578,10 +756,10 @@ export function PriceUpdatesClient({
               required
               options={supplierOptions}
               defaultValue={supplierId}
-              onValueChange={handleSupplierChange}
+              onValueChange={confirmSupplierChange}
               helpText={
                 supplierId
-                  ? "Este proveedor define qué presentaciones puedes usar en la factura."
+                  ? "Este proveedor define qué presentaciones puedes usar o crear en la factura."
                   : "Selecciona un proveedor para ver sus presentaciones y agregar insumos."
               }
             />
@@ -627,18 +805,15 @@ export function PriceUpdatesClient({
                 <div>
                   <h2 className="text-sm font-semibold text-foreground">Insumos para agregar</h2>
                   <p className="mt-1 text-sm text-muted">
-                    Selecciona los productos incluidos en la factura del proveedor.
+                    Selecciona un insumo existente. Después puedes usar una presentación configurada o crear una nueva
+                    para este proveedor.
                   </p>
                 </div>
-                <Button type="button" variant="secondary" onClick={() => setManualModalOpen(true)} disabled={!supplierId}>
+                <Button type="button" variant="secondary" onClick={() => openManualModalForItem()} disabled={!supplierId}>
                   <PackagePlus className="h-4 w-4" aria-hidden="true" />
-                  Agregar otro insumo
+                  Agregar insumo a la factura
                 </Button>
               </div>
-
-              <p className="mt-2 text-xs text-muted">
-                Úsalo cuando el insumo de la factura no aparezca en la lista sugerida.
-              </p>
 
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <button
@@ -652,9 +827,7 @@ export function PriceUpdatesClient({
                   } disabled:cursor-not-allowed disabled:opacity-60`}
                 >
                   Disponibles con {supplierId ? selectedSupplierName : "proveedor"} ·{" "}
-                  {supplierId
-                    ? visibleCountForScope(items, supplierId).toLocaleString("es-MX")
-                    : "0"}
+                  {supplierId ? visibleCountForScope(items, supplierId).toLocaleString("es-MX") : "0"}
                 </button>
                 <button
                   type="button"
@@ -682,10 +855,10 @@ export function PriceUpdatesClient({
 
               <p className="mt-3 text-sm text-muted">
                 {scope === "available"
-                  ? `Mostramos primero los insumos que sí puedes actualizar con ${selectedSupplierName}.`
+                  ? `Mostramos primero los insumos que ya tienen presentaciones con ${selectedSupplierName}.`
                   : scope === "upcoming"
-                  ? "Mostramos primero los insumos utilizados en eventos próximos que ya tienen un costeo."
-                  : "Consulta todo el catálogo para capturar insumos fuera de los eventos próximos."}
+                    ? "Mostramos primero los insumos utilizados en eventos próximos que ya tienen un costeo."
+                    : "Consulta todo el catálogo para capturar insumos fuera de los eventos próximos."}
               </p>
 
               <div className="mt-4">
@@ -704,7 +877,7 @@ export function PriceUpdatesClient({
                 <StatePanel
                   kind="warning"
                   title="Selecciona el proveedor para ver los insumos y presentaciones disponibles."
-                  message="Primero elige el proveedor de la factura para mostrar solo los insumos que realmente puedes agregar."
+                  message="Primero elige el proveedor de la factura para mostrar solo los insumos compatibles."
                   className="mt-4"
                 />
               ) : visibleItems.length === 0 ? (
@@ -712,12 +885,12 @@ export function PriceUpdatesClient({
                   <StatePanel
                     kind="empty"
                     title="Sin insumos para mostrar"
-                      message={
+                    message={
                       scope === "available"
                         ? `No encontramos insumos compatibles con ${selectedSupplierName}.`
                         : scope === "upcoming"
-                        ? "No hay insumos congelados en eventos próximos con costeo guardado. Cambia a Todos los insumos para continuar."
-                        : "No encontramos insumos con los filtros actuales."
+                          ? "No hay insumos congelados en eventos próximos con costeo guardado."
+                          : "No encontramos insumos con los filtros actuales."
                     }
                   />
                 </div>
@@ -738,7 +911,15 @@ export function PriceUpdatesClient({
                         const supplierScopedOptions = getSupplierScopedOptions(item.id);
                         const defaultOption =
                           supplierScopedOptions.find((option) => option.isDefault) ?? supplierScopedOptions[0] ?? null;
-                        const alreadyAdded = defaultOption ? hasExactLine(item.id, defaultOption.id) : false;
+                        const alreadyAdded =
+                          defaultOption != null &&
+                          lines.some(
+                            (line) =>
+                              line.mode === "existing_purchase_option" &&
+                              line.itemId === item.id &&
+                              line.purchaseOptionId === defaultOption.id,
+                          );
+
                         return (
                           <tr key={item.id} className="border-t border-border">
                             <td className="px-3 py-3 align-top text-foreground">
@@ -754,10 +935,14 @@ export function PriceUpdatesClient({
                                 <span>No disponible con {selectedSupplierName}</span>
                               ) : (
                                 <div className="space-y-1">
-                                  <p>{supplierScopedOptions.length === 1 ? "1 presentación" : `${supplierScopedOptions.length.toLocaleString("es-MX")} presentaciones`}</p>
+                                  <p>
+                                    {supplierScopedOptions.length === 1
+                                      ? "1 presentación"
+                                      : `${supplierScopedOptions.length.toLocaleString("es-MX")} presentaciones`}
+                                  </p>
                                   {defaultOption ? (
                                     <p className="text-xs">
-                                      {defaultOption.purchaseUnitCode ?? "ud"}
+                                      {resolveLineOptionLabel(defaultOption, item.defaultUnitCode)}
                                       {defaultOption.currentPrice
                                         ? ` · ${formatCurrency(defaultOption.currentPrice.pricePerPurchaseUnit)}`
                                         : " · sin precio vigente"}
@@ -777,11 +962,15 @@ export function PriceUpdatesClient({
                                       : handleAddSuggestedLine(item.id, defaultOption.id, item.name)
                                   }
                                 >
-                                  {alreadyAdded ? "Ver en factura" : "Agregar"}
+                                  {alreadyAdded ? "Ver en factura" : "Agregar a la factura"}
                                 </Button>
                               ) : (
-                                <Button type="button" variant="secondary" onClick={() => setUnavailableItemId(item.id)}>
-                                  No disponible
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  onClick={() => openManualModalForItem(item.id, "new_purchase_option")}
+                                >
+                                  Crear presentación
                                 </Button>
                               )}
                             </td>
@@ -828,7 +1017,7 @@ export function PriceUpdatesClient({
                   <div>
                     <p className="text-sm font-semibold text-foreground">Todavía no agregas insumos</p>
                     <p className="mt-1 text-sm text-muted">
-                      Selecciona productos de la lista o usa “Agregar otro insumo”.
+                      Selecciona productos de la lista o usa “Agregar insumo a la factura”.
                     </p>
                   </div>
                 </div>
@@ -837,13 +1026,221 @@ export function PriceUpdatesClient({
               <div className="mt-4 space-y-3">
                 {lines.map((line, index) => {
                   const item = itemById.get(line.itemId) ?? null;
+                  const itemCostingCount = lines.filter(
+                    (candidate) => candidate.itemId === line.itemId && candidate.usedForCosting,
+                  ).length;
+
+                  if (line.mode === "new_purchase_option") {
+                    const purchaseUnit = unitById.get(line.newPurchaseOption.purchaseUnitId) ?? null;
+                    const quantity = parseDraftNumber(line.newPurchaseOption.quantityPerPurchaseUnit);
+                    const newPrice = parseDraftNumber(line.newPrice);
+                    const hasValidPrice = newPrice != null && newPrice > 0;
+                    const nextUnitCost =
+                      quantity != null && quantity > 0 && newPrice != null && newPrice > 0
+                        ? roundTo(newPrice / quantity, 4)
+                        : null;
+                    const estimatedImpact =
+                      item && nextUnitCost != null
+                        ? item.upcomingImpactLines.reduce(
+                            (sum, impactLine) =>
+                              sum + impactLine.requiredQuantity * (nextUnitCost - impactLine.snapshotUnitCost),
+                            0,
+                          )
+                        : null;
+                    const duplicate =
+                      item && quantity != null && quantity > 0
+                        ? findEquivalentSupplierOption(
+                            item.id,
+                            line.newPurchaseOption.purchaseUnitId,
+                            line.newPurchaseOption.inventoryUnitId,
+                            quantity,
+                          )
+                        : null;
+
+                    return (
+                      <div key={line.id} className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-base font-semibold text-foreground">
+                                {item?.name ?? `Insumo ${index + 1}`}
+                              </p>
+                              <span className="rounded-full border border-primary/40 bg-primary/10 px-2 py-1 text-xs text-primary">
+                                Nueva presentación
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm text-muted">
+                              Pendiente de crear al aplicar la factura
+                            </p>
+                          </div>
+                          <Button type="button" variant="danger" onClick={() => removeLine(line.id)}>
+                            Quitar
+                          </Button>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          <SearchableSelect
+                            id={`new-line-purchase-unit-${line.id}`}
+                            name={`ignored-new-line-purchase-unit-${line.id}`}
+                            label="Tipo de presentación"
+                            placeholder="Selecciona presentación"
+                            options={purchaseUnitOptions}
+                            defaultValue={line.newPurchaseOption.purchaseUnitId}
+                            onValueChange={(value) =>
+                              updateLine(line.id, {
+                                newPurchaseOption: { ...line.newPurchaseOption, purchaseUnitId: value },
+                              } as Partial<DraftLine>)
+                            }
+                          />
+                          <div className="space-y-1">
+                            <Label htmlFor={`new-line-quantity-${line.id}`}>Contenido de la presentación</Label>
+                            <Input
+                              id={`new-line-quantity-${line.id}`}
+                              type="number"
+                              min="0.0001"
+                              step="0.0001"
+                              value={line.newPurchaseOption.quantityPerPurchaseUnit}
+                              onChange={(event) =>
+                                updateLine(line.id, {
+                                  newPurchaseOption: {
+                                    ...line.newPurchaseOption,
+                                    quantityPerPurchaseUnit: event.target.value,
+                                  },
+                                } as Partial<DraftLine>)
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 md:grid-cols-3">
+                          <MetricTile
+                            label="Proveedor"
+                            value={selectedSupplierName}
+                          />
+                          <MetricTile
+                            label="Unidad del insumo"
+                            value={item?.defaultUnitName ?? item?.defaultUnitCode ?? "—"}
+                          />
+                          <MetricTile
+                            label="Equivalencia"
+                            value={
+                              purchaseUnit && quantity != null && quantity > 0
+                                ? `1 ${purchaseUnit.code ?? purchaseUnit.name} = ${quantity.toLocaleString("es-MX", {
+                                    minimumFractionDigits: 0,
+                                    maximumFractionDigits: 4,
+                                  })} ${item?.defaultUnitCode ?? "ud"}`
+                                : "Pendiente"
+                            }
+                          />
+                        </div>
+
+                        <div className="mt-4 rounded-[var(--radius-base)] border border-border bg-surface p-3">
+                          <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Precio de compra</p>
+                          <div className="mt-3 grid gap-3 md:grid-cols-[160px_minmax(0,1fr)]">
+                            <MetricTile
+                              label="Costo por unidad"
+                              value={nextUnitCost != null ? formatCurrency(nextUnitCost) : "Pendiente"}
+                            />
+                            <div>
+                              <Label htmlFor={`new-line-price-${line.id}`}>Precio en la factura</Label>
+                              <Input
+                                id={`new-line-price-${line.id}`}
+                                value={line.newPrice}
+                                onChange={(event) => updateLine(line.id, { newPrice: event.target.value })}
+                                type="number"
+                                min="0.0001"
+                                step="0.0001"
+                                className="mt-2 bg-surface"
+                              />
+                              {!hasValidPrice ? (
+                                <p className="mt-2 text-sm text-warning">Ingresa un precio mayor a $0.</p>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          <MetricTile
+                            label="Uso próximo"
+                            value={item ? formatUpcomingUsage(item) : "Sin impacto en eventos próximos"}
+                          />
+                          <MetricTile
+                            label="Impacto estimado"
+                            value={
+                              estimatedImpact == null
+                                ? "Pendiente de calcular"
+                                : estimatedImpact === 0
+                                  ? "Sin variación estimada"
+                                  : `${estimatedImpact >= 0 ? "+" : ""}${formatCurrency(estimatedImpact)}`
+                            }
+                          />
+                        </div>
+
+                        {duplicate ? (
+                          <div className="mt-4 rounded-[var(--radius-base)] border border-warning/50 bg-warning/10 p-3 text-sm text-foreground">
+                            Ya existe una presentación con esta equivalencia.
+                            <div className="mt-2">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => {
+                                  removeLine(line.id);
+                                  handleAddSuggestedLine(item?.id ?? "", duplicate.id, item?.name ?? "Insumo");
+                                }}
+                              >
+                                Usar presentación existente
+                              </Button>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="mt-4 space-y-3">
+                          <label className="inline-flex items-start gap-2 text-sm text-foreground">
+                            <input
+                              type="checkbox"
+                              checked={line.usedForCosting}
+                              onChange={(event) => updateLine(line.id, { usedForCosting: event.target.checked })}
+                              className="mt-0.5 h-4 w-4 rounded border-border"
+                            />
+                            <span>
+                              <span className="font-medium">Usar esta presentación para próximos costeos</span>
+                              <span className="mt-1 block text-sm text-muted">
+                                El costo por unidad calculado será la referencia vigente de este insumo.
+                              </span>
+                            </span>
+                          </label>
+
+                          {line.itemId && itemCostingCount !== 1 ? (
+                            <p className="text-sm text-warning">
+                              Cada insumo debe dejar exactamente una presentación marcada como fuente de costeo.
+                            </p>
+                          ) : null}
+
+                          <Collapsible title="Más detalles">
+                            <div className="space-y-3">
+                              <div className="space-y-1">
+                                <Label htmlFor={`new-line-notes-${line.id}`}>Notas</Label>
+                                <Input
+                                  id={`new-line-notes-${line.id}`}
+                                  value={line.notes}
+                                  onChange={(event) => updateLine(line.id, { notes: event.target.value })}
+                                  placeholder="Lote, comentario o referencia interna"
+                                />
+                              </div>
+                            </div>
+                          </Collapsible>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   const lineOptions = line.itemId ? getSupplierScopedOptions(line.itemId) : [];
                   const selectedOption = lineOptions.find((option) => option.id === line.purchaseOptionId) ?? null;
-                  const newPriceValue = Number(line.newPrice);
-                  const hasValidPrice = line.newPrice.trim().length > 0 && Number.isFinite(newPriceValue) && newPriceValue >= 0;
+                  const newPriceValue = parseDraftNumber(line.newPrice);
+                  const hasValidPrice = line.newPrice.trim().length > 0 && newPriceValue != null && newPriceValue >= 0;
                   const nextUnitCost =
                     selectedOption && hasValidPrice && selectedOption.quantityPerPurchaseUnit > 0
-                      ? newPriceValue / selectedOption.quantityPerPurchaseUnit
+                      ? roundTo(newPriceValue / selectedOption.quantityPerPurchaseUnit, 4)
                       : null;
                   const estimatedImpact =
                     item && nextUnitCost != null
@@ -853,16 +1250,6 @@ export function PriceUpdatesClient({
                           0,
                         )
                       : null;
-                  const itemCostingCount = lines.filter(
-                    (candidate) => candidate.itemId === line.itemId && candidate.usedForCosting,
-                  ).length;
-                  const lineIssues: string[] = [];
-                  if (!line.itemId) lineIssues.push("Selecciona un insumo.");
-                  if (line.itemId && !line.purchaseOptionId) lineIssues.push("Selecciona una presentación.");
-                  if (line.itemId && line.purchaseOptionId && !hasValidPrice) lineIssues.push("Captura el nuevo precio.");
-                  if (line.itemId && itemCostingCount !== 1) {
-                    lineIssues.push("Selecciona la presentación principal de costeo.");
-                  }
 
                   return (
                     <div key={line.id} className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-4">
@@ -877,11 +1264,9 @@ export function PriceUpdatesClient({
                               : "Selecciona la presentación de compra"}
                           </p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Button type="button" variant="danger" onClick={() => removeLine(line.id)}>
-                            Quitar
-                          </Button>
-                        </div>
+                        <Button type="button" variant="danger" onClick={() => removeLine(line.id)}>
+                          Quitar
+                        </Button>
                       </div>
 
                       <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
@@ -906,14 +1291,10 @@ export function PriceUpdatesClient({
                       <div className="mt-4 rounded-[var(--radius-base)] border border-border bg-surface p-3">
                         <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Precio de compra</p>
                         <div className="mt-3 grid gap-3 md:grid-cols-[160px_minmax(0,1fr)]">
-                          <div>
-                            <p className="text-xs text-muted">Vigente</p>
-                            <p className="mt-1 text-base font-semibold text-foreground">
-                              {selectedOption?.currentPrice
-                                ? formatCurrency(selectedOption.currentPrice.pricePerPurchaseUnit)
-                                : "—"}
-                            </p>
-                          </div>
+                          <MetricTile
+                            label="Vigente"
+                            value={selectedOption?.currentPrice ? formatCurrency(selectedOption.currentPrice.pricePerPurchaseUnit) : "—"}
+                          />
                           <div>
                             <Label htmlFor={`price-update-new-${line.id}`}>Nuevo precio</Label>
                             <Input
@@ -923,41 +1304,42 @@ export function PriceUpdatesClient({
                               type="number"
                               min="0"
                               step="0.0001"
-                              placeholder=""
                               className="mt-2 bg-surface"
                             />
                             {!hasValidPrice ? (
-                              <p className="mt-2 text-sm text-warning">Captura el nuevo precio.</p>
+                              <p className="mt-2 text-sm text-warning">
+                                Podrás capturar el nuevo precio en la factura actual.
+                              </p>
                             ) : null}
                           </div>
                         </div>
                       </div>
 
                       <div className="mt-4 grid gap-3 md:grid-cols-3">
-                        <div className="rounded-[var(--radius-base)] border border-border bg-surface p-3">
-                          <p className="text-xs text-muted">Costo unitario</p>
-                          <p className="mt-1 text-sm font-medium text-foreground">
-                            {selectedOption?.derivedUnitCost != null ? formatCurrency(selectedOption.derivedUnitCost) : "—"}{" "}
-                            <span className="text-muted">→</span>{" "}
-                            {nextUnitCost != null ? formatCurrency(nextUnitCost) : "Pendiente"}
-                          </p>
-                        </div>
-                        <div className="rounded-[var(--radius-base)] border border-border bg-surface p-3">
-                          <p className="text-xs text-muted">Uso próximo</p>
-                          <p className="mt-1 text-sm text-foreground">
-                            {item ? formatUpcomingUsage(item) : "Sin impacto en eventos próximos"}
-                          </p>
-                        </div>
-                        <div className="rounded-[var(--radius-base)] border border-border bg-surface p-3">
-                          <p className="text-xs text-muted">Impacto estimado</p>
-                          <p className="mt-1 text-sm text-foreground">
-                            {estimatedImpact == null
+                        <MetricTile
+                          label="Costo unitario"
+                          value={
+                            selectedOption?.derivedUnitCost != null
+                              ? `${formatCurrency(selectedOption.derivedUnitCost)} → ${nextUnitCost != null ? formatCurrency(nextUnitCost) : "Pendiente"}`
+                              : nextUnitCost != null
+                                ? formatCurrency(nextUnitCost)
+                                : "Pendiente"
+                          }
+                        />
+                        <MetricTile
+                          label="Uso próximo"
+                          value={item ? formatUpcomingUsage(item) : "Sin impacto en eventos próximos"}
+                        />
+                        <MetricTile
+                          label="Impacto estimado"
+                          value={
+                            estimatedImpact == null
                               ? "Pendiente de calcular"
                               : estimatedImpact === 0
                                 ? "Sin variación estimada"
-                                : `${estimatedImpact >= 0 ? "+" : ""}${formatCurrency(estimatedImpact)}`}
-                          </p>
-                        </div>
+                                : `${estimatedImpact >= 0 ? "+" : ""}${formatCurrency(estimatedImpact)}`
+                          }
+                        />
                       </div>
 
                       <div className="mt-4 space-y-3">
@@ -975,6 +1357,11 @@ export function PriceUpdatesClient({
                             </span>
                           </span>
                         </label>
+                        {line.itemId && itemCostingCount !== 1 ? (
+                          <p className="text-sm text-warning">
+                            Cada insumo debe dejar exactamente una presentación marcada como fuente de costeo.
+                          </p>
+                        ) : null}
                         <Collapsible title="Más detalles">
                           <div className="space-y-3">
                             <div className="space-y-1">
@@ -1005,9 +1392,9 @@ export function PriceUpdatesClient({
               <div className="mt-3 space-y-2">
                 {!canApplyInvoice && applyBlockingReason ? (
                   <div className="flex items-start gap-2 text-sm text-muted">
-                      <TriangleAlert className="mt-0.5 h-4 w-4 text-warning" aria-hidden="true" />
-                      <span>{applyBlockingReason}</span>
-                    </div>
+                    <TriangleAlert className="mt-0.5 h-4 w-4 text-warning" aria-hidden="true" />
+                    <span>{applyBlockingReason}</span>
+                  </div>
                 ) : (
                   <div className="flex items-start gap-2 text-sm text-foreground">
                     <CheckCircle2 className="mt-0.5 h-4 w-4 text-success" aria-hidden="true" />
@@ -1024,7 +1411,7 @@ export function PriceUpdatesClient({
                   ? "Pendiente de calcular"
                   : lineMetrics.impactTotal === 0
                     ? "Sin variación estimada"
-                  : `${lineMetrics.impactTotal >= 0 ? "+" : ""}${formatCurrency(lineMetrics.impactTotal)}`}
+                    : `${lineMetrics.impactTotal >= 0 ? "+" : ""}${formatCurrency(lineMetrics.impactTotal)}`}
               </p>
               <p className="mt-1 text-sm text-muted">
                 {lines.length === 0
@@ -1048,12 +1435,7 @@ export function PriceUpdatesClient({
                 La aplicación es atómica: si una línea falla por conversión o configuración, la factura completa no se
                 aplica.
               </p>
-              <Button
-                type="submit"
-                isLoading={isPending}
-                disabled={!canApplyInvoice}
-                className="w-full"
-              >
+              <Button type="submit" isLoading={isPending} disabled={!canApplyInvoice} className="w-full">
                 {isPending ? "Aplicando factura..." : "Aplicar factura"}
               </Button>
             </div>
@@ -1096,14 +1478,11 @@ export function PriceUpdatesClient({
         )}
       </details>
 
-      <Modal
-        open={manualModalOpen}
-        onClose={() => setManualModalOpen(false)}
-        title="Agregar otro insumo"
-      >
+      <Modal open={manualModalOpen} onClose={() => setManualModalOpen(false)} title="Agregar insumo a la factura">
         <div className="space-y-4">
           <p className="text-sm text-muted">
-            Úsalo cuando el insumo de la factura no aparezca en la lista sugerida.
+            Selecciona un insumo existente. Después puedes usar una presentación configurada o crear una nueva para este
+            proveedor.
           </p>
 
           <SearchableSelect
@@ -1121,7 +1500,13 @@ export function PriceUpdatesClient({
             }))}
             defaultValue={manualDraft.itemId}
             onValueChange={(value) =>
-              setManualDraft((current) => ({ ...current, itemId: value, purchaseOptionId: "" }))
+              setManualDraft((current) => ({
+                ...current,
+                itemId: value,
+                purchaseOptionId: "",
+                purchaseUnitId: "",
+                quantityPerPurchaseUnit: "",
+              }))
             }
           />
 
@@ -1133,6 +1518,8 @@ export function PriceUpdatesClient({
                 scope: current.scope === "available" ? "all" : "available",
                 itemId: "",
                 purchaseOptionId: "",
+                purchaseUnitId: "",
+                quantityPerPurchaseUnit: "",
               }))
             }
             className="text-sm text-primary underline underline-offset-2"
@@ -1142,76 +1529,187 @@ export function PriceUpdatesClient({
               : `Volver a insumos disponibles con ${selectedSupplierName}`}
           </button>
 
-          {manualItem && manualOptions.length === 0 ? (
+          {manualItem ? (
+            <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
+              <p className="text-sm font-semibold text-foreground">Proveedor</p>
+              <p className="mt-1 text-sm text-muted">{selectedSupplierName}</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={manualDraft.mode === "existing_purchase_option" ? "primary" : "secondary"}
+              onClick={() => setManualDraft((current) => ({ ...current, mode: "existing_purchase_option" }))}
+              disabled={!manualItem}
+            >
+              Usar presentación existente
+            </Button>
+            <Button
+              type="button"
+              variant={manualDraft.mode === "new_purchase_option" ? "primary" : "secondary"}
+              onClick={() => setManualDraft((current) => ({ ...current, mode: "new_purchase_option" }))}
+              disabled={!manualItem}
+            >
+              Crear nueva presentación
+            </Button>
+          </div>
+
+          {manualItem && manualDraft.mode === "existing_purchase_option" && manualAvailableOptions.length === 0 ? (
             <StatePanel
               kind="warning"
-              title={`Este insumo no está disponible con ${selectedSupplierName}.`}
-              message="Configura una presentación antes de agregarlo a la factura."
+              title={`Este insumo no tiene una presentación disponible con ${selectedSupplierName}.`}
+              message="Puedes crearla usando la información de la factura."
             >
               <div className="pt-2">
-                <Link
-                  href={`/${tenantSlug}/kitchen/inventory/presentaciones-precios`}
-                  className="text-sm text-primary underline underline-offset-2"
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setManualDraft((current) => ({ ...current, mode: "new_purchase_option" }))}
                 >
-                  Ir a presentaciones y proveedores
-                </Link>
+                  Crear presentación
+                </Button>
               </div>
             </StatePanel>
-          ) : (
-            <SearchableSelect
-              id="manual-price-update-option"
-              name="ignored-manual-option"
-              label="Presentación"
-              placeholder="Selecciona presentación"
-              options={manualOptions.map((option) => ({
-                value: option.id,
-                label: `${resolveLineOptionLabel(option, manualItem?.defaultUnitCode ?? null)}${
-                  option.currentPrice ? ` · ${formatCurrency(option.currentPrice.pricePerPurchaseUnit)}` : ""
-                }`,
-              }))}
-              defaultValue={manualDraft.purchaseOptionId}
-              onValueChange={(value) => setManualDraft((current) => ({ ...current, purchaseOptionId: value }))}
-              disabled={!manualDraft.itemId}
-            />
-          )}
+          ) : null}
 
-          <div className="grid gap-3 md:grid-cols-2">
-            <MetricTile
-              label="Costo vigente"
-              value={
-                manualSelectedOption?.currentPrice
-                  ? formatCurrency(manualSelectedOption.currentPrice.pricePerPurchaseUnit)
-                  : "—"
-              }
-            />
-            <MetricTile
-              label="Costo unitario actual"
-              value={
-                manualSelectedOption?.derivedUnitCost != null
-                  ? formatCurrency(manualSelectedOption.derivedUnitCost)
-                  : "—"
-              }
-            />
-          </div>
+          {manualItem && manualDraft.mode === "existing_purchase_option" && manualAvailableOptions.length > 0 ? (
+            <>
+              <SearchableSelect
+                id="manual-price-update-option"
+                name="ignored-manual-option"
+                label="Presentación"
+                placeholder="Selecciona presentación"
+                options={manualAvailableOptions.map((option) => ({
+                  value: option.id,
+                  label: `${resolveLineOptionLabel(option, manualItem.defaultUnitCode)}${
+                    option.currentPrice ? ` · ${formatCurrency(option.currentPrice.pricePerPurchaseUnit)}` : ""
+                  }`,
+                }))}
+                defaultValue={manualDraft.purchaseOptionId}
+                onValueChange={(value) => setManualDraft((current) => ({ ...current, purchaseOptionId: value }))}
+              />
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <MetricTile
+                  label="Costo vigente"
+                  value={
+                    manualSelectedOption?.currentPrice
+                      ? formatCurrency(manualSelectedOption.currentPrice.pricePerPurchaseUnit)
+                      : "—"
+                  }
+                />
+                <MetricTile
+                  label="Costo unitario actual"
+                  value={manualSelectedOption?.derivedUnitCost != null ? formatCurrency(manualSelectedOption.derivedUnitCost) : "—"}
+                />
+              </div>
+            </>
+          ) : null}
+
+          {manualItem && manualDraft.mode === "new_purchase_option" ? (
+            <>
+              <div>
+                <p className="text-sm font-semibold text-foreground">Nueva presentación para {manualItem.name}</p>
+                <p className="mt-1 text-sm text-muted">
+                  Captura cómo viene el producto en la factura y cuánto contiene.
+                </p>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <SearchableSelect
+                  id="manual-new-purchase-unit"
+                  name="ignored-manual-new-purchase-unit"
+                  label="Tipo de presentación"
+                  placeholder="Selecciona tipo"
+                  options={purchaseUnitOptions}
+                  defaultValue={manualDraft.purchaseUnitId}
+                  onValueChange={(value) => setManualDraft((current) => ({ ...current, purchaseUnitId: value }))}
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="manual-new-quantity">Contenido de la presentación</Label>
+                  <Input
+                    id="manual-new-quantity"
+                    value={manualDraft.quantityPerPurchaseUnit}
+                    onChange={(event) =>
+                      setManualDraft((current) => ({ ...current, quantityPerPurchaseUnit: event.target.value }))
+                    }
+                    type="number"
+                    min="0.0001"
+                    step="0.0001"
+                    placeholder="12"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <MetricTile
+                  label="Unidad del insumo"
+                  value={manualItem.defaultUnitName ?? manualItem.defaultUnitCode ?? "—"}
+                />
+                <MetricTile
+                  label="Vista previa de equivalencia"
+                  value={
+                    manualDraft.purchaseUnitId && manualQuantity != null && manualQuantity > 0
+                      ? `1 ${unitById.get(manualDraft.purchaseUnitId)?.code ?? unitById.get(manualDraft.purchaseUnitId)?.name ?? "ud"} = ${manualQuantity.toLocaleString("es-MX", {
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 4,
+                        })} ${manualItem.defaultUnitCode ?? "ud"}`
+                      : "Pendiente"
+                  }
+                />
+              </div>
+
+              {manualDuplicate ? (
+                <div className="rounded-[var(--radius-base)] border border-warning/50 bg-warning/10 p-3 text-sm text-foreground">
+                  Ya existe una presentación con esta equivalencia.
+                </div>
+              ) : null}
+            </>
+          ) : null}
 
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1">
-              <Label htmlFor="manual-price-update-new-price">Nuevo precio</Label>
+              <Label htmlFor="manual-price-update-new-price">Precio en la factura</Label>
               <Input
                 id="manual-price-update-new-price"
                 value={manualDraft.newPrice}
                 onChange={(event) => setManualDraft((current) => ({ ...current, newPrice: event.target.value }))}
                 type="number"
-                min="0"
+                min={manualDraft.mode === "new_purchase_option" ? "0.0001" : "0"}
                 step="0.0001"
                 placeholder="0.00"
               />
+              {manualDraft.mode === "new_purchase_option" && (manualPrice == null || manualPrice <= 0) ? (
+                <p className="text-sm text-warning">Captura el precio de esta presentación tal como aparece en la factura.</p>
+              ) : null}
             </div>
             <MetricTile
-              label="Nuevo costo unitario"
+              label={manualDraft.mode === "new_purchase_option" ? "Costo por pieza" : "Nuevo costo unitario"}
               value={manualNewUnitCost != null ? formatCurrency(manualNewUnitCost) : "—"}
             />
           </div>
+
+          <label className="inline-flex items-start gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={manualDraft.usedForCosting}
+              onChange={(event) =>
+                setManualDraft((current) => ({ ...current, usedForCosting: event.target.checked }))
+              }
+              className="mt-0.5 h-4 w-4 rounded border-border"
+            />
+            <span>
+              <span className="font-medium">
+                {manualDraft.mode === "new_purchase_option"
+                  ? "Usar esta presentación para próximos costeos"
+                  : "Usar para próximos costeos"}
+              </span>
+              <span className="mt-1 block text-sm text-muted">
+                El costo por unidad calculado será la referencia vigente de este insumo.
+              </span>
+            </span>
+          </label>
 
           <div className="space-y-1">
             <Label htmlFor="manual-price-update-notes">Notas</Label>
@@ -1230,51 +1728,41 @@ export function PriceUpdatesClient({
             <Button
               type="button"
               onClick={handleAddManualLine}
-              disabled={!manualDraft.itemId || !manualDraft.purchaseOptionId}
+              disabled={
+                !manualItem ||
+                (manualDraft.mode === "existing_purchase_option"
+                  ? !manualDraft.purchaseOptionId
+                  : !manualDraft.purchaseUnitId || manualQuantity == null || manualQuantity <= 0 || manualPrice == null || manualPrice <= 0 || Boolean(manualDuplicate))
+              }
             >
               <ListPlus className="h-4 w-4" aria-hidden="true" />
-              Agregar a factura
+              {manualDraft.mode === "new_purchase_option"
+                ? "Agregar nueva presentación a la factura"
+                : "Agregar a la factura"}
             </Button>
           </div>
         </div>
       </Modal>
 
-      <Modal
-        open={unavailableItemId != null}
-        onClose={() => setUnavailableItemId(null)}
-        title="Insumo no disponible"
-      >
+      <Modal open={pendingSupplierId != null} onClose={() => setPendingSupplierId(null)} title="Cambiar proveedor">
         <div className="space-y-4">
           <p className="text-sm text-muted">
-            {itemById.get(unavailableItemId ?? "")?.name ?? "Este insumo"} no tiene una presentación configurada para{" "}
-            {selectedSupplierName}.
+            Las líneas actuales pertenecen a {selectedSupplierName}. Si cambias el proveedor se eliminarán de la factura en captura.
           </p>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => setUnavailableItemId(null)}>
-              Cerrar
+            <Button type="button" variant="secondary" onClick={() => setPendingSupplierId(null)}>
+              Cancelar
             </Button>
-            <Link
-              href={`/${tenantSlug}/kitchen/inventory/presentaciones-precios`}
-              className="inline-flex items-center justify-center rounded-[var(--radius-base)] border border-border bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              Configurar presentación
-            </Link>
+            <Button type="button" onClick={applyConfirmedSupplierChange}>
+              Cambiar proveedor y limpiar factura
+            </Button>
           </div>
         </div>
       </Modal>
+
+      <div className="hidden">
+        <Link href={`/${tenantSlug}/kitchen/inventory/presentaciones-precios`}>presentaciones</Link>
+      </div>
     </div>
   );
-}
-
-function MetricTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[var(--radius-base)] border border-border bg-surface p-3">
-      <p className="text-xs text-muted">{label}</p>
-      <p className="mt-1 text-base font-semibold text-foreground">{value}</p>
-    </div>
-  );
-}
-
-function visibleCountForScope(items: KitchenInventoryPriceUpdateItem[], supplierId: string): number {
-  return items.filter((item) => item.options.some((option) => option.supplierId === supplierId)).length;
 }

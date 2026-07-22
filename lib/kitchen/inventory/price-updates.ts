@@ -4,10 +4,12 @@ import type {
   KitchenInventoryPurchaseOption,
   KitchenInventorySupplier,
   KitchenInventorySupplierPrice,
+  KitchenInventoryUnit,
 } from "./types";
 import {
   listKitchenInventoryItems,
   listKitchenInventorySuppliers,
+  listKitchenInventoryUnits,
   listPurchaseOptions,
   listSupplierPrices,
 } from "./queries";
@@ -45,6 +47,7 @@ export type KitchenInventoryPriceUpdateItem = {
   name: string;
   defaultUnitId: string;
   defaultUnitCode: string | null;
+  defaultUnitName: string | null;
   currentUnitCost: number;
   defaultSupplierId: string | null;
   options: KitchenInventoryPriceUpdateOption[];
@@ -64,6 +67,7 @@ export type KitchenInventoryPriceUpdateRecentBatch = {
 
 export type KitchenInventoryPriceUpdateViewData = {
   suppliers: KitchenInventorySupplier[];
+  units: KitchenInventoryUnit[];
   items: KitchenInventoryPriceUpdateItem[];
   suggestedItemIds: string[];
   upcomingEventsWithoutInitialSnapshot: Array<{
@@ -281,9 +285,10 @@ async function loadRecentBatches(tenantId: string): Promise<KitchenInventoryPric
 export async function getKitchenInventoryPriceUpdateViewData(
   tenantId: string,
 ): Promise<KitchenInventoryPriceUpdateViewData> {
-  const [items, suppliers, purchaseOptions, supplierPrices, upcomingImpact, recentBatches] = await Promise.all([
+  const [items, suppliers, units, purchaseOptions, supplierPrices, upcomingImpact, recentBatches] = await Promise.all([
     listKitchenInventoryItems(tenantId),
     listKitchenInventorySuppliers(tenantId),
+    listKitchenInventoryUnits(tenantId),
     listPurchaseOptions(tenantId),
     listSupplierPrices(tenantId),
     loadUpcomingImpactLines(tenantId),
@@ -298,6 +303,7 @@ export async function getKitchenInventoryPriceUpdateViewData(
       name: item.name,
       defaultUnitId: item.default_unit_id,
       defaultUnitCode: item.kitchen_inventory_units?.code ?? null,
+      defaultUnitName: item.kitchen_inventory_units?.name ?? null,
       currentUnitCost: Number(item.current_unit_cost ?? 0),
       defaultSupplierId: item.default_supplier_id ?? null,
       options: optionsByItem.get(item.id) ?? [],
@@ -307,6 +313,7 @@ export async function getKitchenInventoryPriceUpdateViewData(
 
   return {
     suppliers,
+    units: units.filter((unit) => unit.is_active),
     items: nextItems,
     suggestedItemIds: upcomingImpact.suggestedItemIds,
     upcomingEventsWithoutInitialSnapshot: upcomingImpact.upcomingEventsWithoutInitialSnapshot,
