@@ -1,5 +1,5 @@
-import { EventDetailSkeleton } from "../../_components/event-costing-skeletons";
+import { EventCateringContentSkeleton } from "../../_components/event-costing-skeletons";
 
 export default function KitchenEventDetailLoading() {
-  return <EventDetailSkeleton />;
+  return <EventCateringContentSkeleton />;
 }

@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import type { Metadata } from "next";
 import { StatePanel } from "@/components/ui/state-panel";
 import {
   getCurrentTenantModulePageAccessMap,
@@ -27,10 +29,13 @@ import { ConfirmDestructiveAction } from "./_components/confirm-destructive-acti
 import { EventCostingComparison } from "./_components/event-costing-comparison";
 import { ServiceCostingComparison } from "./_components/service-costing-comparison";
 import { TopPriceImpactItems } from "./_components/top-price-impact-items";
+import { EventCateringContentSkeleton } from "../../_components/event-costing-skeletons";
 
 type KitchenEventCateringPageProps = {
   params: Promise<{ tenantSlug: string; eventId: string }>;
 };
+
+export const metadata: Metadata = { title: "Catering del evento" };
 
 function formatEventDate(value: string | null): string {
   if (!value) return "Sin fecha";
@@ -94,6 +99,31 @@ function resolveServiceStageLabel(service: ChefServiceRow) {
 
 export default async function KitchenEventCateringPage({ params }: KitchenEventCateringPageProps) {
   const { tenantSlug, eventId } = await params;
+
+  return (
+    <div className="space-y-4">
+      <KitchenPageHeader
+        eyebrow="Cocina · Eventos y costeo"
+        title="Catering del evento"
+        description="Administra los servicios, recetas y costos asociados a este evento."
+        actions={
+          <Link
+            href={`/${tenantSlug}/kitchen/events`}
+            className="inline-flex items-center rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
+          >
+            <ChevronLeft className="mr-2 h-4 w-4" aria-hidden="true" />
+            Volver a Eventos y costeo
+          </Link>
+        }
+      />
+      <Suspense fallback={<EventCateringContentSkeleton />}>
+        <CateringContent tenantSlug={tenantSlug} eventId={eventId} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function CateringContent({ tenantSlug, eventId }: { tenantSlug: string; eventId: string }) {
   const result = await resolveKitchenPage(tenantSlug, "event_catering", "plans");
 
   if (!result.ok) {
@@ -124,42 +154,31 @@ export default async function KitchenEventCateringPage({ params }: KitchenEventC
 
   return (
     <div className="space-y-4">
-      <KitchenPageHeader
-        eyebrow="Evento"
-        title={detail.event.name}
-        description="Sigue el flujo guiado para configurar servicios, agregar recetas y guardar el costeo del evento."
-        metadata={
-          <>
-            <span>
-              Fecha: {detail.dateContext.relativeLabel ? `${detail.dateContext.relativeLabel} · ` : ""}
-              {detail.dateContext.weekdayLabel ? `${detail.dateContext.weekdayLabel} · ` : ""}
-              {formatEventDate(detail.event.starts_at)}
-            </span>
-            <span className="mx-2">·</span>
-            <span>
-              Personas del evento:{" "}
-              {detail.event.expected_attendance != null
-                ? Number(detail.event.expected_attendance).toLocaleString("es-MX")
-                : "Sin definir"}
-            </span>
-            <span className="mx-2">·</span>
-            <span>Servicios: {detail.services.length.toLocaleString("es-MX")}</span>
-            <span className="mx-2">·</span>
-            <span>Recetas: {detail.totalRecipesCount.toLocaleString("es-MX")}</span>
-          </>
-        }
-        actions={
-          <>
-            <Link
-              href={`/${tenantSlug}/kitchen/events`}
-              className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
-            >
-              <ChevronLeft className="mr-2 h-4 w-4" aria-hidden="true" />
-              Volver a Eventos y costeo
-            </Link>
-          </>
-        }
-      />
+      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
+        <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Evento</p>
+        <h2 className="mt-1 text-xl font-semibold tracking-tight text-foreground">{detail.event.name}</h2>
+        <p className="mt-2 text-sm text-muted">
+          Sigue el flujo guiado para configurar servicios, agregar recetas y guardar el costeo del evento.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+          <span>
+            Fecha: {detail.dateContext.relativeLabel ? `${detail.dateContext.relativeLabel} · ` : ""}
+            {detail.dateContext.weekdayLabel ? `${detail.dateContext.weekdayLabel} · ` : ""}
+            {formatEventDate(detail.event.starts_at)}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>
+            Personas del evento:{" "}
+            {detail.event.expected_attendance != null
+              ? Number(detail.event.expected_attendance).toLocaleString("es-MX")
+              : "Sin definir"}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>Servicios: {detail.services.length.toLocaleString("es-MX")}</span>
+          <span aria-hidden="true">·</span>
+          <span>Recetas: {detail.totalRecipesCount.toLocaleString("es-MX")}</span>
+        </div>
+      </section>
 
       <EventProgressStepper stages={detail.progressStages} />
 
