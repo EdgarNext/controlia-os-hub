@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import type { Metadata } from "next";
 import { StatePanel } from "@/components/ui/state-panel";
 import { KitchenMetricCard } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-metric-card";
 import { KitchenPageHeader } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-page-header";
+import { KitchenReportsContentSkeleton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-loading-skeletons";
 import { EventCateringBadge } from "@/app/(tenant)/[tenantSlug]/kitchen/events/_components/event-catering-badge";
 import { getCateringFinancialDashboard } from "@/lib/kitchen/event-catering/queries";
 import type {
@@ -14,6 +17,8 @@ import { resolveKitchenPage } from "../_lib/page-access";
 type KitchenReportsPageProps = {
   params: Promise<{ tenantSlug: string }>;
 };
+
+export const metadata: Metadata = { title: "Dashboard gerencial de catering" };
 
 function formatMoney(value: number) {
   return `$${Number(value).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -98,6 +103,21 @@ function DashboardRow({ row }: { row: CateringFinancialDashboardRow }) {
 export default async function KitchenReportsPage({ params }: KitchenReportsPageProps) {
   const { tenantSlug } = await params;
 
+  return (
+    <div className="space-y-4">
+      <KitchenPageHeader
+        eyebrow="Reportes Cocina"
+        title="Dashboard gerencial de catering"
+        description="Resumen financiero de servicios: estimado, compra, consumo real y remanente recuperable."
+      />
+      <Suspense fallback={<KitchenReportsContentSkeleton />}>
+        <KitchenReportsContent tenantSlug={tenantSlug} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function KitchenReportsContent({ tenantSlug }: { tenantSlug: string }) {
   const [inventory, recipes, catering] = await Promise.all([
     resolveKitchenPage(tenantSlug, "kitchen_inventory", "reports"),
     resolveKitchenPage(tenantSlug, "kitchen_recipes", "reports"),
@@ -128,35 +148,21 @@ export default async function KitchenReportsPage({ params }: KitchenReportsPageP
 
   if (dashboard.rows.length === 0) {
     return (
-      <div className="space-y-4">
-        <KitchenPageHeader
-          eyebrow="Reportes Cocina"
-          title="Dashboard gerencial de catering"
-          description="Resumen financiero de servicios: estimado, compra, consumo real y remanente recuperable."
-        />
-        <StatePanel
-          kind="empty"
-          title="Aún no hay servicios con información financiera suficiente"
-          message="Cuando existan servicios de catering con costeo, requisición, recepción o consumo, aparecerán aquí para análisis gerencial."
-        />
-      </div>
+      <StatePanel
+        kind="empty"
+        title="Aún no hay servicios con información financiera suficiente"
+        message="Cuando existan servicios de catering con costeo, requisición, recepción o consumo, aparecerán aquí para análisis gerencial."
+      />
     );
   }
 
   return (
     <div className="space-y-4">
-      <KitchenPageHeader
-        eyebrow="Reportes Cocina"
-        title="Dashboard gerencial de catering"
-        description="Resumen financiero de servicios: estimado, compra, consumo real y remanente recuperable."
-        metadata={
-          <>
-            <span>Servicios analizados: {dashboard.summary.servicesAnalyzed.toLocaleString("es-MX")}</span>
-            <span className="mx-2">·</span>
-            <span>Servicios con revisión: {dashboard.summary.servicesRequiringReview.toLocaleString("es-MX")}</span>
-          </>
-        }
-      />
+      <div className="text-xs text-muted">
+        <span>Servicios analizados: {dashboard.summary.servicesAnalyzed.toLocaleString("es-MX")}</span>
+        <span className="mx-2">·</span>
+        <span>Servicios con revisión: {dashboard.summary.servicesRequiringReview.toLocaleString("es-MX")}</span>
+      </div>
 
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">

@@ -12,7 +12,7 @@ export default async function PlatformLayout({ children }: { children: ReactNode
   const theme = await getThemeFromCookies();
 
   return (
-    <AppShell navSections={platformNav} userEmail={user.email} theme={theme}>
+    <AppShell variant="platform" navSections={platformNav} userEmail={user.email} theme={theme}>
       {children}
     </AppShell>
   );

@@ -1,10 +1,18 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
-export function Skeleton({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+type SkeletonProps = HTMLAttributes<HTMLDivElement> & {
+  shimmer?: boolean;
+};
+
+export function Skeleton({ className, shimmer = false, ...props }: SkeletonProps) {
   return (
     <div
-      className={cn("animate-pulse rounded-[var(--radius-base)] bg-surface-2", className)}
+      className={cn(
+        "rounded-[var(--radius-base)] bg-surface-2",
+        shimmer ? "skeleton-shimmer" : "animate-pulse",
+        className,
+      )}
       {...props}
     />
   );

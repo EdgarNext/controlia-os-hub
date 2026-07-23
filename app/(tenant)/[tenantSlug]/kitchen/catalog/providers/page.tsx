@@ -1,0 +1,35 @@
+import Link from "next/link";
+import type { Metadata } from "next";
+import { Suspense } from "react";
+import { Boxes, Building2, CircleOff, Package, SearchX } from "lucide-react";
+import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
+import { getKitchenSupplierListData, type SupplierScope } from "@/lib/kitchen/inventory/suppliers";
+import { StatePanel } from "@/components/ui/state-panel";
+import { KitchenMetricCard } from "../../_components/kitchen-metric-card";
+import { KitchenPageHeader } from "../../_components/kitchen-page-header";
+import { CatalogSectionNav } from "../_components/catalog-section-nav";
+import { CatalogPagination } from "../_components/catalog-pagination";
+import { SupplierFormDialog } from "@/components/kitchen/supplier-form-dialog";
+import { SupplierFilters } from "./_components/supplier-filters";
+import { resolveKitchenPage } from "../../_lib/page-access";
+import { KitchenCatalogContentSkeleton } from "../../_components/kitchen-loading-skeletons";
+
+type Props = { params: Promise<{ tenantSlug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> };
+export const metadata: Metadata = { title: "Proveedores" };
+const text = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] ?? "" : value ?? "";
+
+export default async function KitchenSuppliersPage({ params, searchParams }: Props) {
+  const { tenantSlug } = await params;
+  const raw = await searchParams;
+  return <div className="space-y-4"><KitchenPageHeader eyebrow="Cocina · Proveedores" title="Proveedores" description="Administra los proveedores utilizados para comprar insumos y actualizar precios." icon={<Building2 className="h-4 w-4" aria-hidden="true" />} /><CatalogSectionNav tenantSlug={tenantSlug} activeSection="providers" /><Suspense fallback={<KitchenCatalogContentSkeleton supplier />}><SupplierContent tenantSlug={tenantSlug} rawSearchParams={raw} /></Suspense></div>;
+}
+
+async function SupplierContent({ tenantSlug, rawSearchParams }: { tenantSlug: string; rawSearchParams: Record<string, string | string[] | undefined> }) {
+  const access = await resolveKitchenPage(tenantSlug, "kitchen_inventory", "suppliers");
+  if (!access.ok) return <StatePanel kind="permission" title="Sin permisos para proveedores" message="No tienes acceso al catálogo de proveedores." />;
+  const accessMap = await getCurrentTenantModulePageAccessMap(access.tenant.tenantId, "kitchen_inventory"); const canManage = hasModulePageAccess(accessMap.suppliers ?? "none", "manage");
+  const status = text(rawSearchParams.status) as SupplierScope; const filters = { query: text(rawSearchParams.q), status: status === "inactive" || status === "all" ? status : "active" as SupplierScope }; const data = await getKitchenSupplierListData(access.tenant.tenantId, filters, Number(text(rawSearchParams.page)) || 1);
+  const queryString = (page: number) => { const params = new URLSearchParams(); if (filters.query) params.set("q", filters.query); if (filters.status !== "active") params.set("status", filters.status); params.set("page", String(page)); return `?${params}`; }; const date = (value: string | null) => value ? new Date(value).toLocaleDateString("es-MX") : "Sin actualizaciones";
+  const statusBadge = (row: (typeof data.rows)[number]) => row.review ? <span className="rounded-full bg-warning/10 px-2 py-1 text-xs text-warning">Requiere revisión</span> : <span className={`rounded-full px-2 py-1 text-xs ${row.is_active ? "bg-success/10 text-success" : "bg-surface-2 text-muted"}`}>{row.is_active ? "Activo" : "Desactivado"}</span>;
+  return <><div className="flex justify-end">{canManage ? <SupplierFormDialog tenantSlug={tenantSlug} /> : null}</div><SupplierFilters />{data.total === 0 ? <section className="rounded border border-border bg-surface p-8 text-center"><SearchX className="mx-auto h-8 w-8 text-muted" aria-hidden="true" /><h2 className="mt-3 font-semibold">{filters.query || filters.status !== "active" ? "No encontramos proveedores con estos filtros." : "Todavía no hay proveedores registrados."}</h2></section> : <><section className="grid gap-2 md:grid-cols-4"><KitchenMetricCard label="Proveedores activos" value={data.summary.active} icon={<Building2 className="h-4 w-4" aria-hidden="true" />} /><KitchenMetricCard label="Con insumos asociados" value={data.summary.withItems} icon={<Package className="h-4 w-4" aria-hidden="true" />} /><KitchenMetricCard label="Sin presentaciones" value={data.summary.withoutPresentations} icon={<Boxes className="h-4 w-4" aria-hidden="true" />} tone={data.summary.withoutPresentations ? "warning" : "default"} /><KitchenMetricCard label="Desactivados" value={data.summary.inactive} icon={<CircleOff className="h-4 w-4" aria-hidden="true" />} /></section><div className="hidden overflow-x-auto rounded border border-border bg-surface md:block"><table className="w-full text-left text-sm"><thead className="sticky top-0 z-10 border-b border-border bg-surface text-xs text-muted"><tr><th className="p-3">Proveedor</th><th className="p-3">Contacto</th><th className="p-3">Insumos</th><th className="p-3">Presentaciones</th><th className="p-3">Última actualización</th><th className="p-3">Estado</th><th className="p-3"><span className="sr-only">Acción</span></th></tr></thead><tbody>{data.rows.map((row) => <tr key={row.id} className="border-b border-border transition-colors last:border-0 hover:bg-surface-2"><td className="p-3"><div className="font-medium">{row.name}</div><div className="text-xs text-muted">{row.email ?? row.phone ?? "Sin datos de contacto"}</div></td><td className="p-3">{row.contact_name ?? row.phone ?? row.email ?? "—"}</td><td className="p-3">{row.itemCount}</td><td className="p-3">{row.activePresentationCount}</td><td className="p-3">{date(row.lastPriceUpdatedAt)}</td><td className="p-3">{statusBadge(row)}</td><td className="p-3 text-right"><Link className="text-primary hover:underline" href={`/${tenantSlug}/kitchen/catalog/providers/${row.id}`}>Ver detalle</Link></td></tr>)}</tbody></table></div><div className="space-y-2 md:hidden">{data.rows.map((row) => <Link key={row.id} href={`/${tenantSlug}/kitchen/catalog/providers/${row.id}`} className="block rounded border border-border bg-surface p-3"><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{row.name}</div><div className="text-xs text-muted">{row.contact_name ?? row.phone ?? row.email ?? "Sin contacto"}</div></div>{statusBadge(row)}</div><div className="mt-3 grid grid-cols-2 gap-2 text-sm text-muted"><span>Insumos: {row.itemCount}</span><span>Presentaciones: {row.activePresentationCount}</span><span className="col-span-2">Precio: {date(row.lastPriceUpdatedAt)}</span></div></Link>)}</div><CatalogPagination previousHref={data.page > 1 ? queryString(data.page - 1) : undefined} nextHref={data.page < data.pageCount ? queryString(data.page + 1) : undefined} page={data.page} pageCount={data.pageCount} total={data.total} /></>}</>;
+}

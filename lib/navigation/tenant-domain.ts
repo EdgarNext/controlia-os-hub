@@ -26,9 +26,9 @@ export function getTenantDomainMetaByPathname(pathname: string): TenantDomainMet
 
   const rootSegment = segments[1];
   const domainKey: TenantDomainMeta["key"] | null =
-    rootSegment === "dashboard" || rootSegment === "venue" || rootSegment === "events"
+      rootSegment === "dashboard" || rootSegment === "venue" || rootSegment === "events"
       ? "venue"
-      : rootSegment === "catalog" || rootSegment === "reports"
+      : rootSegment === "catalog" || rootSegment === "reports" || rootSegment === "kitchen"
         ? "commercial"
         : rootSegment === "pos"
           ? "cafe"

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import Link from "next/link";
+import type { Metadata } from "next";
 import { StatePanel } from "@/components/ui/state-panel";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
 import {
@@ -9,14 +9,12 @@ import {
   listKitchenRecipeUnits,
 } from "@/lib/kitchen/recipes/queries";
 import { listKitchenRecipeReadinessByRecipes } from "@/lib/kitchen/recipes/readiness";
-import {
-  KitchenActionRowSkeleton,
-  KitchenTableSkeleton,
-} from "../_components/kitchen-loading-skeletons";
+import { KitchenRecipesContentSkeleton } from "../_components/kitchen-loading-skeletons";
 import { KitchenPageHeader } from "../_components/kitchen-page-header";
 import { resolveKitchenPage } from "../_lib/page-access";
 import { CreateKitchenRecipeForm } from "./_components/recipe-forms";
 import { RecipesListInteractive } from "./_components/recipes-list-interactive";
+import { RecipesSectionNav } from "./_components/recipes-section-nav";
 
 type KitchenRecipesPageProps = {
   params: Promise<{ tenantSlug: string }>;
@@ -30,19 +28,37 @@ type RecipesListPayload = {
   versionByRecipe: Awaited<ReturnType<typeof listKitchenRecipeActiveOrDraftVersionsByRecipeIds>>;
 };
 
+export const metadata: Metadata = { title: "Recetas y costeo" };
+
 export default async function KitchenRecipesPage({ params, searchParams }: KitchenRecipesPageProps) {
   const { tenantSlug } = await params;
   const rawSearchParams = await searchParams;
-  const result = await resolveKitchenPage(tenantSlug, "kitchen_recipes", "overview");
 
-  if (!result.ok) {
-    return (
-      <StatePanel
-        kind="permission"
-        title="Sin permisos de recetas"
-        message="Tu usuario no tiene acceso a recetas y costeo en este tenant."
+  return (
+    <div className="space-y-4">
+      <KitchenPageHeader
+        eyebrow="Cocina · Recetas"
+        title="Recetas y costeo"
+        description="Define recetas versionadas con líneas de insumos/sub-recetas y calcula costo operativo actual."
       />
-    );
+      <RecipesSectionNav tenantSlug={tenantSlug} activeSection="recipes" />
+      <Suspense fallback={<KitchenRecipesContentSkeleton />}>
+        <RecipesContent tenantSlug={tenantSlug} rawSearchParams={rawSearchParams} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function RecipesContent({
+  tenantSlug,
+  rawSearchParams,
+}: {
+  tenantSlug: string;
+  rawSearchParams: { q?: string; status?: string; category?: string };
+}) {
+  const result = await resolveKitchenPage(tenantSlug, "kitchen_recipes", "overview");
+  if (!result.ok) {
+    return <StatePanel kind="permission" title="Sin permisos de recetas" message="Tu usuario no tiene acceso a recetas y costeo en este tenant." />;
   }
 
   const accessMap = await getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "kitchen_recipes");
@@ -52,69 +68,34 @@ export default async function KitchenRecipesPage({ params, searchParams }: Kitch
     status: rawSearchParams.status?.trim() ?? "",
     category: rawSearchParams.category?.trim() ?? "",
   };
+  const recipes = await listKitchenRecipes(result.tenant.tenantId);
+  const recipeRefs = recipes.map((recipe) => ({ id: recipe.id, name: recipe.name }));
+  const [readiness, snapshots, versionByRecipe, units] = await Promise.all([
+    listKitchenRecipeReadinessByRecipes(result.tenant.tenantId, recipeRefs),
+    listKitchenRecipeLatestSnapshotsByRecipeIds(result.tenant.tenantId, recipes.map((recipe) => recipe.id)),
+    listKitchenRecipeActiveOrDraftVersionsByRecipeIds(result.tenant.tenantId, recipes.map((recipe) => recipe.id)),
+    canManage ? listKitchenRecipeUnits(result.tenant.tenantId) : Promise.resolve(null),
+  ]);
 
-  const recipesListPromise: Promise<RecipesListPayload> = (async () => {
-    const recipes = await listKitchenRecipes(result.tenant.tenantId);
-    const recipeRefs = recipes.map((recipe) => ({ id: recipe.id, name: recipe.name }));
-    const [readiness, snapshots, versionByRecipe] = await Promise.all([
-      listKitchenRecipeReadinessByRecipes(result.tenant.tenantId, recipeRefs),
-      listKitchenRecipeLatestSnapshotsByRecipeIds(
-        result.tenant.tenantId,
-        recipes.map((recipe) => recipe.id),
-      ),
-      listKitchenRecipeActiveOrDraftVersionsByRecipeIds(
-        result.tenant.tenantId,
-        recipes.map((recipe) => recipe.id),
-      ),
-    ]);
-    return { recipes, readiness, snapshots, versionByRecipe };
-  })();
-
-  const unitsPromise = canManage ? listKitchenRecipeUnits(result.tenant.tenantId) : null;
-
+  const data: RecipesListPayload = { recipes, readiness, snapshots, versionByRecipe };
   return (
-    <div className="space-y-4">
-      <KitchenPageHeader
-        eyebrow="Recetas"
-        title="Recetas y Costeo"
-        description="Define recetas versionadas con líneas de insumos/sub-recetas y calcula costo operativo actual."
-        actions={
-          <>
-            <Link href={`/${tenantSlug}/kitchen/recipes/costing`} className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm">
-              Tablero de costeo
-            </Link>
-            <Link href={`/${tenantSlug}/kitchen/recipes/imports`} className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm">
-              Importaciones recetario
-            </Link>
-          </>
-        }
-      />
-
-      <Suspense fallback={<KitchenTableSkeleton rows={8} columns={7} />}>
-        <RecipesListSection tenantSlug={tenantSlug} initialFilters={initialFilters} dataPromise={recipesListPromise} />
-      </Suspense>
-
-      {canManage && unitsPromise ? (
-        <Suspense fallback={<KitchenActionRowSkeleton actions={1} />}>
-          <CreateRecipeSection tenantSlug={result.tenant.tenantSlug} unitsPromise={unitsPromise} />
-        </Suspense>
-      ) : (
-        <StatePanel kind="permission" title="Solo lectura" message="Solicita permisos manage para crear o editar recetas." />
-      )}
-    </div>
+    <>
+      <RecipesListSection tenantSlug={tenantSlug} initialFilters={initialFilters} data={data} />
+      {canManage && units ? <CreateKitchenRecipeForm tenantSlug={result.tenant.tenantSlug} units={units} /> : <StatePanel kind="permission" title="Solo lectura" message="Solicita permisos manage para crear o editar recetas." />}
+    </>
   );
 }
 
-async function RecipesListSection({
+function RecipesListSection({
   tenantSlug,
   initialFilters,
-  dataPromise,
+  data,
 }: {
   tenantSlug: string;
   initialFilters: { q: string; status: string; category: string };
-  dataPromise: Promise<RecipesListPayload>;
+  data: RecipesListPayload;
 }) {
-  const { recipes, readiness, snapshots, versionByRecipe } = await dataPromise;
+  const { recipes, readiness, snapshots, versionByRecipe } = data;
   const readinessByRecipe = new Map(readiness.map((row) => [row.recipe_id, row]));
   const snapshotByRecipe = new Map<string, { created_at: string; total_cost: number; warnings: unknown[] }>();
 
@@ -129,13 +110,7 @@ async function RecipesListSection({
   }
 
   if (recipes.length === 0) {
-    return (
-      <StatePanel
-        kind="empty"
-        title="Sin recetas registradas"
-        message="Crea la primera receta para iniciar versionado y costeo."
-      />
-    );
+    return <StatePanel kind="empty" title="Sin recetas registradas" message="Crea la primera receta para iniciar versionado y costeo." />;
   }
 
   const recipeRows = recipes.map((recipe) => {
@@ -165,15 +140,4 @@ async function RecipesListSection({
   });
 
   return <RecipesListInteractive tenantSlug={tenantSlug} rows={recipeRows} initialFilters={initialFilters} />;
-}
-
-async function CreateRecipeSection({
-  tenantSlug,
-  unitsPromise,
-}: {
-  tenantSlug: string;
-  unitsPromise: Promise<Awaited<ReturnType<typeof listKitchenRecipeUnits>>>;
-}) {
-  const units = await unitsPromise;
-  return <CreateKitchenRecipeForm tenantSlug={tenantSlug} units={units} />;
 }

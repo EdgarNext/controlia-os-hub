@@ -1,16 +1,24 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import type { Metadata } from "next";
 import { CalendarDays } from "lucide-react";
 import { StatePanel } from "@/components/ui/state-panel";
+import { KitchenPageHeader } from "../_components/kitchen-page-header";
 import { listChefEventsOverviewForTenant } from "@/lib/kitchen/event-catering/chef-costing";
+import { resolveTenantModuleContext } from "@/lib/auth/module-role-guard";
+import { isTenantAccessDeniedError } from "../../../lib/access-errors";
 import { resolveKitchenPage } from "../_lib/page-access";
 import { EventCostingFilters } from "./_components/event-costing-filters";
 import { EventCostingList } from "./_components/event-costing-list";
 import { EventCostingSummaryCards } from "./_components/event-costing-summary-cards";
+import { KitchenEventsContentSkeleton } from "../_components/kitchen-loading-skeletons";
 
 type KitchenEventsPageProps = {
   params: Promise<{ tenantSlug: string }>;
   searchParams: Promise<{ q?: string; status?: string; period?: string }>;
 };
+
+export const metadata: Metadata = { title: "Eventos y costeo" };
 
 export default async function KitchenEventsPage({
   params,
@@ -18,6 +26,29 @@ export default async function KitchenEventsPage({
 }: KitchenEventsPageProps) {
   const { tenantSlug } = await params;
   const rawSearchParams = await searchParams;
+
+  return (
+    <div className="space-y-4">
+      <KitchenPageHeader
+        eyebrow="Cocina"
+        title="Eventos y costeo"
+        description="Identifica qué evento requiere atención, qué falta por configurar y cuál es la siguiente acción para costearlo."
+        icon={<CalendarDays className="h-5 w-5" aria-hidden="true" />}
+      />
+      <Suspense fallback={<KitchenEventsContentSkeleton />}>
+        <KitchenEventsContent tenantSlug={tenantSlug} searchParams={rawSearchParams} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function KitchenEventsContent({
+  tenantSlug,
+  searchParams,
+}: {
+  tenantSlug: string;
+  searchParams: { q?: string; status?: string; period?: string };
+}) {
   const result = await resolveKitchenPage(tenantSlug, "event_catering", "overview");
 
   if (!result.ok) {
@@ -30,39 +61,19 @@ export default async function KitchenEventsPage({
     );
   }
 
-  const overview = await listChefEventsOverviewForTenant(result.tenant.tenantSlug, result.tenant.tenantId, {
-    q: rawSearchParams.q,
-    status: rawSearchParams.status,
-    period: rawSearchParams.period,
-  });
+  const [overview, canCreateEvent] = await Promise.all([
+    listChefEventsOverviewForTenant(result.tenant.tenantSlug, result.tenant.tenantId, {
+      q: searchParams.q,
+      status: searchParams.status,
+      period: searchParams.period,
+    }),
+    canCreateCanonicalEvent(tenantSlug),
+  ]);
 
   if (overview.totalEvents === 0) {
     return (
       <div className="space-y-4">
-        <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-surface-2">
-                  <CalendarDays className="h-5 w-5 text-primary" aria-hidden="true" />
-                </span>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Cocina</p>
-                  <h1 className="text-xl font-semibold text-foreground">Eventos y costeo</h1>
-                </div>
-              </div>
-              <p className="max-w-2xl text-sm text-muted">
-                Configura servicios y recetas, guarda el costo inicial y actualízalo cuando cambien los precios.
-              </p>
-            </div>
-            <Link
-              href={`/${tenantSlug}/events/new`}
-              className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
-            >
-              Crear evento
-            </Link>
-          </div>
-        </section>
+        {canCreateEvent ? <CreateEventLink tenantSlug={tenantSlug} /> : null}
         <StatePanel
           kind="empty"
           title="Todavía no hay eventos para costear."
@@ -74,30 +85,7 @@ export default async function KitchenEventsPage({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2">
-              <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-surface-2">
-                <CalendarDays className="h-5 w-5 text-primary" aria-hidden="true" />
-              </span>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Cocina</p>
-                <h1 className="text-xl font-semibold text-foreground">Eventos y costeo</h1>
-              </div>
-            </div>
-            <p className="max-w-2xl text-sm text-muted">
-              Identifica qué evento requiere atención, qué falta por configurar y cuál es la siguiente acción para costearlo.
-            </p>
-          </div>
-          <Link
-            href={`/${tenantSlug}/events/new`}
-            className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
-          >
-            Crear evento
-          </Link>
-        </div>
-      </section>
+      {canCreateEvent ? <CreateEventLink tenantSlug={tenantSlug} /> : null}
 
       <EventCostingSummaryCards
         upcomingEvents={overview.metrics.upcomingEvents}
@@ -156,6 +144,32 @@ export default async function KitchenEventsPage({
           />
         </>
       )}
+    </div>
+  );
+}
+
+async function canCreateCanonicalEvent(tenantSlug: string): Promise<boolean> {
+  try {
+    await resolveTenantModuleContext(tenantSlug, "event_core", "manage");
+    return true;
+  } catch (error) {
+    if (isTenantAccessDeniedError(error)) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+function CreateEventLink({ tenantSlug }: { tenantSlug: string }) {
+  return (
+    <div className="flex justify-end">
+      <Link
+        href={`/${tenantSlug}/events/new`}
+        className="inline-flex rounded-[var(--radius-base)] border border-border bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+      >
+        Crear evento
+      </Link>
     </div>
   );
 }

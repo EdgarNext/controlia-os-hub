@@ -47,6 +47,7 @@ export function SearchableSelect({
   clearable = false,
 }: SearchableSelectProps) {
   const selectId = id ?? name;
+  const listboxId = `${selectId}-listbox`;
   const describedById = errorText ? `${selectId}-error` : helpText ? `${selectId}-help` : undefined;
   const rootRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -136,9 +137,12 @@ export function SearchableSelect({
         <button
           id={selectId}
           type="button"
+          role="combobox"
           disabled={disabled}
           aria-describedby={describedById}
+          aria-invalid={Boolean(errorText) || undefined}
           aria-expanded={isOpen}
+          aria-controls={listboxId}
           onClick={() => {
             if (disabled) return;
             setHighlightedIndex(0);
@@ -183,7 +187,7 @@ export function SearchableSelect({
                 </button>
               ) : null}
             </div>
-            <ul role="listbox" className="mt-2 max-h-56 overflow-auto rounded-[var(--radius-base)] border border-border bg-surface">
+            <ul id={listboxId} role="listbox" className="mt-2 max-h-56 overflow-auto rounded-[var(--radius-base)] border border-border bg-surface">
               {filteredOptions.length === 0 ? (
                 <li className="px-3 py-2 text-sm text-muted">{emptyText}</li>
               ) : (

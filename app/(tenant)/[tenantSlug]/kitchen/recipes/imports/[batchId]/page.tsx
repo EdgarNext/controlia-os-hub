@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { StatePanel } from "@/components/ui/state-panel";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
 import { getRecipeImportBatch, listPendingImportRowsByRecipe, listRecipeImportRows } from "@/lib/kitchen/recipes/import-queries";
@@ -8,6 +9,10 @@ import {
   RevalidateRecipeImportBatchForm,
   ValidateRecipeImportBatchForm,
 } from "../../_components/import-forms";
+import { KitchenTableSkeleton } from "../../../_components/kitchen-loading-skeletons";
+import { KitchenPageHeader } from "../../../_components/kitchen-page-header";
+import { getRecipeImportStatusLabel } from "../../_components/recipe-status-labels";
+import { RecipesSectionNav } from "../../_components/recipes-section-nav";
 
 type KitchenRecipeImportBatchDetailPageProps = {
   params: Promise<{ tenantSlug: string; batchId: string }>;
@@ -15,6 +20,10 @@ type KitchenRecipeImportBatchDetailPageProps = {
 
 export default async function KitchenRecipeImportBatchDetailPage({ params }: KitchenRecipeImportBatchDetailPageProps) {
   const { tenantSlug, batchId } = await params;
+  return <div className="space-y-4"><KitchenPageHeader eyebrow="Cocina · Recetas" title="Detalle de importación" description="Revisa el resultado del staging, la validación y las líneas aplicadas del recetario." /><RecipesSectionNav tenantSlug={tenantSlug} activeSection="imports" /><Suspense fallback={<div className="space-y-4" aria-live="polite" aria-busy="true"><KitchenTableSkeleton rows={5} columns={7} /><KitchenTableSkeleton rows={8} columns={9} /></div>}><BatchDetailContent tenantSlug={tenantSlug} batchId={batchId} /></Suspense></div>;
+}
+
+async function BatchDetailContent({ tenantSlug, batchId }: { tenantSlug: string; batchId: string }) {
   const result = await resolveKitchenPage(tenantSlug, "kitchen_recipes", "imports");
 
   if (!result.ok) {
@@ -48,10 +57,8 @@ export default async function KitchenRecipeImportBatchDetailPage({ params }: Kit
   return (
     <div className="space-y-4">
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h1 className="text-lg font-semibold text-foreground">Batch Recetario: {batch.original_filename}</h1>
-        <p className="mt-2 text-sm text-muted">
-          status={batch.status} rows={batch.total_rows} recipes={batch.parsed_recipes} lines={batch.parsed_lines} valid={batch.valid_rows} warning={batch.warning_rows} error={batch.error_rows} applied_lines={batch.applied_lines}
-        </p>
+        <h2 className="text-sm font-semibold text-foreground">{batch.original_filename}</h2>
+        <p className="mt-2 text-sm text-muted">Estado: {getRecipeImportStatusLabel(batch.status)} · Filas: {batch.total_rows} · Recetas: {batch.parsed_recipes} · Líneas: {batch.parsed_lines} · Válidas: {batch.valid_rows} · Advertencias: {batch.warning_rows} · Errores: {batch.error_rows} · Líneas aplicadas: {batch.applied_lines}</p>
       </section>
 
       {canManage ? (
@@ -103,15 +110,15 @@ export default async function KitchenRecipeImportBatchDetailPage({ params }: Kit
             <table className="w-full min-w-[1380px] text-left text-sm">
               <thead className="text-xs uppercase tracking-[0.08em] text-muted">
                 <tr>
-                  <th className="py-2">Row</th>
+                  <th className="py-2">Fila</th>
                   <th className="py-2">Receta</th>
                   <th className="py-2">Ingrediente</th>
                   <th className="py-2">Unidad</th>
                   <th className="py-2 text-right">Cantidad</th>
-                  <th className="py-2">Action</th>
-                  <th className="py-2">Status</th>
-                  <th className="py-2">Warnings</th>
-                  <th className="py-2">Errors</th>
+                  <th className="py-2">Acción</th>
+                  <th className="py-2">Estado</th>
+                  <th className="py-2">Advertencias</th>
+                  <th className="py-2">Errores</th>
                 </tr>
               </thead>
               <tbody>
@@ -123,7 +130,7 @@ export default async function KitchenRecipeImportBatchDetailPage({ params }: Kit
                     <td className="py-2">{row.unit_code ?? "—"}</td>
                     <td className="py-2 text-right">{row.quantity ?? "—"}</td>
                     <td className="py-2">{row.action === "alias_required" ? "pendiente" : row.action}</td>
-                    <td className="py-2">{row.status === "warning" && row.action === "alias_required" ? "pendiente revisión" : row.status}</td>
+                    <td className="py-2">{row.status === "warning" && row.action === "alias_required" ? "Pendiente de revisión" : row.status === "applied" ? "Aplicada" : row.status === "valid" ? "Válida" : row.status === "error" ? "Error" : row.status}</td>
                     <td className="py-2 text-warning">{row.validation_warnings?.join("; ") || "—"}</td>
                     <td className="py-2 text-danger">{row.validation_errors?.join("; ") || "—"}</td>
                   </tr>

@@ -1,7 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
-import { type ReactNode, useEffect, useId } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 
 type ModalProps = {
@@ -13,6 +13,7 @@ type ModalProps = {
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const portalTarget = typeof document !== "undefined" ? document.body : null;
 
   useEffect(() => {
@@ -30,6 +31,17 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
 
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, onClose]);
+
+  function handleDialogKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab") return;
+    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (!focusable?.length) return;
+    const first = focusable[0]; const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
 
   useEffect(() => {
     if (!open) {
@@ -60,11 +72,13 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
       />
 
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         className={`relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius-base)] border border-border bg-surface p-5 text-foreground shadow-[var(--shadow-soft)] ${open ? "modal-panel-in" : "modal-panel-out"}`}
         onClick={(event) => event.stopPropagation()}
+        onKeyDown={handleDialogKeyDown}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <h3 id={titleId} className="text-base font-semibold">

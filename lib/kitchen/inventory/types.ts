@@ -23,6 +23,10 @@ export type KitchenInventorySupplier = {
   tenant_id: string;
   name: string;
   normalized_name: string;
+  contact_name: string | null;
+  phone: string | null;
+  email: string | null;
+  notes: string | null;
   is_active: boolean;
 };
 

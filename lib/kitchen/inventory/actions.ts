@@ -8,6 +8,9 @@ import { normalizeKitchenCode, normalizeKitchenName } from "./normalizers";
 export type KitchenInventoryActionState = {
   ok: boolean;
   message: string;
+  supplierId?: string;
+  supplierName?: string;
+  duplicateSupplierId?: string;
 };
 
 function toTrimmedString(input: FormDataEntryValue | null): string {
@@ -64,6 +67,8 @@ function revalidateKitchenInventoryPaths(tenantSlug: string) {
   revalidatePath(`/${tenantSlug}/kitchen/inventory/data-quality`);
   revalidatePath(`/${tenantSlug}/kitchen/inventory/movements`);
   revalidatePath(`/${tenantSlug}/kitchen/reports`);
+  revalidatePath(`/${tenantSlug}/kitchen/catalog`);
+  revalidatePath(`/${tenantSlug}/kitchen/catalog/providers`);
 }
 
 export async function createKitchenInventoryCategoryAction(
@@ -141,6 +146,10 @@ export async function createKitchenInventorySupplierAction(
   try {
     const tenantSlug = toTrimmedString(formData.get("tenantSlug")).toLowerCase();
     const name = toTrimmedString(formData.get("name"));
+    const contactName = toTrimmedString(formData.get("contactName"));
+    const phone = toTrimmedString(formData.get("phone"));
+    const email = toTrimmedString(formData.get("email"));
+    const notes = toTrimmedString(formData.get("notes"));
 
     if (!tenantSlug || !name) {
       return { ok: false, message: "Tenant y nombre son obligatorios." };
@@ -154,16 +163,24 @@ export async function createKitchenInventorySupplierAction(
     );
 
     const supabase = await getSupabaseServerClient();
-    const { error } = await supabase.from("kitchen_inventory_suppliers").insert({
+    const normalizedName = normalizeKitchenName(name);
+    const duplicate = await supabase.from("kitchen_inventory_suppliers").select("id").eq("tenant_id", tenant.tenantId).eq("normalized_name", normalizedName).maybeSingle();
+    if (duplicate.error) throw duplicate.error;
+    if (duplicate.data) return { ok: false, message: "Ya existe un proveedor con este nombre.", duplicateSupplierId: duplicate.data.id };
+    const { data, error } = await supabase.from("kitchen_inventory_suppliers").insert({
       tenant_id: tenant.tenantId,
       name,
-      normalized_name: normalizeKitchenName(name),
+      normalized_name: normalizedName,
+      contact_name: contactName || null,
+      phone: phone || null,
+      email: email || null,
+      notes: notes || null,
       created_by: user.id,
-    });
+    }).select("id").single();
 
     if (error) throw new Error(`No se pudo crear el proveedor: ${error.message}`);
     revalidateKitchenInventoryPaths(tenant.tenantSlug);
-    return { ok: true, message: "Proveedor creado." };
+    return { ok: true, message: "Proveedor creado. Ahora puedes asociarlo con insumos y presentaciones.", supplierId: data.id, supplierName: name };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "No se pudo crear el proveedor." };
   }

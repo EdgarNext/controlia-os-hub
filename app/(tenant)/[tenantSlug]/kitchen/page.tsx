@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { StatePanel } from "@/components/ui/state-panel";
 import { KitchenPageHeader } from "./_components/kitchen-page-header";
 import { resolveKitchenPage } from "./_lib/page-access";
@@ -6,6 +7,8 @@ import { resolveKitchenPage } from "./_lib/page-access";
 type KitchenHomePageProps = {
   params: Promise<{ tenantSlug: string }>;
 };
+
+export const metadata: Metadata = { title: "Cocina y operación de eventos" };
 
 export default async function KitchenHomePage({ params }: KitchenHomePageProps) {
   const { tenantSlug } = await params;

@@ -320,6 +320,14 @@ const kitchenNavDomain: TenantNavDomainConfig = {
   moduleKeys: ["kitchen_inventory", "kitchen_recipes", "event_catering"],
   items: [
       {
+        href: (tenantSlug) => `/${tenantSlug}/kitchen/catalog`,
+        label: "Catálogo de insumos",
+        iconKey: "catalog",
+        match: "prefix",
+        moduleKeys: ["kitchen_inventory"],
+        pageKey: "items",
+      },
+      {
         href: (tenantSlug) => `/${tenantSlug}/kitchen/recipes`,
         label: "Recetas",
         iconKey: "products",

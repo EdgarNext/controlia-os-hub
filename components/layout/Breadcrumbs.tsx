@@ -6,9 +6,9 @@ import { ChevronRight } from "lucide-react";
 import { getTenantDomainMetaByPathname } from "@/lib/navigation/tenant-domain";
 import { buildBreadcrumbs } from "@/lib/navigation/breadcrumbs";
 
-export function Breadcrumbs() {
+export function Breadcrumbs({ tenantName }: { tenantName?: string }) {
   const pathname = usePathname();
-  const crumbs = buildBreadcrumbs(pathname);
+  const crumbs = buildBreadcrumbs(pathname, tenantName);
   const domainMeta = getTenantDomainMetaByPathname(pathname);
 
   return (

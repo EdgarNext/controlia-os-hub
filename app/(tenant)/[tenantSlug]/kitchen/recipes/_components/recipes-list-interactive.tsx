@@ -5,6 +5,7 @@ import { useDeferredValue, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { StatePanel } from "@/components/ui/state-panel";
 import { formatKitchenUnit } from "@/lib/kitchen/formatters";
+import { getRecipeStatusLabel, getRecipeVersionStatusLabel } from "./recipe-status-labels";
 
 type RecipeListRow = {
   id: string;
@@ -81,7 +82,7 @@ export function RecipesListInteractive({ tenantSlug, rows, initialFilters }: Rec
     const list: Array<{ key: "q" | "status" | "category"; label: string }> = [];
     const q = qInput.trim();
     if (q) list.push({ key: "q", label: `Búsqueda: ${q}` });
-    if (statusFilter) list.push({ key: "status", label: `Estado: ${statusFilter}` });
+    if (statusFilter) list.push({ key: "status", label: `Estado: ${getRecipeStatusLabel(statusFilter)}` });
     if (categoryFilter) list.push({ key: "category", label: `Categoría: ${categoryFilter}` });
     return list;
   }, [qInput, statusFilter, categoryFilter]);
@@ -126,9 +127,9 @@ export function RecipesListInteractive({ tenantSlug, rows, initialFilters }: Rec
               className="mt-1 h-10 w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 text-sm text-foreground"
             >
               <option value="">Todos</option>
-              {statusOptions.map((status) => (
-                <option key={status} value={status}>
-                  {status}
+                  {statusOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {getRecipeStatusLabel(status)}
                 </option>
               ))}
             </select>
@@ -164,7 +165,7 @@ export function RecipesListInteractive({ tenantSlug, rows, initialFilters }: Rec
 
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
           <span className="text-muted">Resultados: {filteredRows.length.toLocaleString("es-MX")}</span>
-          {isFiltering ? <span className="rounded-full bg-surface-2 px-2 py-0.5 text-primary">Filtrando...</span> : null}
+              {isFiltering ? <span className="rounded-full bg-surface-2 px-2 py-0.5 text-primary" role="status">Actualizando resultados…</span> : null}
         </div>
 
         {activeFilters.length > 0 ? (
@@ -174,9 +175,10 @@ export function RecipesListInteractive({ tenantSlug, rows, initialFilters }: Rec
                 key={chip.key}
                 type="button"
                 onClick={() => clearOne(chip.key)}
+                aria-label={`Quitar ${chip.label}`}
                 className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-3 py-1 text-xs text-foreground"
               >
-                {chip.label}
+                <span>{chip.label}</span>
                 <span aria-hidden="true">×</span>
               </button>
             ))}
@@ -227,7 +229,7 @@ export function RecipesListInteractive({ tenantSlug, rows, initialFilters }: Rec
                           {row.hasWarnings ? <Badge variant="warning">Con alertas de costeo</Badge> : null}
                           {row.isTest ? <Badge variant="warning">TEST</Badge> : null}
                         </div>
-                        <p className="mt-1 text-xs text-muted">{row.readinessReason ?? row.recipeStatus}</p>
+                        <p className="mt-1 text-xs text-muted">{row.readinessReason ?? getRecipeStatusLabel(row.recipeStatus)}</p>
                       </td>
                       <td className="py-2 text-foreground">
                         {Number(row.yieldQuantity).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {formatKitchenUnit(row.yieldUnitCode)}
@@ -237,7 +239,7 @@ export function RecipesListInteractive({ tenantSlug, rows, initialFilters }: Rec
                           ? `$${row.costPerYieldUnit.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                           : "—"}
                       </td>
-                      <td className="py-2 text-foreground">{row.versionNumber != null ? `v${row.versionNumber} (${row.versionStatus})` : "—"}</td>
+                      <td className="py-2 text-foreground">{row.versionNumber != null ? `v${row.versionNumber} (${getRecipeVersionStatusLabel(row.versionStatus)})` : "—"}</td>
                       <td className="py-2 text-foreground">{row.pendingIngredientCount}</td>
                       <td className="py-2 text-muted">{row.snapshotCreatedAt ? new Date(row.snapshotCreatedAt).toLocaleString("es-MX") : "—"}</td>
                     </tr>

@@ -1,18 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   CheckCircle2,
-  Circle,
   ListPlus,
   PackagePlus,
-  ReceiptText,
   Search,
   ShoppingCart,
   TriangleAlert,
 } from "lucide-react";
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Collapsible } from "@/components/ui/Collapsible";
@@ -33,6 +32,7 @@ import type {
   KitchenInventoryPriceUpdateRecentBatch,
 } from "@/lib/kitchen/inventory/price-updates";
 import type { KitchenInventorySupplier, KitchenInventoryUnit } from "@/lib/kitchen/inventory/types";
+import { usePriceUpdatesFlow } from "./price-updates-flow-shell";
 
 type ExistingDraftLine = ExistingPurchaseOptionDraftLine & {
   id: string;
@@ -126,6 +126,20 @@ function formatCurrency(value: number): string {
   return `$${value.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function operationalUnitLabel(item: KitchenInventoryPriceUpdateItem | null): string {
+  const raw = (item?.defaultUnitCode ?? item?.defaultUnitName ?? "unidad").trim().toLocaleLowerCase("es-MX");
+  if (["kg", "kilogramo", "kilogramos"].includes(raw)) return "kg";
+  if (["l", "lt", "litro", "litros"].includes(raw)) return "litro";
+  if (["ml", "mililitro", "mililitros"].includes(raw)) return "ml";
+  if (["g", "gramo", "gramos"].includes(raw)) return "g";
+  if (["pza", "pieza", "piezas", "ud", "unidad", "unidades"].includes(raw)) return "pieza";
+  return item?.defaultUnitCode ?? item?.defaultUnitName ?? "unidad";
+}
+
+function formatOperationalCost(value: number, item: KitchenInventoryPriceUpdateItem | null): string {
+  return `${formatCurrency(value)}/${operationalUnitLabel(item)}`;
+}
+
 function formatDate(value: string | null): string {
   if (!value) return "—";
   const parsed = new Date(value);
@@ -205,6 +219,7 @@ export function PriceUpdatesClient({
   upcomingEventsWithoutInitialSnapshot,
   recentBatches,
 }: PriceUpdatesClientProps) {
+  const router = useRouter();
   const [state, formAction, isPending] = useActionState(
     applyKitchenInventoryPriceUpdateBatchAction,
     initialKitchenInventoryActionState,
@@ -223,8 +238,10 @@ export function PriceUpdatesClient({
   const [manualDraft, setManualDraft] = useState<ManualDraft>(createManualDraft);
   const [flashInvoicePanel, setFlashInvoicePanel] = useState(false);
   const [pendingSupplierId, setPendingSupplierId] = useState<string | null>(null);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
   const previousMessage = useRef("");
   const invoicePanelRef = useRef<HTMLElement | null>(null);
+  const { setCurrentStep } = usePriceUpdatesFlow();
 
   const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const supplierById = useMemo(() => new Map(suppliers.map((supplier) => [supplier.id, supplier])), [suppliers]);
@@ -265,13 +282,14 @@ export function PriceUpdatesClient({
         setManualDraft(createManualDraft());
         setIdempotencyKey(`price-update-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
         setFlashInvoicePanel(false);
+        router.refresh();
       }, 0);
       return () => window.clearTimeout(timeoutId);
     }
 
     toast.error("No se pudo aplicar la factura. No se creó ninguna presentación ni se actualizó ningún precio.");
     return;
-  }, [state.message, state.ok]);
+  }, [router, state.message, state.ok]);
 
   function getSupplierScopedOptions(itemId: string) {
     const item = itemById.get(itemId);
@@ -319,6 +337,10 @@ export function PriceUpdatesClient({
   const selectedSupplierName = supplierById.get(supplierId)?.name ?? "Proveedor";
   const stepOneComplete = Boolean(supplierId && invoiceRef.trim() && invoiceDate.trim());
   const currentStep = !stepOneComplete ? 1 : lines.length === 0 ? 2 : 3;
+
+  useEffect(() => {
+    setCurrentStep(currentStep);
+  }, [currentStep, setCurrentStep]);
 
   const encodedLines = useMemo(() => {
     const payload = lines.map((line) => {
@@ -440,6 +462,28 @@ export function PriceUpdatesClient({
           ? "Agrega al menos un insumo."
           : lineMetrics.issues[0] ?? null;
   const canApplyInvoice = applyBlockingReason == null;
+
+  const supplierError = hasSubmitted && !supplierId ? "Selecciona un proveedor para continuar." : null;
+  const invoiceRefError = hasSubmitted && !invoiceRef.trim() ? "Captura el folio o referencia de la factura." : null;
+  const invoiceDateError = hasSubmitted && !invoiceDate.trim() ? "Captura la fecha de la factura." : null;
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    if (canApplyInvoice) return;
+
+    event.preventDefault();
+    setHasSubmitted(true);
+
+    window.requestAnimationFrame(() => {
+      const firstInvalid = !supplierId
+        ? document.getElementById("price-update-supplier")
+        : !invoiceRef.trim()
+          ? document.getElementById("price-update-invoice-ref")
+          : !invoiceDate.trim()
+            ? document.getElementById("price-update-invoice-date")
+            : null;
+      (firstInvalid as HTMLElement | null)?.focus();
+    });
+  }
 
   const manualItem = itemById.get(manualDraft.itemId) ?? null;
   const manualAvailableOptions =
@@ -612,92 +656,6 @@ export function PriceUpdatesClient({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2">
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface-2">
-                <ReceiptText className="h-5 w-5 text-primary" aria-hidden="true" />
-              </span>
-              <div>
-                <h1 className="text-xl font-semibold text-foreground">Actualizar precios por factura</h1>
-                <p className="text-sm text-muted">
-                  Captura precios y nuevas presentaciones sin tocar inventario físico hasta aplicar la factura.
-                </p>
-              </div>
-            </div>
-            <p className="text-sm text-muted">
-              Esta captura actualiza precios de costeo. No registra entradas de inventario.
-            </p>
-          </div>
-          <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
-            Eventos próximos: 30 días
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Progreso de captura</p>
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
-          {[
-            {
-              step: 1,
-              label: "Datos de factura",
-              summary: stepOneComplete ? "Datos de factura completos" : "Captura proveedor, referencia y fecha.",
-            },
-            {
-              step: 2,
-              label: "Agregar insumos",
-              summary:
-                stepOneComplete && lines.length === 0
-                  ? "Agrega insumos o nuevas presentaciones."
-                  : "Selecciona productos y presentaciones.",
-            },
-            {
-              step: 3,
-              label: "Revisar y aplicar",
-              summary: lines.length > 0 ? "Revisa líneas y aplica la factura." : "Aplica cuando existan líneas listas.",
-            },
-          ].map((step) => {
-            const stateForStep =
-              step.step < currentStep ? "completed" : step.step === currentStep ? "current" : "pending";
-            const Icon = stateForStep === "completed" ? CheckCircle2 : Circle;
-            return (
-              <div
-                key={step.step}
-                aria-current={stateForStep === "current" ? "step" : undefined}
-                className={`rounded-[var(--radius-base)] border p-3 ${
-                  stateForStep === "completed"
-                    ? "border-success/40 bg-success/10"
-                    : stateForStep === "current"
-                      ? "border-primary/40 bg-primary/10"
-                      : "border-border bg-surface-2"
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <Icon
-                    className={`mt-0.5 h-4 w-4 ${
-                      stateForStep === "completed"
-                        ? "text-success"
-                        : stateForStep === "current"
-                          ? "text-primary"
-                          : "text-muted"
-                    }`}
-                    aria-hidden="true"
-                  />
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">
-                      {step.step}. {step.label}
-                    </p>
-                    <p className="mt-1 text-sm text-muted">{step.summary}</p>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
       {upcomingEventsWithoutInitialSnapshot.length > 0 ? (
         <section className="rounded-[var(--radius-base)] border border-warning/50 bg-warning/10 p-4">
           <p className="text-sm font-semibold text-foreground">Eventos próximos sin costeo inicial guardado</p>
@@ -727,7 +685,7 @@ export function PriceUpdatesClient({
         </a>
       ) : null}
 
-      <form action={formAction} className="space-y-4">
+      <form action={formAction} noValidate onSubmit={handleSubmit} className="space-y-4">
         <input type="hidden" name="tenantSlug" value={tenantSlug} />
         <input type="hidden" name="linesJson" value={encodedLines} />
         <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
@@ -740,11 +698,6 @@ export function PriceUpdatesClient({
                 El proveedor definido aquí aplica a todas las líneas de esta factura.
               </p>
             </div>
-            {!supplierId ? (
-              <span className="rounded-full border border-warning/50 bg-warning/10 px-3 py-1 text-xs text-warning">
-                Primero selecciona el proveedor de la factura.
-              </span>
-            ) : null}
           </div>
 
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -753,14 +706,16 @@ export function PriceUpdatesClient({
               name="supplierId"
               label="Proveedor"
               placeholder="Selecciona proveedor"
-              required
               options={supplierOptions}
               defaultValue={supplierId}
               onValueChange={confirmSupplierChange}
+              errorText={supplierError}
               helpText={
-                supplierId
-                  ? "Este proveedor define qué presentaciones puedes usar o crear en la factura."
-                  : "Selecciona un proveedor para ver sus presentaciones y agregar insumos."
+                supplierError
+                  ? undefined
+                  : supplierId
+                    ? "Este proveedor define qué presentaciones puedes usar o crear en la factura."
+                    : undefined
               }
             />
             <div className="space-y-1">
@@ -769,10 +724,12 @@ export function PriceUpdatesClient({
                 id="price-update-invoice-ref"
                 name="invoiceRef"
                 placeholder="FAC-10428"
-                required
+                invalid={Boolean(invoiceRefError)}
+                aria-describedby={invoiceRefError ? "price-update-invoice-ref-error" : undefined}
                 value={invoiceRef}
                 onChange={(event) => setInvoiceRef(event.target.value)}
               />
+              {invoiceRefError ? <p id="price-update-invoice-ref-error" className="text-sm text-danger">{invoiceRefError}</p> : null}
             </div>
             <div className="space-y-1">
               <Label htmlFor="price-update-invoice-date">Fecha de factura</Label>
@@ -780,10 +737,12 @@ export function PriceUpdatesClient({
                 id="price-update-invoice-date"
                 name="invoiceDate"
                 type="date"
+                invalid={Boolean(invoiceDateError)}
+                aria-describedby={invoiceDateError ? "price-update-invoice-date-error" : undefined}
                 value={invoiceDate}
                 onChange={(event) => setInvoiceDate(event.target.value)}
-                required
               />
+              {invoiceDateError ? <p id="price-update-invoice-date-error" className="text-sm text-danger">{invoiceDateError}</p> : null}
             </div>
             <div className="space-y-1">
               <Label htmlFor="price-update-notes">Notas</Label>
@@ -1135,14 +1094,14 @@ export function PriceUpdatesClient({
                         </div>
 
                         <div className="mt-4 rounded-[var(--radius-base)] border border-border bg-surface p-3">
-                          <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Precio de compra</p>
+                          <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Precio de la presentación</p>
                           <div className="mt-3 grid gap-3 md:grid-cols-[160px_minmax(0,1fr)]">
                             <MetricTile
-                              label="Costo por unidad"
-                              value={nextUnitCost != null ? formatCurrency(nextUnitCost) : "Pendiente"}
+                              label={`Costo calculado por ${operationalUnitLabel(item)}`}
+                              value={nextUnitCost != null ? formatOperationalCost(nextUnitCost, item) : "Pendiente"}
                             />
                             <div>
-                              <Label htmlFor={`new-line-price-${line.id}`}>Precio en la factura</Label>
+                              <Label htmlFor={`new-line-price-${line.id}`}>Precio de la presentación</Label>
                               <Input
                                 id={`new-line-price-${line.id}`}
                                 value={line.newPrice}
@@ -1157,6 +1116,11 @@ export function PriceUpdatesClient({
                               ) : null}
                             </div>
                           </div>
+                          {hasValidPrice && quantity != null && quantity > 0 ? (
+                            <p className="mt-3 text-sm text-muted">
+                              La presentación cuesta {formatCurrency(newPrice ?? 0)} y contiene {quantity.toLocaleString("es-MX")} {operationalUnitLabel(item)}. El costo calculado es {formatOperationalCost(nextUnitCost ?? 0, item)}.
+                            </p>
+                          ) : null}
                         </div>
 
                         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1205,7 +1169,7 @@ export function PriceUpdatesClient({
                             <span>
                               <span className="font-medium">Usar esta presentación para próximos costeos</span>
                               <span className="mt-1 block text-sm text-muted">
-                                El costo por unidad calculado será la referencia vigente de este insumo.
+                                Si está seleccionado, {nextUnitCost != null ? formatOperationalCost(nextUnitCost, item) : "el costo calculado"} será el costo vigente usado por recetas y eventos posteriores.
                               </span>
                             </span>
                           </label>
@@ -1292,11 +1256,11 @@ export function PriceUpdatesClient({
                         <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Precio de compra</p>
                         <div className="mt-3 grid gap-3 md:grid-cols-[160px_minmax(0,1fr)]">
                           <MetricTile
-                            label="Vigente"
+                            label="Precio vigente de la presentación"
                             value={selectedOption?.currentPrice ? formatCurrency(selectedOption.currentPrice.pricePerPurchaseUnit) : "—"}
                           />
                           <div>
-                            <Label htmlFor={`price-update-new-${line.id}`}>Nuevo precio</Label>
+                            <Label htmlFor={`price-update-new-${line.id}`}>Nuevo precio de la presentación</Label>
                             <Input
                               id={`price-update-new-${line.id}`}
                               value={line.newPrice}
@@ -1316,13 +1280,13 @@ export function PriceUpdatesClient({
                       </div>
 
                       <div className="mt-4 grid gap-3 md:grid-cols-3">
-                        <MetricTile
-                          label="Costo unitario"
+                            <MetricTile
+                          label={`Costo por ${operationalUnitLabel(item)}`}
                           value={
                             selectedOption?.derivedUnitCost != null
-                              ? `${formatCurrency(selectedOption.derivedUnitCost)} → ${nextUnitCost != null ? formatCurrency(nextUnitCost) : "Pendiente"}`
+                              ? `${formatOperationalCost(selectedOption.derivedUnitCost, item)} → ${nextUnitCost != null ? formatOperationalCost(nextUnitCost, item) : "Pendiente"}`
                               : nextUnitCost != null
-                                ? formatCurrency(nextUnitCost)
+                                ? formatOperationalCost(nextUnitCost, item)
                                 : "Pendiente"
                           }
                         />
@@ -1353,7 +1317,7 @@ export function PriceUpdatesClient({
                           <span>
                             <span className="font-medium">Usar para próximos costeos</span>
                             <span className="mt-1 block text-sm text-muted">
-                              Esta presentación será la referencia para futuros costeos.
+                              Esta presentación será la referencia de costeo por {operationalUnitLabel(item)} para futuros costeos.
                             </span>
                           </span>
                         </label>
@@ -1592,7 +1556,7 @@ export function PriceUpdatesClient({
 
               <div className="grid gap-3 md:grid-cols-2">
                 <MetricTile
-                  label="Costo vigente"
+                  label="Precio vigente de la presentación"
                   value={
                     manualSelectedOption?.currentPrice
                       ? formatCurrency(manualSelectedOption.currentPrice.pricePerPurchaseUnit)
@@ -1600,8 +1564,12 @@ export function PriceUpdatesClient({
                   }
                 />
                 <MetricTile
-                  label="Costo unitario actual"
-                  value={manualSelectedOption?.derivedUnitCost != null ? formatCurrency(manualSelectedOption.derivedUnitCost) : "—"}
+                  label={`Costo vigente por ${operationalUnitLabel(manualItem)}`}
+                  value={
+                    manualSelectedOption?.derivedUnitCost != null
+                      ? formatOperationalCost(manualSelectedOption.derivedUnitCost, manualItem)
+                      : "—"
+                  }
                 />
               </div>
             </>
@@ -1670,7 +1638,7 @@ export function PriceUpdatesClient({
 
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1">
-              <Label htmlFor="manual-price-update-new-price">Precio en la factura</Label>
+              <Label htmlFor="manual-price-update-new-price">Precio de la nueva presentación</Label>
               <Input
                 id="manual-price-update-new-price"
                 value={manualDraft.newPrice}
@@ -1681,14 +1649,24 @@ export function PriceUpdatesClient({
                 placeholder="0.00"
               />
               {manualDraft.mode === "new_purchase_option" && (manualPrice == null || manualPrice <= 0) ? (
-                <p className="text-sm text-warning">Captura el precio de esta presentación tal como aparece en la factura.</p>
+                <p className="text-sm text-warning">Captura el precio total de la bolsa, caja, paquete o presentación tal como aparece en la factura.</p>
               ) : null}
             </div>
             <MetricTile
-              label={manualDraft.mode === "new_purchase_option" ? "Costo por pieza" : "Nuevo costo unitario"}
-              value={manualNewUnitCost != null ? formatCurrency(manualNewUnitCost) : "—"}
+              label={
+                manualDraft.mode === "new_purchase_option"
+                  ? `Costo calculado por ${operationalUnitLabel(manualItem)}`
+                  : `Nuevo costo por ${operationalUnitLabel(manualItem)}`
+              }
+              value={manualNewUnitCost != null ? formatOperationalCost(manualNewUnitCost, manualItem) : "—"}
             />
           </div>
+
+          {manualDraft.mode === "new_purchase_option" && manualPrice != null && manualPrice > 0 && manualQuantity != null && manualQuantity > 0 ? (
+            <p className="text-sm text-muted">
+              La presentación cuesta {formatCurrency(manualPrice)} y contiene {manualQuantity.toLocaleString("es-MX")} {operationalUnitLabel(manualItem)}. El costo calculado es {formatOperationalCost(manualNewUnitCost ?? 0, manualItem)}.
+            </p>
+          ) : null}
 
           <label className="inline-flex items-start gap-2 text-sm text-foreground">
             <input
@@ -1705,9 +1683,9 @@ export function PriceUpdatesClient({
                   ? "Usar esta presentación para próximos costeos"
                   : "Usar para próximos costeos"}
               </span>
-              <span className="mt-1 block text-sm text-muted">
-                El costo por unidad calculado será la referencia vigente de este insumo.
-              </span>
+                <span className="mt-1 block text-sm text-muted">
+                Si está seleccionado, el costo calculado por {operationalUnitLabel(manualItem)} será la referencia vigente de este insumo.
+                </span>
             </span>
           </label>
 
