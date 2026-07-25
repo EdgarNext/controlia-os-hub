@@ -44,6 +44,7 @@ type RetailPosProductRow = {
   sku: string | null;
   barcode: string | null;
   unit_price_cents: number;
+  wholesale_price_cents: number;
   sales_unit_code: string;
   sales_unit_label: string;
   allow_decimal_quantity: boolean;
@@ -69,6 +70,7 @@ type RetailPosVariantRow = {
   sku: string | null;
   barcode: string | null;
   unit_price_cents: number | null;
+  wholesale_price_cents: number | null;
   is_default: boolean;
   is_active: boolean;
   sort_order: number;
@@ -196,6 +198,7 @@ function makeCatalogItemFromProduct(input: {
     sku: input.product.sku,
     barcode: input.product.barcode,
     unit_price_cents: input.product.unit_price_cents,
+    wholesale_price_cents: input.product.wholesale_price_cents,
     sales_unit_code: input.product.sales_unit_code,
     sales_unit_label: input.product.sales_unit_label,
     allow_decimal_quantity: input.product.allow_decimal_quantity,
@@ -220,6 +223,7 @@ function mapProductRowToEntity(row: RetailPosProductRow): RetailPosProduct {
     sku: row.sku,
     barcode: row.barcode,
     unit_price_cents: row.unit_price_cents,
+    wholesale_price_cents: row.wholesale_price_cents,
     sales_unit_code: row.sales_unit_code,
     sales_unit_label: row.sales_unit_label,
     allow_decimal_quantity: row.allow_decimal_quantity,
@@ -406,7 +410,7 @@ async function findExistingProductBySkuOrBarcode(input: {
     const skuResult = await supabase
       .from("retail_pos_products")
       .select(
-        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
+        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
       )
       .eq("tenant_id", input.tenantId)
       .eq("sku", input.sku)
@@ -427,7 +431,7 @@ async function findExistingProductBySkuOrBarcode(input: {
     const barcodeResult = await supabase
       .from("retail_pos_products")
       .select(
-        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
+        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
       )
       .eq("tenant_id", input.tenantId)
       .eq("barcode", input.barcode)
@@ -733,6 +737,7 @@ function mapBackofficeProductRow(input: {
     sales_unit_label: input.product.sales_unit_label,
     allow_decimal_quantity: input.product.allow_decimal_quantity,
     price_cents: input.product.unit_price_cents,
+    wholesale_price_cents: input.product.wholesale_price_cents,
     cost_cents: input.product.cost_cents,
     is_active: input.product.is_active,
     has_variants: input.product.has_variants,
@@ -784,7 +789,7 @@ async function loadBackofficeProductForTenant(input: {
   const { data, error } = await supabase
     .from("retail_pos_products")
     .select(
-      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
+      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
     )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.productId)
@@ -823,6 +828,7 @@ function normalizeBackofficeProductPatch(input: UpdateRetailPosBackofficeProduct
     "sales_unit_label",
     "allow_decimal_quantity",
     "price_cents",
+    "wholesale_price_cents",
     "cost_cents",
     "supplier_id",
     "is_active",
@@ -868,6 +874,9 @@ function normalizeBackofficeProductPatch(input: UpdateRetailPosBackofficeProduct
       case "price_cents":
         patch.unit_price_cents = normalizePositiveInteger(rawValue, "price_cents");
         break;
+      case "wholesale_price_cents":
+        patch.wholesale_price_cents = ensureNonNegativeInteger(rawValue, "wholesale_price_cents");
+        break;
       case "cost_cents":
         patch.cost_cents = rawValue === null ? null : ensureNonNegativeInteger(rawValue, "cost_cents");
         break;
@@ -895,6 +904,7 @@ function normalizeBackofficeProductCreate(input: CreateRetailPosBackofficeProduc
     "sales_unit_label",
     "allow_decimal_quantity",
     "price_cents",
+    "wholesale_price_cents",
     "cost_cents",
     "supplier_id",
     "is_active",
@@ -914,6 +924,9 @@ function normalizeBackofficeProductCreate(input: CreateRetailPosBackofficeProduc
     sales_unit_label: normalizeRequiredString(input.sales_unit_label, "sales_unit_label"),
     allow_decimal_quantity: ensureBoolean(input.allow_decimal_quantity, "allow_decimal_quantity"),
     unit_price_cents: normalizePositiveInteger(input.price_cents, "price_cents"),
+    wholesale_price_cents: input.wholesale_price_cents == null
+      ? normalizePositiveInteger(input.price_cents, "price_cents")
+      : ensureNonNegativeInteger(input.wholesale_price_cents, "wholesale_price_cents"),
     cost_cents: input.cost_cents === undefined || input.cost_cents === null
       ? null
       : ensureNonNegativeInteger(input.cost_cents, "cost_cents"),
@@ -1055,6 +1068,7 @@ function buildCatalogItems(input: {
         sku: product.sku,
         barcode: product.barcode,
         unit_price_cents: product.unit_price_cents,
+        wholesale_price_cents: product.wholesale_price_cents,
         sales_unit_code: product.sales_unit_code,
         sales_unit_label: product.sales_unit_label,
         allow_decimal_quantity: product.allow_decimal_quantity,
@@ -1079,6 +1093,7 @@ function buildCatalogItems(input: {
         sku: variant.sku ?? product.sku,
         barcode: variant.barcode ?? product.barcode,
         unit_price_cents: variant.unit_price_cents ?? product.unit_price_cents,
+        wholesale_price_cents: variant.wholesale_price_cents ?? product.wholesale_price_cents,
         sales_unit_code: product.sales_unit_code,
         sales_unit_label: product.sales_unit_label,
         allow_decimal_quantity: product.allow_decimal_quantity,
@@ -1209,7 +1224,7 @@ export async function getRetailPosCatalogForTenant(input: {
         supabase
           .from("retail_pos_products")
           .select(
-            "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, updated_at",
+            "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, updated_at",
           )
           .abortSignal(signal)
           .eq("tenant_id", actor.tenantId)
@@ -1224,7 +1239,7 @@ export async function getRetailPosCatalogForTenant(input: {
       query: (signal, from, to) =>
         supabase
           .from("retail_pos_product_variants")
-          .select("id, tenant_id, product_id, name, sku, barcode, unit_price_cents, is_default, is_active, sort_order, deleted_at, updated_at")
+          .select("id, tenant_id, product_id, name, sku, barcode, unit_price_cents, wholesale_price_cents, is_default, is_active, sort_order, deleted_at, updated_at")
           .abortSignal(signal)
           .eq("tenant_id", actor.tenantId)
           .eq("is_active", true)
@@ -1349,14 +1364,14 @@ export async function getRetailPosCatalogChangesForTenant(input: {
       supabase
         .from("retail_pos_products")
         .select(
-          "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, updated_at",
+          "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, updated_at",
         )
         .eq("tenant_id", actor.tenantId)
         .in("id", changedProductIds),
       supabase
         .from("retail_pos_product_variants")
         .select(
-          "id, tenant_id, product_id, name, sku, barcode, unit_price_cents, is_default, is_active, sort_order, deleted_at, updated_at",
+          "id, tenant_id, product_id, name, sku, barcode, unit_price_cents, wholesale_price_cents, is_default, is_active, sort_order, deleted_at, updated_at",
         )
         .eq("tenant_id", actor.tenantId)
         .is("deleted_at", null)
@@ -1437,7 +1452,7 @@ export async function assignRetailPosProductBarcode(input: {
     throw new RetailPosRuntimeError(401, "device auth is required for retail_pos catalog maintenance.");
   }
 
-  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station"]);
+  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station", "backoffice_station"]);
 
   const productId = normalizeRequiredString(input.productId, "productId");
   const barcode = normalizeBarcode(input.request.barcode, { required: true }) as string;
@@ -1475,7 +1490,7 @@ export async function assignRetailPosProductBarcode(input: {
     .eq("is_active", true)
     .is("deleted_at", null)
     .select(
-      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
+      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
     )
     .limit(1)
     .maybeSingle<RetailPosProductRow>();
@@ -1517,7 +1532,7 @@ export async function quickCreateRetailPosProduct(input: {
     throw new RetailPosRuntimeError(401, "device auth is required for retail_pos catalog maintenance.");
   }
 
-  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station"]);
+  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station", "backoffice_station"]);
 
   const name = normalizeRequiredString(input.request.name, "name");
   const categoryName = normalizeRequiredString(input.request.category_name, "category_name");
@@ -1592,7 +1607,7 @@ export async function quickCreateRetailPosProduct(input: {
     .from("retail_pos_products")
     .insert(insertPayload)
     .select(
-      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
+      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
     )
     .limit(1)
     .maybeSingle<RetailPosProductRow>();
@@ -1601,7 +1616,7 @@ export async function quickCreateRetailPosProduct(input: {
     const existingBySku = await supabase
       .from("retail_pos_products")
       .select(
-        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
+        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at, created_by, updated_by",
       )
       .eq("tenant_id", actor.tenantId)
       .eq("sku", finalSku)
@@ -1705,7 +1720,7 @@ export async function searchRetailPosBackofficeCatalogProducts(input: {
   let query = supabase
     .from("retail_pos_products")
     .select(
-      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
+        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
     )
     .eq("tenant_id", actor.tenantId)
     .is("deleted_at", null)
@@ -1810,7 +1825,7 @@ export async function getRetailPosBackofficeCatalogProduct(input: {
   const { data, error } = await supabase
     .from("retail_pos_products")
     .select(
-      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
+        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
     )
     .eq("tenant_id", actor.tenantId)
     .eq("id", productId)
@@ -1942,7 +1957,7 @@ export async function updateRetailPosBackofficeCatalogProduct(input: {
     .eq("id", currentProduct.id)
     .is("deleted_at", null)
     .select(
-      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
+      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
     )
     .limit(1)
     .maybeSingle<RetailPosBackofficeProductRow>();
@@ -2022,6 +2037,7 @@ export async function createRetailPosBackofficeCatalogProduct(input: {
       sku: createPayload.sku,
       barcode: createPayload.barcode,
       unit_price_cents: createPayload.unit_price_cents,
+      wholesale_price_cents: createPayload.wholesale_price_cents,
       cost_cents: createPayload.cost_cents,
       supplier_id: createPayload.supplier_id,
       sales_unit_code: createPayload.sales_unit_code,
@@ -2031,7 +2047,7 @@ export async function createRetailPosBackofficeCatalogProduct(input: {
       is_active: createPayload.is_active,
     })
     .select(
-      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
+      "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, cost_cents, supplier_id, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at, created_at, updated_at",
     )
     .limit(1)
     .maybeSingle<RetailPosBackofficeProductRow>();

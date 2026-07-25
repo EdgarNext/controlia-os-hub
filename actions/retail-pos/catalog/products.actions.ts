@@ -14,6 +14,7 @@ export type RetailProductEditFormValues = {
   sku: string;
   barcode: string;
   price: string;
+  wholesale_price: string;
   cost: string;
   supplier_id: string;
   sales_unit_code: string;
@@ -24,6 +25,7 @@ export type RetailProductEditFormValues = {
 
 export type RetailProductEditActionState = {
   error: string | null;
+  warning: string | null;
   fieldErrors: Partial<Record<keyof RetailProductEditFormValues, string>>;
   values: RetailProductEditFormValues;
 };
@@ -74,6 +76,7 @@ function normalizeFormValues(formData: FormData): RetailProductEditFormValues {
     sku: toTrimmedString(formData.get("sku")),
     barcode: toTrimmedString(formData.get("barcode")),
     price: toTrimmedString(formData.get("price")),
+    wholesale_price: toTrimmedString(formData.get("wholesale_price")),
     cost: toTrimmedString(formData.get("cost")),
     supplier_id: toTrimmedString(formData.get("supplier_id")),
     sales_unit_code: toTrimmedString(formData.get("sales_unit_code")),
@@ -91,6 +94,7 @@ function validateFormValues(values: RetailProductEditFormValues): {
     sku: string | null;
     barcode: string | null;
     price_cents: number;
+    wholesale_price_cents: number;
     cost_cents: number | null;
     supplier_id: string | null;
     sales_unit_code: string;
@@ -116,6 +120,7 @@ function validateFormValues(values: RetailProductEditFormValues): {
   }
 
   let priceCents: number | null = null;
+  let wholesalePriceCents: number | null = null;
   let costCents: number | null = null;
 
   try {
@@ -125,12 +130,22 @@ function validateFormValues(values: RetailProductEditFormValues): {
   }
 
   try {
+    wholesalePriceCents = parseMoneyToCents(
+      values.wholesale_price || values.price,
+      "Precio mayoreo",
+      false,
+    );
+  } catch (error) {
+    fieldErrors.wholesale_price = error instanceof Error ? error.message : "Precio mayoreo invalido.";
+  }
+
+  try {
     costCents = parseMoneyToCents(values.cost, "Costo", true);
   } catch (error) {
     fieldErrors.cost = error instanceof Error ? error.message : "Costo invalido.";
   }
 
-  if (Object.keys(fieldErrors).length > 0 || priceCents === null) {
+  if (Object.keys(fieldErrors).length > 0 || priceCents === null || wholesalePriceCents === null) {
     return {
       fieldErrors,
       payload: null,
@@ -145,6 +160,7 @@ function validateFormValues(values: RetailProductEditFormValues): {
       sku: values.sku || null,
       barcode: values.barcode || null,
       price_cents: priceCents,
+      wholesale_price_cents: wholesalePriceCents,
       cost_cents: costCents,
       supplier_id: values.supplier_id || null,
       sales_unit_code: values.sales_unit_code,
@@ -177,6 +193,7 @@ function mapActionError(
 
   return {
     error: Object.keys(fieldErrors).length > 0 ? null : message,
+    warning: null,
     fieldErrors,
     values,
   };
@@ -193,6 +210,7 @@ export async function updateRetailProductAction(
   if (!tenantSlug || !productId) {
     return {
       error: "Solicitud invalida.",
+      warning: null,
       fieldErrors: {},
       values,
     };
@@ -202,6 +220,7 @@ export async function updateRetailProductAction(
   if (!validation.payload) {
     return {
       error: null,
+      warning: null,
       fieldErrors: validation.fieldErrors,
       values,
     };
@@ -240,6 +259,7 @@ export async function createRetailProductAction(
   if (!tenantSlug) {
     return {
       error: "Solicitud invalida.",
+      warning: null,
       fieldErrors: {},
       values,
     };
@@ -249,6 +269,7 @@ export async function createRetailProductAction(
   if (!validation.payload) {
     return {
       error: null,
+      warning: null,
       fieldErrors: validation.fieldErrors,
       values,
     };

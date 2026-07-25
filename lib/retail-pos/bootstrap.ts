@@ -92,7 +92,7 @@ const CASHIER_CAPABILITIES: RetailPosCapability[] = [
   "tickets.print.payment",
 ];
 
-const BACKOFFICE_CAPABILITIES: RetailPosCapability[] = ["catalog.read"];
+const BACKOFFICE_CAPABILITIES: RetailPosCapability[] = ["catalog.read", "catalog.manage"];
 
 const ORDER_STATION_CAPABILITIES: RetailPosCapability[] = [
   "catalog.read",
@@ -121,8 +121,12 @@ const COUNTER_STATION_CAPABILITIES: RetailPosCapability[] = [
 ];
 
 const BACKOFFICE_ORDER_ENTRY_CAPABILITIES: RetailPosCapability[] = [
+  "catalog.assign_barcode",
+  "catalog.quick_create",
   "orders.create",
   "orders.sync",
+  "orders.lookup",
+  "orders.void",
   "tickets.print.order",
 ];
 
@@ -154,11 +158,7 @@ function buildCapabilities(input: {
   }
 
   if (input.deviceRole === "backoffice_station") {
-    if (
-      input.allowOrderEntry &&
-      input.settingsActive &&
-      input.deviceStatus === "active"
-    ) {
+    if (input.settingsActive && input.deviceStatus === "active") {
       return [...BACKOFFICE_CAPABILITIES, ...BACKOFFICE_ORDER_ENTRY_CAPABILITIES];
     }
 
@@ -173,6 +173,7 @@ function buildConfigVersion(input: {
   device: BootstrapDeviceRow;
   settings: BootstrapDeviceSettingsRow;
   kiosk: BootstrapKioskRow | null;
+  activePosUserId: string | null;
 }) {
   const payload = JSON.stringify({
     tenant_id: input.tenantId,
@@ -206,6 +207,7 @@ function buildConfigVersion(input: {
           updated_at: input.kiosk.updated_at,
         }
       : null,
+    active_pos_user_id: input.activePosUserId,
   });
 
   return `rpb_${createHash("sha256").update(payload).digest("hex").slice(0, 24)}`;
@@ -463,6 +465,51 @@ async function loadShiftOperator(input: {
   return data;
 }
 
+async function loadAssignedOperator(input: {
+  tenantId: string;
+  deviceRole: RetailPosDeviceRole;
+  trace?: RuntimePerfTrace;
+}) {
+  const supabase = getSupabaseAdminClient({ trace: input.trace });
+  const { data, error } = await runSupabaseReadWithRetry<{ pos_user_id: string }>({
+    trace: input.trace,
+    step: "bootstrap_assigned_operator",
+    query: (signal) =>
+      supabase
+        .from("retail_pos_role_user_defaults")
+        .select("pos_user_id")
+        .abortSignal(signal)
+        .eq("tenant_id", input.tenantId)
+        .eq("device_role", input.deviceRole)
+        .limit(1)
+        .maybeSingle<{ pos_user_id: string }>(),
+  });
+
+  if (error) {
+    throw new RetailPosRuntimeError(500, `Unable to resolve assigned POS operator: ${error.message}`);
+  }
+
+  // Tenants without the new mapping retain the legacy operator-selection flow.
+  if (!data?.pos_user_id) {
+    return null;
+  }
+
+  const operator = await loadShiftOperator({
+    tenantId: input.tenantId,
+    posUserId: data.pos_user_id,
+    trace: input.trace,
+  });
+
+  if (!operator) {
+    throw new RetailPosRuntimeError(
+      403,
+      `La terminal no tiene un usuario POS genérico activo para ${input.deviceRole}.`,
+    );
+  }
+
+  return operator;
+}
+
 export async function getRetailPosBootstrap(input: {
   tenantSlug: string;
   deviceId: string;
@@ -502,6 +549,11 @@ export async function getRetailPosBootstrap(input: {
     kioskId: device.kiosk_id,
     trace: input.trace,
   });
+  const activePosUser = await loadAssignedOperator({
+    tenantId: tenant.id,
+    deviceRole: settings.device_role,
+    trace: input.trace,
+  });
   const currentShift =
     settings.device_role === "cashier_station" || settings.device_role === "counter_station"
       ? await getOpenRetailPosCashShiftForDevice({
@@ -522,6 +574,7 @@ export async function getRetailPosBootstrap(input: {
     device,
     settings,
     kiosk,
+    activePosUserId: activePosUser?.id ?? null,
   });
   const authLease = buildAuthLease({
     tenantId: tenant.id,
@@ -575,6 +628,9 @@ export async function getRetailPosBootstrap(input: {
     }),
     current_shift: currentShift,
     cashier_state: cashierState,
+    active_pos_user: activePosUser
+      ? { id: activePosUser.id, name: activePosUser.name, role: activePosUser.role }
+      : null,
     capabilities,
     auth_lease: authLease,
     config_version: configVersion,

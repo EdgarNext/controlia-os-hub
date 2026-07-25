@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  createRetailPosBackofficeCatalogProduct,
   RetailPosCatalogError,
   searchRetailPosBackofficeCatalogProducts,
 } from "@/lib/retail-pos/catalog";
+import type { CreateRetailPosBackofficeProductRequest } from "@/shared/types/retail-pos";
 
 type RouteParams = {
   tenantSlug: string;
@@ -58,6 +60,32 @@ export async function GET(request: NextRequest, context: { params: Promise<Route
       error instanceof Error
         ? error.message
         : "Unexpected retail_pos backoffice catalog products error.";
+    return jsonError(500, message);
+  }
+}
+
+export async function POST(request: NextRequest, context: { params: Promise<RouteParams> }) {
+  try {
+    const { tenantSlug } = await context.params;
+    const body = (await request.json()) as CreateRetailPosBackofficeProductRequest;
+    const payload = await createRetailPosBackofficeCatalogProduct({
+      tenantSlug,
+      request: body,
+      deviceId:
+        getOptionalSearchParam(request, "deviceId") ??
+        getOptionalHeader(request, "x-retail-pos-device-id"),
+      deviceSecret:
+        getOptionalSearchParam(request, "deviceSecret") ??
+        getOptionalHeader(request, "x-retail-pos-device-secret"),
+    });
+
+    return NextResponse.json(payload, { status: 201 });
+  } catch (error) {
+    if (error instanceof RetailPosCatalogError) {
+      return jsonError(error.status, error.message);
+    }
+
+    const message = error instanceof Error ? error.message : "Unexpected retail_pos product creation error.";
     return jsonError(500, message);
   }
 }

@@ -156,6 +156,15 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
             ]}
           />
 
+          <RetailSectionCard title="Uso de precio mayoreo" description="La diferencia frente a precio público no se contabiliza como descuento manual.">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div><div className="text-xs text-muted">Ventas con mayoreo</div><div className="text-xl font-semibold">{formatNumber(report.summary.wholesaleSalesCount)}</div></div>
+              <div><div className="text-xs text-muted">Venta base a mayoreo</div><div className="text-xl font-semibold">{formatCurrency(report.summary.wholesaleBaseCents)}</div></div>
+              <div><div className="text-xs text-muted">Diferencia frente a precio público</div><div className="text-xl font-semibold">{formatCurrency(report.summary.wholesaleDifferenceCents)}</div></div>
+              <div><div className="text-xs text-muted">Descuentos manuales adicionales</div><div className="text-xl font-semibold">{formatCurrency(report.summary.wholesaleManualDiscountCents)}</div></div>
+            </div>
+          </RetailSectionCard>
+
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <RetailSectionCard
               title="Actividad de ventas"

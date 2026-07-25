@@ -6,7 +6,6 @@ import { requireUser } from "@/lib/auth/require-user";
 import { resolveTenantContextBySlug } from "@/lib/auth/tenant-context";
 import type { RetailPosDeviceRole } from "@/shared/types/retail-pos";
 import {
-  RETAIL_TECHNICAL_KIOSK_NAME,
   isRetailClaimDeviceRole,
   isTechnicalRetailKioskName,
   type RetailClaimDeviceRole,
@@ -15,9 +14,8 @@ import { hashPosDeviceSecret } from "@/lib/pos/device-auth";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 const CLAIM_TTL_MINUTES = 15;
-const DEVICE_MODULE_KEYS = ["sales_pos", "retail_pos"] as const;
 
-export type DeviceModuleKey = (typeof DEVICE_MODULE_KEYS)[number];
+export type DeviceModuleKey = "sales_pos" | "retail_pos";
 
 export type PosKioskOption = {
   id: string;
@@ -235,8 +233,7 @@ function inferPosDeviceModule(input: {
 }): PosDeviceModuleMetadata {
   const hasRetailSettings = Boolean(input.retailSettings?.is_active);
   const hasSupportedRetailRole = hasRetailSettings && isRetailClaimDeviceRole(input.retailSettings?.device_role);
-  const hasTechnicalRetailKiosk = isTechnicalRetailKioskName(input.kiosk?.name ?? null);
-  const isRetailBound = Boolean(hasRetailSettings && hasSupportedRetailRole && hasTechnicalRetailKiosk);
+  const isRetailBound = Boolean(hasRetailSettings && hasSupportedRetailRole);
 
   return {
     moduleKey: isRetailBound ? "retail_pos" : "sales_pos",
@@ -509,30 +506,15 @@ export async function getNextAvailableKioskNumber(tenantSlug: string): Promise<n
   return getNextAvailableKioskNumberForTenantId(access.tenant.tenantId);
 }
 
-async function getOrCreateTechnicalRetailKiosk(input: {
+async function createRetailStationKiosk(input: {
   tenantId: string;
   userId: string;
+  stationName: string;
 }): Promise<PosKioskOption> {
   const supabase = await getSupabaseServerClient();
-  const { data: existing, error: existingError } = await supabase
-    .from("kiosks")
-    .select("id, number, name, is_active")
-    .eq("tenant_id", input.tenantId)
-    .eq("name", RETAIL_TECHNICAL_KIOSK_NAME)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (existingError) {
-    throw new Error(`No fue posible consultar el kiosco técnico retail: ${existingError.message}`);
-  }
-
-  if (existing) {
-    return existing as PosKioskOption;
-  }
-
   const nowIso = new Date().toISOString();
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const kioskName = `RETAIL STATION · ${input.stationName}`.slice(0, 120);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     const nextNumber = await getNextAvailableKioskNumberForTenantId(input.tenantId);
     const { data, error } = await supabase
       .from("kiosks")
@@ -540,7 +522,7 @@ async function getOrCreateTechnicalRetailKiosk(input: {
         id: randomUUID(),
         tenant_id: input.tenantId,
         number: nextNumber,
-        name: RETAIL_TECHNICAL_KIOSK_NAME,
+        name: kioskName,
         is_active: true,
         created_at: nowIso,
         updated_at: nowIso,
@@ -555,33 +537,12 @@ async function getOrCreateTechnicalRetailKiosk(input: {
       return data as PosKioskOption;
     }
 
-    if (
-      error &&
-      !error.message.includes("kiosks_tenant_number_unique") &&
-      !error.message.includes("kiosks_tenant_number_key")
-    ) {
-      throw new Error(`No fue posible crear el kiosco técnico retail: ${error.message}`);
+    if (!error?.message.includes("kiosks_tenant_number_unique") && !error?.message.includes("kiosks_tenant_number_key")) {
+      throw new Error(`No fue posible crear el kiosco técnico retail: ${error?.message ?? "respuesta inesperada"}`);
     }
   }
 
-  const { data: refreshed, error: refreshedError } = await supabase
-    .from("kiosks")
-    .select("id, number, name, is_active")
-    .eq("tenant_id", input.tenantId)
-    .eq("name", RETAIL_TECHNICAL_KIOSK_NAME)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (refreshedError) {
-    throw new Error(`No fue posible recuperar el kiosco técnico retail: ${refreshedError.message}`);
-  }
-
-  if (!refreshed) {
-    throw new Error("No fue posible crear el kiosco técnico retail.");
-  }
-
-  return refreshed as PosKioskOption;
+  throw new Error("No fue posible reservar un número único para la estación retail.");
 }
 
 async function deactivateRetailSettings(deviceRecordId: string, tenantId: string) {
@@ -828,33 +789,8 @@ async function issueClaimInternal(input: {
   const pendingSeed = createPendingCredentialSeed();
   const supabase = await getSupabaseServerClient();
 
-  let kiosk: PosKioskOption | null = null;
-  if (input.moduleKey === "sales_pos") {
-    if (!normalizedKioskId) {
-      throw new Error("Selecciona un kiosco.");
-    }
-
-    kiosk = await getKioskById(tenant.tenantId, normalizedKioskId);
-    if (!kiosk) {
-      throw new Error("El kiosco seleccionado no existe en este tenant.");
-    }
-  } else {
-    if (!input.deviceRole) {
-      throw new Error("Selecciona un rol retail.");
-    }
-
-    await assertRetailPosEnabled(tenant.tenantId);
-    kiosk = await getOrCreateTechnicalRetailKiosk({
-      tenantId: tenant.tenantId,
-      userId: user.id,
-    });
-  }
-
-  if (!kiosk) {
-    throw new Error("No fue posible resolver el kiosco para el claim.");
-  }
-
   let previousSnapshot: MutablePosDeviceSnapshot | null = null;
+  let existingModule: PosDeviceModuleMetadata | null = null;
   if (normalizedExistingId) {
     const { data: existingDevice, error: existingDeviceError } = await supabase
       .from("pos_devices")
@@ -873,6 +809,42 @@ async function issueClaimInternal(input: {
     }
 
     previousSnapshot = existingDevice as MutablePosDeviceSnapshot;
+    existingModule = await getDeviceModuleByRecordId(tenant.tenantId, normalizedExistingId);
+    if (!existingModule) {
+      throw new Error("No existe el dispositivo solicitado para este tenant.");
+    }
+    if (existingModule.moduleKey !== input.moduleKey) {
+      throw new Error("La reemisión debe conservar el módulo original del dispositivo.");
+    }
+  }
+
+  let kiosk: PosKioskOption | null = null;
+  if (input.moduleKey === "sales_pos") {
+    if (!normalizedKioskId) {
+      throw new Error("Selecciona un kiosco.");
+    }
+
+    kiosk = await getKioskById(tenant.tenantId, normalizedKioskId);
+    if (!kiosk) {
+      throw new Error("El kiosco seleccionado no existe en este tenant.");
+    }
+  } else {
+    if (!input.deviceRole) {
+      throw new Error("Selecciona un rol retail.");
+    }
+
+    await assertRetailPosEnabled(tenant.tenantId);
+    kiosk = previousSnapshot
+      ? await getKioskById(tenant.tenantId, previousSnapshot.kiosk_id)
+      : await createRetailStationKiosk({
+          tenantId: tenant.tenantId,
+          userId: user.id,
+          stationName: normalizedName,
+        });
+  }
+
+  if (!kiosk) {
+    throw new Error("No fue posible resolver el kiosco para el claim.");
   }
 
   if (normalizedExistingId) {
@@ -905,14 +877,8 @@ async function issueClaimInternal(input: {
       throw new Error("No existe el dispositivo solicitado para este tenant.");
     }
 
-    const currentModule = await getDeviceModuleByRecordId(tenant.tenantId, data.id);
-
-    if (!currentModule) {
+    if (!existingModule) {
       throw new Error("No existe el dispositivo solicitado para este tenant.");
-    }
-
-    if (currentModule.moduleKey !== input.moduleKey) {
-      throw new Error("La reemisión debe conservar el módulo original del dispositivo.");
     }
 
     if (input.moduleKey === "sales_pos") {

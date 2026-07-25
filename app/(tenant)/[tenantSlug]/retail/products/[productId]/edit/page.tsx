@@ -29,7 +29,7 @@ type RetailProductEditPageResult =
       hint: string;
     };
 
-function formatMoneyInput(cents: number | null): string {
+function formatMoneyInput(cents: number | null | undefined): string {
   if (typeof cents !== "number") {
     return "";
   }
@@ -130,6 +130,7 @@ export default async function RetailProductEditPage({ params }: RetailProductEdi
           sku: result.product.sku ?? "",
           barcode: result.product.barcode ?? "",
           price: formatMoneyInput(result.product.price_cents),
+          wholesale_price: formatMoneyInput(result.product.wholesale_price_cents),
           cost: formatMoneyInput(result.product.cost_cents),
           supplier_id: result.product.supplier_id ?? "",
           sales_unit_code: result.product.sales_unit_code,

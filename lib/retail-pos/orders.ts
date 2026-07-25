@@ -8,6 +8,7 @@ import type {
   RetailPosOrder,
   RetailPosOrderLine,
   RetailPosPersistedOrderDiscount,
+  RetailPosRecentPendingOrderSummary,
   UpdateRetailPosOrderRequest,
   VoidRetailPosOrderRequest,
 } from "@/shared/types/retail-pos";
@@ -34,6 +35,7 @@ type VariantRow = {
   sku: string | null;
   barcode: string | null;
   unit_price_cents: number | null;
+  wholesale_price_cents: number | null;
   is_default: boolean;
   is_active: boolean;
   sort_order: number;
@@ -108,6 +110,18 @@ type ResolvedOrderInputLine = {
   sales_unit_label: string;
   allow_decimal_quantity: boolean;
   unit_price_cents: number;
+  public_unit_price_snapshot_cents: number;
+  wholesale_unit_price_snapshot_cents: number;
+  requested_price_tier: "public" | "wholesale";
+  price_tier_request_status: "not_requested" | "pending" | "approved" | "rejected";
+  requested_unit_price_cents: number;
+  requested_by_pos_user_id: string | null;
+  requested_at: string | null;
+  approved_price_tier: "public" | "wholesale" | null;
+  approved_unit_price_cents: number | null;
+  approved_price_tier_source: "default_public" | "counter_request" | "cashier_direct" | null;
+  approved_by_pos_user_id: string | null;
+  approved_at: string | null;
 };
 
 type CurrentOrderContext = {
@@ -132,10 +146,10 @@ type ExistingOrderComparableLine = {
 };
 
 const ORDER_SELECT =
-  "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, revision, direct_discount_cents, order_discount_cents, paid_at, voided_at, voided_by_pos_user_id, void_reason, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
+  "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, revision, direct_discount_cents, order_discount_cents, paid_at, voided_at, voided_by_pos_user_id, void_reason, void_note, copied_from_order_id, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
 
 const ORDER_LINE_SELECT =
-  "id, tenant_id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, barcode, sales_unit_code, sales_unit_label, allow_decimal_quantity, quantity, unit_price_cents, line_subtotal_cents, discount_cents, line_total_cents, direct_discount_cents, order_discount_allocation_cents, total_discount_cents, unit_cost_snapshot_cents, cost_evaluation, below_cost_after_discount, created_at, updated_at, created_by, updated_by";
+  "id, tenant_id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, barcode, sales_unit_code, sales_unit_label, allow_decimal_quantity, quantity, unit_price_cents, public_unit_price_snapshot_cents, wholesale_unit_price_snapshot_cents, requested_price_tier, price_tier_request_status, requested_unit_price_cents, requested_by_pos_user_id, requested_at, approved_price_tier, approved_unit_price_cents, approved_price_tier_source, approved_by_pos_user_id, approved_at, line_subtotal_cents, discount_cents, line_total_cents, direct_discount_cents, order_discount_allocation_cents, total_discount_cents, unit_cost_snapshot_cents, cost_evaluation, below_cost_after_discount, created_at, updated_at, created_by, updated_by";
 
 const ORDER_DISCOUNT_SELECT =
   "id, tenant_id, order_id, order_revision, lifecycle_status, scope, order_line_id, capture_type, percentage_bps, amount_cents, base_amount_cents, effective_discount_cents, reason_code, comment, source, applied_by_pos_user_id, applied_by_device_id, applied_at, expected_revision, authorization_required, authorization_status, authorization_method, authorization_policy_key, authorization_note, authorization_requested_by_pos_user_id, authorized_by_pos_user_id, authorized_at, authorization_reference, authorization_context, created_at, updated_at";
@@ -345,10 +359,19 @@ function ensureWholeQuantity(value: string) {
   }
 }
 
+const RETAIL_POS_FOLIO_TIME_ZONE = "America/Mexico_City";
+
 function parseDatePrefix(date = new Date()) {
-  const year = String(date.getUTCFullYear()).slice(-2);
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: RETAIL_POS_FOLIO_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  const year = (values.get("year") ?? "").slice(-2);
+  const month = values.get("month") ?? "01";
+  const day = values.get("day") ?? "01";
   return `${year}${month}${day}`;
 }
 
@@ -689,7 +712,7 @@ async function resolveLineSnapshots(input: {
   const productsPromise = supabase
       .from("retail_pos_products")
       .select(
-        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at",
+        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at",
       )
       .eq("tenant_id", input.tenantId)
       .eq("is_active", true)
@@ -700,7 +723,7 @@ async function resolveLineSnapshots(input: {
       ? supabase
           .from("retail_pos_product_variants")
           .select(
-            "id, tenant_id, product_id, name, sku, barcode, unit_price_cents, is_default, is_active, sort_order, deleted_at",
+            "id, tenant_id, product_id, name, sku, barcode, unit_price_cents, wholesale_price_cents, is_default, is_active, sort_order, deleted_at",
           )
           .eq("tenant_id", input.tenantId)
           .eq("is_active", true)
@@ -766,6 +789,17 @@ async function resolveLineSnapshots(input: {
     const discountCents = ensureNonNegativeInteger(line.discount_cents, "discount_cents");
     const currentCatalogUnitPriceCents = variant?.unit_price_cents ?? product.unit_price_cents;
     const providedUnitPriceCents = ensurePositiveInteger(line.unit_price_cents, "unit_price_cents");
+    const requestedPriceTier = line.requested_price_tier ?? "public";
+    const publicSnapshot = line.public_unit_price_snapshot_cents ?? providedUnitPriceCents;
+    const wholesaleSnapshot = line.wholesale_unit_price_snapshot_cents ?? variant?.wholesale_price_cents ?? product.wholesale_price_cents;
+    const requestedUnitPrice = line.requested_unit_price_cents ?? publicSnapshot;
+    if (requestedPriceTier !== "public" && requestedPriceTier !== "wholesale") {
+      throw new RetailPosRuntimeError(400, `Line ${lineNumber} has an invalid requested price tier.`);
+    }
+    const expectedRequestedPrice = requestedPriceTier === "wholesale" ? wholesaleSnapshot : publicSnapshot;
+    if (requestedUnitPrice !== expectedRequestedPrice || providedUnitPriceCents !== requestedUnitPrice) {
+      throw new RetailPosRuntimeError(400, `Line ${lineNumber} requested price does not match its price snapshot.`);
+    }
     const snapshotProductName = asTrimmedString(line.product_name) ?? product.name;
     const snapshotVariantName =
       variant?.id ? asTrimmedString(line.variant_name) ?? variant.name : asTrimmedString(line.variant_name);
@@ -805,6 +839,18 @@ async function resolveLineSnapshots(input: {
       sales_unit_label: snapshotSalesUnitLabel,
       allow_decimal_quantity: snapshotAllowsDecimal,
       unit_price_cents: providedUnitPriceCents,
+      public_unit_price_snapshot_cents: ensureNonNegativeInteger(publicSnapshot, "public_unit_price_snapshot_cents"),
+      wholesale_unit_price_snapshot_cents: ensureNonNegativeInteger(wholesaleSnapshot, "wholesale_unit_price_snapshot_cents"),
+      requested_price_tier: requestedPriceTier,
+      price_tier_request_status: line.price_tier_request_status ?? "not_requested",
+      requested_unit_price_cents: requestedUnitPrice,
+      requested_by_pos_user_id: line.requested_by_pos_user_id ?? null,
+      requested_at: line.requested_at ?? null,
+      approved_price_tier: line.approved_price_tier ?? null,
+      approved_unit_price_cents: line.approved_unit_price_cents ?? null,
+      approved_price_tier_source: line.approved_price_tier_source ?? null,
+      approved_by_pos_user_id: line.approved_by_pos_user_id ?? null,
+      approved_at: line.approved_at ?? null,
     };
   });
 }
@@ -860,6 +906,18 @@ async function insertOrderLines(tenantId: string, orderId: string, lines: Resolv
     line_subtotal_cents: 0,
     discount_cents: line.discount_cents,
     line_total_cents: 0,
+    public_unit_price_snapshot_cents: line.public_unit_price_snapshot_cents,
+    wholesale_unit_price_snapshot_cents: line.wholesale_unit_price_snapshot_cents,
+    requested_price_tier: line.requested_price_tier,
+    price_tier_request_status: line.price_tier_request_status,
+    requested_unit_price_cents: line.requested_unit_price_cents,
+    requested_by_pos_user_id: line.requested_by_pos_user_id,
+    requested_at: line.requested_at,
+    approved_price_tier: line.approved_price_tier,
+    approved_unit_price_cents: line.approved_unit_price_cents,
+    approved_price_tier_source: line.approved_price_tier_source,
+    approved_by_pos_user_id: line.approved_by_pos_user_id,
+    approved_at: line.approved_at,
   }));
 
   const { error } = await supabase.from("retail_pos_order_lines").insert(payload);
@@ -1057,6 +1115,7 @@ async function createOrderWithRetry(input: {
   createdByPosUserId: string;
   originClientOrderId: string;
   originLocalFolio: string | null;
+  copiedFromOrderId: string | null;
 }): Promise<OrderRow> {
   const supabase = getSupabaseAdminClient();
 
@@ -1072,6 +1131,7 @@ async function createOrderWithRetry(input: {
         status: "pending_payment",
         origin_device_id: input.originDeviceRecordId,
         created_by_pos_user_id: input.createdByPosUserId,
+        copied_from_order_id: input.copiedFromOrderId,
       })
       .select(
         ORDER_SELECT,
@@ -1202,7 +1262,7 @@ function assertRetailPosOrderVoidAccess(actor: RetailPosRuntimeActor) {
     return;
   }
 
-  if (actor.deviceRole === "order_station" || actor.deviceRole === "cashier_station") {
+  if (actor.deviceRole === "order_station" || actor.deviceRole === "cashier_station" || actor.deviceRole === "backoffice_station") {
     return;
   }
 
@@ -1309,6 +1369,7 @@ export async function createRetailPosOrder(input: {
     createdByPosUserId: input.request.created_by_pos_user_id,
     originClientOrderId,
     originLocalFolio,
+    copiedFromOrderId: input.request.copied_from_order_id ?? null,
   });
 
   try {
@@ -1458,6 +1519,76 @@ export async function getRetailPosOrderByFolio(input: {
   return detail;
 }
 
+export async function listRetailPosRecentPendingOrders(input: {
+  tenantSlug: string;
+  limit?: number;
+  deviceId?: string | null;
+  deviceSecret?: string | null;
+}) {
+  const actor = await resolveRetailPosRuntimeActor({
+    tenantSlug: input.tenantSlug,
+    deviceId: input.deviceId,
+    deviceSecret: input.deviceSecret,
+  });
+  assertRetailPosDeviceRole(actor, ["cashier_station"]);
+
+  const limit = Math.max(1, Math.min(5, Math.trunc(input.limit ?? 5)));
+  const supabase = getSupabaseAdminClient();
+  const { data: orders, error: ordersError } = await supabase
+    .from("retail_pos_orders")
+    .select("id, folio, created_at, total_cents, revision")
+    .eq("tenant_id", actor.tenantId)
+    .eq("status", "pending_payment")
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(limit)
+    .returns<Array<Pick<RetailPosRecentPendingOrderSummary, "order_id" | "folio" | "created_at" | "total_cents" | "revision"> & { id: string }>>();
+
+  if (ordersError) {
+    throw new RetailPosRuntimeError(500, `Unable to load recent pending retail_pos orders: ${ordersError.message}`);
+  }
+
+  const orderRows = orders ?? [];
+  if (orderRows.length === 0) {
+    return { items: [] satisfies RetailPosRecentPendingOrderSummary[] };
+  }
+
+  const orderIds = orderRows.map((order) => order.id);
+  const { data: lines, error: linesError } = await supabase
+    .from("retail_pos_order_lines")
+    .select("order_id, price_tier_request_status")
+    .eq("tenant_id", actor.tenantId)
+    .in("order_id", orderIds)
+    .returns<Array<{ order_id: string; price_tier_request_status: string | null }>>();
+
+  if (linesError) {
+    throw new RetailPosRuntimeError(500, `Unable to load recent pending retail_pos order summaries: ${linesError.message}`);
+  }
+
+  const lineSummary = new Map<string, { count: number; hasPendingWholesale: boolean }>();
+  for (const line of lines ?? []) {
+    const current = lineSummary.get(line.order_id) ?? { count: 0, hasPendingWholesale: false };
+    current.count += 1;
+    current.hasPendingWholesale ||= line.price_tier_request_status === "pending";
+    lineSummary.set(line.order_id, current);
+  }
+
+  return {
+    items: orderRows.map((order) => {
+      const summary = lineSummary.get(order.id) ?? { count: 0, hasPendingWholesale: false };
+      return {
+        order_id: order.id,
+        folio: order.folio,
+        created_at: order.created_at,
+        total_cents: order.total_cents,
+        line_count: summary.count,
+        has_pending_wholesale: summary.hasPendingWholesale,
+        revision: order.revision,
+      } satisfies RetailPosRecentPendingOrderSummary;
+    }),
+  };
+}
+
 export async function voidRetailPosOrder(input: {
   tenantSlug: string;
   orderId: string;
@@ -1481,11 +1612,20 @@ export async function voidRetailPosOrder(input: {
     throw new RetailPosRuntimeError(400, "order_id does not match route parameter.");
   }
 
+  if (typeof input.request.expected_revision !== 'number' || !Number.isInteger(input.request.expected_revision) || input.request.expected_revision < 0) {
+    throw new RetailPosRuntimeError(400, "expected_revision is required.");
+  }
+
+  const validReasons = new Set(["capture_error", "order_modification", "customer_withdrew", "duplicate_order", "product_unavailable", "other"]);
+  if (!validReasons.has(input.request.void_reason ?? "")) {
+    throw new RetailPosRuntimeError(400, "void_reason is invalid.");
+  }
+
   await assertPosUser(actor.tenantId, input.request.voided_by_pos_user_id);
 
   const context = await loadOrderContext(actor.tenantId, input.orderId);
   if (context.order.status === "voided") {
-    throw new RetailPosRuntimeError(409, "ORDER_ALREADY_VOIDED", "ORDER_ALREADY_VOIDED");
+    return loadOrderDetail(actor.tenantId, input.orderId);
   }
 
   if (context.order.status !== "pending_payment") {
@@ -1501,10 +1641,13 @@ export async function voidRetailPosOrder(input: {
       voided_at: voidedAt,
       voided_by_pos_user_id: input.request.voided_by_pos_user_id,
       void_reason: input.request.void_reason,
+      void_note: input.request.void_note ?? null,
+      revision: input.request.expected_revision + 1,
     })
     .eq("tenant_id", actor.tenantId)
     .eq("id", input.orderId)
     .eq("status", "pending_payment")
+    .eq("revision", input.request.expected_revision)
     .select("id")
     .limit(1)
     .maybeSingle<{ id: string }>();

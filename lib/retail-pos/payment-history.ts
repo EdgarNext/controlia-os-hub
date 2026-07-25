@@ -4,6 +4,7 @@ import {
   resolveRetailPosRuntimeActor,
 } from "./auth";
 import { RetailPosRuntimeError } from "./errors";
+import { calculatePriceTierEconomics, classifyPriceTier, type PriceTier } from "./price-tier-economics";
 
 type PaymentHistoryPaymentRow = {
   id: string;
@@ -26,6 +27,18 @@ type PaymentHistoryOrderRow = {
   total_cents: number;
   direct_discount_cents: number | null;
   order_discount_cents: number | null;
+};
+type PaymentHistoryLineRow = {
+  order_id: string;
+  quantity: string | number;
+  public_unit_price_snapshot_cents: number | null;
+  wholesale_unit_price_snapshot_cents: number | null;
+  approved_price_tier: PriceTier | null;
+  approved_unit_price_cents: number | null;
+  unit_price_cents: number;
+  direct_discount_cents: number | null;
+  order_discount_allocation_cents: number | null;
+  total_discount_cents: number | null;
 };
 
 type PaymentHistoryOperatorRow = {
@@ -191,7 +204,7 @@ export async function listRetailPosPaymentHistory(input: {
     new Set((payments ?? []).map((payment) => payment.pos_user_id)).values(),
   ).filter(Boolean);
 
-  const [deviceSettingsResult, ordersResult, ticketEventsResult, postSaleDocumentsResult] =
+  const [deviceSettingsResult, ordersResult, ticketEventsResult, postSaleDocumentsResult, linesResult] =
     await Promise.all([
       supabase
         .from("retail_pos_device_settings")
@@ -236,6 +249,9 @@ export async function listRetailPosPaymentHistory(input: {
           .order("created_at", { ascending: false })
           .returns<PaymentHistoryPostSaleDocumentRow[]>()
       : Promise.resolve({ data: [] as PaymentHistoryPostSaleDocumentRow[], error: null }),
+      orderIds.length
+        ? supabase.from("retail_pos_order_lines").select("order_id, quantity, public_unit_price_snapshot_cents, wholesale_unit_price_snapshot_cents, approved_price_tier, approved_unit_price_cents, unit_price_cents, direct_discount_cents, order_discount_allocation_cents, total_discount_cents").eq("tenant_id", actor.tenantId).in("order_id", orderIds).returns<PaymentHistoryLineRow[]>()
+        : Promise.resolve({ data: [] as PaymentHistoryLineRow[], error: null }),
   ]);
 
   if (deviceSettingsResult.error) {
@@ -265,6 +281,7 @@ export async function listRetailPosPaymentHistory(input: {
       `Unable to load retail_pos payment history ticket events: ${ticketEventsResult.error.message}`,
     );
   }
+  if (linesResult.error) throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment history lines: ${linesResult.error.message}`);
 
   const postSaleDocuments = postSaleDocumentsResult.data ?? [];
   const postSaleDocumentIds = Array.from(new Set(postSaleDocuments.map((document) => document.id)));
@@ -321,6 +338,8 @@ export async function listRetailPosPaymentHistory(input: {
     (postSaleRefundsResult.data ?? []).map((refund) => [refund.post_sale_document_id, refund]),
   );
   const postSaleByOrderId = new Map<string, PaymentHistoryPostSaleDocumentRow[]>();
+  const linesByOrderId = new Map<string, PaymentHistoryLineRow[]>();
+  for (const line of linesResult.data ?? []) linesByOrderId.set(line.order_id, [...(linesByOrderId.get(line.order_id) ?? []), line]);
   for (const document of postSaleDocuments) {
     const current = postSaleByOrderId.get(document.original_order_id) ?? [];
     current.push(document);
@@ -400,6 +419,9 @@ export async function listRetailPosPaymentHistory(input: {
       const lineDiscountCents = order?.direct_discount_cents ?? 0;
       const orderDiscountCents = order?.order_discount_cents ?? 0;
       const totalDiscountCents = order?.discount_cents ?? 0;
+      const priceLines = linesByOrderId.get(payment.order_id) ?? [];
+      const priceTier = classifyPriceTier(priceLines);
+      const wholesaleDifferenceCents = priceLines.filter((line) => line.approved_price_tier === "wholesale").reduce((sum, line) => sum + calculatePriceTierEconomics(line).priceTierDifferenceCents, 0);
 
       return {
         payment_id: payment.id,
@@ -420,6 +442,8 @@ export async function listRetailPosPaymentHistory(input: {
         has_printed_receipt: printedOrderIds.has(payment.order_id),
         receipt_status_label: getReceiptStatusLabel(payment.order_id, ticketEvents),
         has_discounts: totalDiscountCents > 0,
+        price_tier: priceTier,
+        wholesale_difference_cents: wholesaleDifferenceCents,
         can_cancel:
           postSaleCapabilitiesEnabled &&
           orderStatus === "paid" &&

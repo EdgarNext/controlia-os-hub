@@ -430,7 +430,7 @@ export function canReadRetailPosOperators(actor: RetailPosRuntimeActor) {
     actor.deviceRole === "order_station" ||
     actor.deviceRole === "cashier_station" ||
     actor.deviceRole === "counter_station" ||
-    (actor.deviceRole === "backoffice_station" && actor.allowOrderEntry)
+    actor.deviceRole === "backoffice_station"
   );
 }
 
@@ -451,7 +451,7 @@ export function assertRetailPosOrderEntryAccess(actor: RetailPosRuntimeActor) {
     return;
   }
 
-  if (actor.deviceRole === "backoffice_station" && actor.allowOrderEntry) {
+  if (actor.deviceRole === "backoffice_station") {
     return;
   }
 

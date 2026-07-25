@@ -38,11 +38,13 @@ export const RETAIL_POS_RUNTIME_COMMAND_TYPES = [
   "open_shift",
   "close_shift",
   "pay",
+  "price_tier_decision",
   "discount_checkout",
   "create_paid_counter_sale",
   "post_sale.sale_cancellation.commit",
   "post_sale.return.commit",
   "post_sale.card_refund.confirm",
+  "order_void",
 ] as const;
 
 export const RETAIL_POS_COMMAND_RESULT_STATUSES = [
@@ -141,6 +143,7 @@ export type RetailPosTicketEventRequestType =
   (typeof RETAIL_POS_TICKET_EVENT_REQUEST_TYPES)[number];
 export type RetailPosCommandType =
   (typeof RETAIL_POS_RUNTIME_COMMAND_TYPES)[number];
+export type RetailPosPriceTier = "public" | "wholesale";
 export type RetailPosCommandResultStatus =
   (typeof RETAIL_POS_COMMAND_RESULT_STATUSES)[number];
 export type RetailPosDiscountScope =
@@ -190,6 +193,7 @@ export type RetailPosProduct = {
   sku: string | null;
   barcode: string | null;
   unit_price_cents: number;
+  wholesale_price_cents: number;
   sales_unit_code: string;
   sales_unit_label: string;
   allow_decimal_quantity: boolean;
@@ -214,6 +218,7 @@ export type RetailPosProductVariant = {
   sku: string | null;
   barcode: string | null;
   unit_price_cents: number | null;
+  wholesale_price_cents: number | null;
   is_default: boolean;
   is_active: boolean;
   sort_order: number;
@@ -245,6 +250,8 @@ export type RetailPosOrder = {
   voided_at: string | null;
   voided_by_pos_user_id: string | null;
   void_reason: string | null;
+  void_note?: string | null;
+  copied_from_order_id?: string | null;
   cancelled_at: string | null;
   cancelled_by_pos_user_id: string | null;
   cancel_reason: string | null;
@@ -273,6 +280,18 @@ export type RetailPosOrderLine = {
   line_subtotal_cents: number;
   discount_cents: number;
   line_total_cents: number;
+  public_unit_price_snapshot_cents: number;
+  wholesale_unit_price_snapshot_cents: number;
+  requested_price_tier: "public" | "wholesale";
+  price_tier_request_status: "not_requested" | "pending" | "approved" | "rejected";
+  requested_unit_price_cents: number;
+  requested_by_pos_user_id: string | null;
+  requested_at: string | null;
+  approved_price_tier: "public" | "wholesale" | null;
+  approved_unit_price_cents: number | null;
+  approved_price_tier_source: "default_public" | "counter_request" | "cashier_direct" | null;
+  approved_by_pos_user_id: string | null;
+  approved_at: string | null;
   direct_discount_cents?: number;
   order_discount_allocation_cents?: number;
   total_discount_cents?: number;
@@ -391,6 +410,7 @@ export type RetailPosCatalogItem = {
   sku: string | null;
   barcode: string | null;
   unit_price_cents: number;
+  wholesale_price_cents: number;
   sales_unit_code: string;
   sales_unit_label: string;
   allow_decimal_quantity: boolean;
@@ -466,6 +486,8 @@ export type RetailPosRuntimeOperator = {
   role: "cashier" | "supervisor" | "admin";
   is_active: boolean;
 };
+
+export type RetailPosAssignedOperator = Pick<RetailPosRuntimeOperator, "id" | "name" | "role">;
 
 export type RetailPosRuntimeProbeDiagnostics = {
   auth_ms: number;
@@ -551,6 +573,7 @@ export type RetailPosBackofficeCatalogProduct = {
   sales_unit_label: string;
   allow_decimal_quantity: boolean;
   price_cents: number;
+  wholesale_price_cents?: number | null;
   cost_cents: number | null;
   is_active: boolean;
   has_variants: boolean;
@@ -578,6 +601,7 @@ export type CreateRetailPosBackofficeProductRequest = {
   sales_unit_label: string;
   allow_decimal_quantity: boolean;
   price_cents: number;
+  wholesale_price_cents?: number | null;
   cost_cents?: number | null;
   supplier_id?: string | null;
   is_active?: boolean;
@@ -593,6 +617,7 @@ export type UpdateRetailPosBackofficeProductRequest = {
   sales_unit_label?: string;
   allow_decimal_quantity?: boolean;
   price_cents?: number;
+  wholesale_price_cents?: number;
   cost_cents?: number | null;
   supplier_id?: string | null;
   is_active?: boolean;
@@ -628,6 +653,18 @@ export type CreateRetailPosOrderLineInput = {
   product_variant_id: string | null;
   quantity: RetailPosQuantityString;
   unit_price_cents: number;
+  public_unit_price_snapshot_cents?: number;
+  wholesale_unit_price_snapshot_cents?: number;
+  requested_price_tier?: "public" | "wholesale";
+  price_tier_request_status?: "not_requested" | "pending" | "approved" | "rejected";
+  requested_unit_price_cents?: number;
+  requested_by_pos_user_id?: string | null;
+  requested_at?: string | null;
+  approved_price_tier?: "public" | "wholesale" | null;
+  approved_unit_price_cents?: number | null;
+  approved_price_tier_source?: "default_public" | "counter_request" | "cashier_direct" | null;
+  approved_by_pos_user_id?: string | null;
+  approved_at?: string | null;
   discount_cents: number;
   product_name?: string | null;
   variant_name?: string | null;
@@ -645,6 +682,7 @@ export type CreateRetailPosOrderRequest = {
   origin_device_id: string;
   created_by_pos_user_id: string;
   lines: CreateRetailPosOrderLineInput[];
+  copied_from_order_id?: string | null;
 };
 
 export type CreateRetailPosOrderResponse = {
@@ -663,6 +701,9 @@ export type VoidRetailPosOrderRequest = {
   order_id: string;
   voided_by_pos_user_id: string;
   void_reason: string | null;
+  void_note?: string | null;
+  expected_revision?: number;
+  command_id?: string;
 };
 
 export type GetRetailPosOrderResponse = {
@@ -825,6 +866,7 @@ export type RetailPosCashierState = {
 
 export type RetailPosCapability =
   | "catalog.read"
+  | "catalog.manage"
   | "catalog.assign_barcode"
   | "catalog.quick_create"
   | "orders.create"
@@ -1376,6 +1418,7 @@ export type RetailPosBootstrapResponse = {
   cash_register: RetailPosRuntimeCashRegisterSummary | null;
   current_shift: RetailPosCashShift | null;
   cashier_state: RetailPosCashierState | null;
+  active_pos_user: RetailPosAssignedOperator | null;
   capabilities: RetailPosCapability[];
   auth_lease: RetailPosAuthLease;
   config_version: string;
@@ -1405,6 +1448,22 @@ export type RetailPosCommandResult<TResult = Record<string, unknown>> = {
 
 export type RetailPosPayCommand = RetailPosRuntimeCommand<RetailPosPayCommandPayload>;
 export type RetailPosPayCommandResult = RetailPosCommandResult<PayRetailPosOrderResponse>;
+
+export type RetailPosPriceTierDecision = { order_line_id: string; approved_price_tier: RetailPosPriceTier };
+export type RetailPosPriceTierDecisionCommandPayload = { order_id: string; expected_revision: number; decisions: RetailPosPriceTierDecision[] };
+export type RetailPosPriceTierDecisionCommand = RetailPosRuntimeCommand<RetailPosPriceTierDecisionCommandPayload> & { command_type: "price_tier_decision" };
+export type RetailPosPriceTierDecisionResponse = { order_id: string; revision: number; resolved_line_ids: string[] };
+export type RetailPosPriceTierDecisionCommandResult = RetailPosCommandResult<RetailPosPriceTierDecisionResponse>;
+
+export type RetailPosRecentPendingOrderSummary = {
+  order_id: string;
+  folio: string;
+  created_at: string;
+  total_cents: number;
+  line_count: number;
+  has_pending_wholesale: boolean;
+  revision: number;
+};
 
 export type RetailPosDiscountCheckoutCommand =
   RetailPosRuntimeCommand<RetailPosDiscountCheckoutCommandPayload> & {

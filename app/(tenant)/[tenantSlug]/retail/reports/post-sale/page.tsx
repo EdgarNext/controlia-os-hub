@@ -148,7 +148,7 @@ export default async function RetailPostSalePage({ params, searchParams }: Retai
               className="w-full rounded-[var(--radius-base)] border border-border bg-background px-3 py-2 text-sm text-foreground"
             >
               <option value="all">Todas</option>
-              <option value="sale_cancellation">Anulación de venta pagada</option>
+              <option value="sale_cancellation">Venta cancelada</option>
               <option value="return_full">Devolución total</option>
               <option value="return_partial">Devolución parcial</option>
             </select>

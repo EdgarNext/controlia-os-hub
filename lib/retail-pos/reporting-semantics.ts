@@ -66,7 +66,7 @@ const TERMS: Record<RetailReportingTermKey, RetailReportingTerm> = {
   },
   paid_sale_cancellation: {
     key: "paid_sale_cancellation",
-    label: "Anulación de venta pagada",
+    label: "Venta cancelada",
     description: "Venta previamente cobrada que fue revertida en su totalidad.",
     format: "count",
   },

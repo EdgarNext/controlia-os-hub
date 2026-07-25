@@ -51,6 +51,7 @@ export function buildRetailReportsFilters(searchParams: RetailReportsSearchParam
       | "paid"
       | "voided"
       | undefined,
+    priceTier: getSingleSearchParam(searchParams.priceTier) as "all" | "public" | "wholesale" | "mixed" | undefined,
   };
 }
 
@@ -77,6 +78,7 @@ export function buildRetailReportHref(input: {
   if (input.filters?.orderStatus && input.filters.orderStatus !== "all") {
     searchParams.set("orderStatus", input.filters.orderStatus);
   }
+  if (input.filters?.priceTier && input.filters.priceTier !== "all") searchParams.set("priceTier", input.filters.priceTier);
 
   for (const [key, value] of Object.entries(input.overrides ?? {})) {
     if (!value) {
@@ -371,7 +373,7 @@ export function RetailReportsFiltersCard({
 }: {
   tenantSlug: string;
   filters: RetailReportsPageFilters;
-  devices: Array<{ id: string; name: string; role: string }>;
+  devices: Array<{ id: string; name: string; role: string; kioskNumber: number | null; kioskName: string | null }>;
   basePath: string;
   includeOrderStatus?: boolean;
 }) {
@@ -415,7 +417,7 @@ export function RetailReportsFiltersCard({
             <option value="">Todas</option>
             {devices.map((device) => (
               <option key={device.id} value={device.id}>
-                {device.name}
+                {device.kioskNumber ? `Kiosko ${device.kioskNumber} · ` : ""}{device.name}
               </option>
             ))}
           </select>
@@ -439,6 +441,16 @@ export function RetailReportsFiltersCard({
           <input type="hidden" name="orderStatus" value={filters.orderStatus} />
         )}
 
+        <label className="space-y-1 text-sm">
+          <span className="text-xs font-medium text-muted">Uso de precio</span>
+          <select name="priceTier" defaultValue={filters.priceTier} className="w-full rounded-[var(--radius-base)] border border-border bg-background px-3 py-2 text-sm text-foreground">
+            <option value="all">Todos</option>
+            <option value="public">Precio público</option>
+            <option value="wholesale">Precio mayoreo</option>
+            <option value="mixed">Precios mixtos</option>
+          </select>
+        </label>
+
         <div className="flex items-end gap-2">
           <button
             type="submit"
@@ -459,7 +471,7 @@ export function RetailReportsFiltersCard({
 }
 
 export function RetailReportsFiltersSkeleton({ includeOrderStatus = true }: { includeOrderStatus?: boolean }) {
-  const columns = includeOrderStatus ? 5 : 4;
+  const columns = includeOrderStatus ? 6 : 5;
 
   return (
     <Card className="space-y-4 p-4" aria-hidden="true">
@@ -471,13 +483,14 @@ export function RetailReportsFiltersSkeleton({ includeOrderStatus = true }: { in
       <div
         className={cn(
           "grid gap-3 md:grid-cols-2",
-          columns === 5 ? "xl:grid-cols-5" : "xl:grid-cols-4",
+          columns === 6 ? "xl:grid-cols-6" : "xl:grid-cols-5",
         )}
       >
         <RetailReportSkeletonBlock className="h-16 w-full" />
         <RetailReportSkeletonBlock className="h-16 w-full" />
         <RetailReportSkeletonBlock className="h-16 w-full" />
         {includeOrderStatus ? <RetailReportSkeletonBlock className="h-16 w-full" /> : null}
+        <RetailReportSkeletonBlock className="h-16 w-full" />
         <div className="flex items-end gap-2">
           <RetailReportSkeletonBlock className="h-10 w-24" />
           <RetailReportSkeletonBlock className="h-10 w-24" />
@@ -928,8 +941,14 @@ export function RetailOrdersTable({
               <td className="px-2 py-2">{formatCurrency(order.cancelledSalesCents)}</td>
               <td className="px-2 py-2">{formatCurrency(order.returnedCents)}</td>
               <td className="px-2 py-2">{formatPaymentMethodLabel(order.paymentMethod)}</td>
-              <td className="px-2 py-2">{order.originDeviceName ?? "—"}</td>
-              <td className="px-2 py-2">{order.paidDeviceName ?? "—"}</td>
+              <td className="px-2 py-2">
+                <div>{order.originDeviceName ?? "—"}</div>
+                {order.originKioskLabel ? <div className="text-xs text-muted">{order.originKioskLabel}</div> : null}
+              </td>
+              <td className="px-2 py-2">
+                <div>{order.paidDeviceName ?? "—"}</div>
+                {order.paidKioskLabel ? <div className="text-xs text-muted">{order.paidKioskLabel}</div> : null}
+              </td>
               <td className="px-2 py-2">{formatDateTime(order.createdAt)}</td>
               <td className="px-2 py-2">{formatDateTime(order.paidAt)}</td>
               <td className="px-2 py-2">{formatDateTime(order.lastPostSaleAt)}</td>
@@ -1064,6 +1083,8 @@ export function RetailSalesOrdersTable({
             <th className="px-2 py-2">Fecha y hora de cobro</th>
             <th className="px-2 py-2">Total antes de descuento</th>
             <th className="px-2 py-2">Descuento</th>
+            <th className="px-2 py-2">Tipo de precio</th>
+            <th className="px-2 py-2">Diferencia mayoreo</th>
             <th className="px-2 py-2">Venta cobrada</th>
             <th className="px-2 py-2">Método de cobro</th>
             <th className="px-2 py-2">Estado de postventa</th>
@@ -1110,6 +1131,8 @@ export function RetailSalesOrdersTable({
                     </div>
                   ) : null}
                 </td>
+                <td className="px-2 py-2">{order.priceTier === "wholesale" ? "Mayoreo" : order.priceTier === "mixed" ? "Mixto" : "Público"}</td>
+                <td className="px-2 py-2">{order.wholesaleDifferenceCents !== 0 ? formatCurrency(order.wholesaleDifferenceCents) : <span className="text-muted">—</span>}</td>
                 <td className="px-2 py-2">{formatDateTime(order.paidAt)}</td>
                 <td className="px-2 py-2">{formatCurrency(order.grossSalesCents)}</td>
                 <td className="px-2 py-2">
@@ -1249,6 +1272,7 @@ export function RetailCashShiftTable({
             <tr key={row.cashShiftId} className="border-b border-border/60 align-top text-foreground">
               <td className="px-2 py-2">
                 <div className="font-medium">{row.deviceName ?? "Sin terminal"}</div>
+                {row.kioskLabel ? <div className="text-xs text-muted">{row.kioskLabel}</div> : null}
                 <div className="text-xs text-muted">Abre {formatDateTime(row.openedAt)}</div>
                 <div className="text-xs text-muted">Cierra {formatDateTime(row.closedAt)}</div>
                 <div className="mt-1 text-xs text-muted">

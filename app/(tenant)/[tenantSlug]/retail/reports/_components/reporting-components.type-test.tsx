@@ -43,7 +43,7 @@ export const reportingComponentsTypeTest = (
         { key: "gross_sales", label: "Venta bruta", amountCents: 100000, kind: "total" },
         { key: "discounts", label: "Descuento concedido con etiqueta larga", amountCents: 12000, kind: "decrease" },
         { key: "collected_sales", label: "Venta cobrada", amountCents: 88000, kind: "subtotal", href: "/las-quintas/retail/reports/sales" },
-        { key: "sale_cancellations", label: "Anulación de venta pagada", amountCents: 5000, kind: "decrease", href: "/las-quintas/retail/reports/post-sale" },
+        { key: "sale_cancellations", label: "Venta cancelada", amountCents: 5000, kind: "decrease", href: "/las-quintas/retail/reports/post-sale" },
         { key: "returns", label: "Devolución", amountCents: 3000, kind: "decrease" },
         { key: "commercial_result", label: "Resultado comercial del periodo", amountCents: 80000, kind: "total" },
       ]}

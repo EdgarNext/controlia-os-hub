@@ -11,6 +11,7 @@ type CreateOrderBody = {
   origin_local_folio?: string | null;
   origin_device_id: string;
   created_by_pos_user_id: string;
+  copied_from_order_id?: string | null;
   lines: Array<{
     line_number: number;
     product_id: string;

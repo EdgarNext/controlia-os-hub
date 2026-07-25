@@ -1,9 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
-import {
-  isRetailClaimDeviceRole,
-  isTechnicalRetailKioskName,
-} from "@/lib/pos/device-claims";
+import { isRetailClaimDeviceRole } from "@/lib/pos/device-claims";
 import { hashPosDeviceSecret } from "@/lib/pos/device-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -42,7 +39,6 @@ type RetailSettingsRow = {
 
 type KioskRow = {
   id: string;
-  name: string | null;
 };
 
 function badRequest(message: string) {
@@ -194,7 +190,7 @@ export async function POST(request: Request) {
 
     const { data: kiosk, error: kioskError } = await supabase
       .from("kiosks")
-      .select("id, name")
+      .select("id")
       .eq("tenant_id", tenant.id)
       .eq("id", claimCandidate.kiosk_id)
       .limit(1)
@@ -209,10 +205,6 @@ export async function POST(request: Request) {
 
     if (!kiosk) {
       return forbidden("Claim device kiosk is invalid for retail_pos.");
-    }
-
-    if (!isTechnicalRetailKioskName(kiosk.name)) {
-      return forbidden("Claim device was not issued as a retail_pos technical device.");
     }
 
     const nowIso = new Date().toISOString();

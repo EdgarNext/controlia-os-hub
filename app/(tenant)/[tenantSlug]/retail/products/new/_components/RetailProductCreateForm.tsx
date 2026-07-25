@@ -33,6 +33,7 @@ export function RetailProductCreateForm({
 }: RetailProductCreateFormProps) {
   const initialState: RetailProductEditActionState = {
     error: null,
+    warning: null,
     fieldErrors: {},
     values: initialValues,
   };
@@ -86,11 +87,16 @@ export function RetailProductCreateForm({
           <h2 className="text-base font-semibold text-foreground">Precio y costo</h2>
           <p className="text-sm text-muted">Los montos se capturan en MXN y se convierten a centavos al guardar.</p>
         </div>
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
           <label className="space-y-1 text-sm">
-            <span className="text-muted">Precio venta</span>
+            <span className="text-muted">Precio público</span>
             <input type="number" name="price" required min="0" step="0.01" defaultValue={values.price} className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2" />
             {renderFieldError(state.fieldErrors.price)}
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-muted">Precio mayoreo</span>
+            <input type="number" name="wholesale_price" min="0" step="0.01" defaultValue={values.wholesale_price} className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2" placeholder="Opcional: usa precio público" />
+            {renderFieldError(state.fieldErrors.wholesale_price)}
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-muted">Costo</span>
@@ -158,6 +164,7 @@ export function RetailProductCreateForm({
           {state.error}
         </p>
       ) : null}
+      {state.warning ? <p className="text-sm text-warning">{state.warning}</p> : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" isLoading={isPending}>

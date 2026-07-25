@@ -330,6 +330,9 @@ export async function previewRetailPosOrderDiscounts(input: {
     orderId: payload.order_id,
     trace: input.trace,
   });
+  if (lines.some((line) => line.price_tier_request_status === 'pending')) {
+    throw new RetailPosRuntimeError(409, 'PRICE_TIER_DECISION_REQUIRED');
+  }
 
   if (lines.length === 0) {
     throw new RetailPosRuntimeError(422, "DISCOUNT_INTENT_INVALID");

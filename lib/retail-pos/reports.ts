@@ -24,12 +24,14 @@ import type {
   RetailPosPostSaleRefundStatus,
   RetailPosZReportV1,
 } from "@/shared/types/retail-pos";
+import { calculatePriceTierEconomics, classifyPriceTier, classifyPriceTierDecision, type PriceTier } from "./price-tier-economics";
 
 type RetailReportsFiltersInput = {
   dateFrom?: string | null;
   dateTo?: string | null;
   deviceId?: string | null;
   orderStatus?: "all" | "pending_payment" | "paid" | "voided" | null;
+  priceTier?: "all" | "public" | "wholesale" | "mixed" | null;
 };
 
 type RetailPostSaleReportFiltersInput = {
@@ -54,6 +56,7 @@ type RetailReportsFilters = {
   dateTo: string;
   deviceId: string | null;
   orderStatus: "all" | "pending_payment" | "paid" | "voided";
+  priceTier: "all" | "public" | "wholesale" | "mixed";
 };
 
 export type RetailPostSaleReportFilters = {
@@ -70,6 +73,8 @@ type RetailDeviceOption = {
   id: string;
   name: string;
   role: RetailPosDeviceRole;
+  kioskNumber: number | null;
+  kioskName: string | null;
 };
 
 type RetailOrderRow = {
@@ -111,6 +116,19 @@ type RetailOrderLineRow = {
   total_discount_cents: number | null;
   line_total_cents: number;
   below_cost_after_discount: boolean | null;
+  public_unit_price_snapshot_cents: number | null;
+  wholesale_unit_price_snapshot_cents: number | null;
+  requested_price_tier: PriceTier | null;
+  price_tier_request_status: "not_requested" | "pending" | "approved" | "rejected" | null;
+  requested_by_pos_user_id: string | null;
+  requested_at: string | null;
+  approved_price_tier: PriceTier | null;
+  approved_unit_price_cents: number | null;
+  approved_by_pos_user_id: string | null;
+  approved_at: string | null;
+  direct_discount_cents: number | null;
+  order_discount_allocation_cents: number | null;
+  unit_cost_snapshot_cents: number | null;
 };
 
 type RetailOriginalOrderLookupRow = Pick<RetailOrderRow, "id" | "folio">;
@@ -212,6 +230,8 @@ type DeviceRow = {
   id: string;
   name: string;
   status: string;
+  kiosk_id: string;
+  kiosks: { number: number; name: string | null } | null;
 };
 
 type DeviceSettingsRow = {
@@ -223,6 +243,14 @@ type TenantRow = {
   id: string;
   name: string;
 };
+
+function formatKioskLabel(device: DeviceRow | undefined): string | null {
+  if (!device?.kiosks) {
+    return null;
+  }
+
+  return `${device.kiosks.name ?? `Kiosko ${device.kiosks.number}`} · #${device.kiosks.number}`;
+}
 
 export type RetailReportsPageFilters = RetailReportsFilters;
 
@@ -272,6 +300,13 @@ export type RetailReportsOverview = {
     soldLinesCount: number;
     soldUnits: number;
     openShiftsCount: number;
+    wholesaleSalesCount: number;
+    wholesaleBaseCents: number;
+    wholesaleDifferenceCents: number;
+    wholesaleManualDiscountCents: number;
+    priceComposition: Array<{ tier: "public" | "wholesale"; baseCents: number }>;
+    decisionCounts: Array<{ key: "requested_approved" | "requested_rejected" | "cashier_direct"; count: number }>;
+    anomalies: Array<{ type: string; orderId: string; folio: string }>;
   };
   discountBreakdown: {
     byReason: Array<{
@@ -327,7 +362,9 @@ export type RetailReportsOverview = {
     grossSalesCents: number;
     paymentMethod: "cash" | "card" | null;
     originDeviceName: string | null;
+    originKioskLabel: string | null;
     paidDeviceName: string | null;
+    paidKioskLabel: string | null;
     createdAt: string;
     paidAt: string | null;
     relevantAt: string | null;
@@ -335,12 +372,15 @@ export type RetailReportsOverview = {
     cancelReason: string | null;
     discountCents: number;
     hasBelowCostLine: boolean;
+    priceTier: "public" | "wholesale" | "mixed";
+    wholesaleDifferenceCents: number;
   }>;
 };
 
 export type RetailCashShiftReportRow = {
   cashShiftId: string;
   deviceName: string | null;
+  kioskLabel: string | null;
   openedByName: string | null;
   closedByName: string | null;
   openedAt: string;
@@ -599,6 +639,10 @@ function normalizeOrderStatus(
   return "all";
 }
 
+function normalizePriceTier(value: string | null | undefined): RetailReportsFilters["priceTier"] {
+  return value === "public" || value === "wholesale" || value === "mixed" ? value : "all";
+}
+
 function normalizePostSaleOperationType(
   value: string | null | undefined,
 ): "all" | "sale_cancellation" | "return_full" | "return_partial" {
@@ -703,7 +747,7 @@ function getPostSaleOperationLabel(
 ): string {
   const canonicalType = getCanonicalPostSaleDocumentType(documentType);
   if (canonicalType === "sale_cancellation") {
-    return "Anulación de venta pagada";
+    return "Venta cancelada";
   }
   if (canonicalType === "return_full") {
     return "Devolución total";
@@ -722,6 +766,7 @@ function buildFilters(input?: RetailReportsFiltersInput): RetailReportsFilters {
     dateTo,
     deviceId: normalizeDeviceId(input?.deviceId),
     orderStatus: normalizeOrderStatus(input?.orderStatus),
+    priceTier: normalizePriceTier(input?.priceTier),
   };
 }
 
@@ -732,6 +777,10 @@ function parseQuantity(value: string | number) {
 
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function linesByOrderIdForBuild(lines: RetailOrderLineRow[], orderId: string) {
+  return lines.filter((line) => line.order_id === orderId);
 }
 
 function parseTimeZoneOffsetMinutes(value: string) {
@@ -884,7 +933,11 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
     postSaleRefundsResult,
   ] =
     await Promise.all([
-      supabase.from("pos_devices").select("id, name, status").eq("tenant_id", tenantId).returns<DeviceRow[]>(),
+      supabase
+        .from("pos_devices")
+        .select("id, name, status, kiosk_id, kiosks(number, name)")
+        .eq("tenant_id", tenantId)
+        .returns<DeviceRow[]>(),
       supabase
         .from("retail_pos_device_settings")
         .select("device_id, device_role")
@@ -1045,6 +1098,8 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
         id: device.id,
         name: device.name,
         role: settings.device_role,
+        kioskNumber: device.kiosks?.number ?? null,
+        kioskName: device.kiosks?.name ?? null,
       };
     })
     .filter((device): device is RetailDeviceOption => Boolean(device))
@@ -1108,7 +1163,7 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
     }
   }
 
-  const orders = [...allOrders.values()]
+  let orders = [...allOrders.values()]
     .sort((left, right) => getOrderActivityTimestamp(right).localeCompare(getOrderActivityTimestamp(left)))
     .filter((order) => {
     if (filters.orderStatus !== "all" && order.status !== filters.orderStatus) {
@@ -1174,7 +1229,7 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
     ? await supabase
         .from("retail_pos_order_lines")
         .select(
-          "id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, sales_unit_label, quantity, unit_price_cents, line_subtotal_cents, total_discount_cents, line_total_cents, below_cost_after_discount",
+          "id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, sales_unit_label, quantity, unit_price_cents, public_unit_price_snapshot_cents, wholesale_unit_price_snapshot_cents, requested_price_tier, price_tier_request_status, requested_by_pos_user_id, requested_at, approved_price_tier, approved_unit_price_cents, approved_by_pos_user_id, approved_at, line_subtotal_cents, direct_discount_cents, order_discount_allocation_cents, total_discount_cents, unit_cost_snapshot_cents, line_total_cents, below_cost_after_discount",
         )
         .eq("tenant_id", tenantId)
         .in("order_id", paidOrderIds)
@@ -1183,6 +1238,19 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
 
   if (linesResult.error) {
     throw new Error(`Unable to load retail order lines report: ${linesResult.error.message}`);
+  }
+
+  const linesByOrderId = new Map<string, RetailOrderLineRow[]>();
+  for (const line of linesResult.data ?? []) {
+    const bucket = linesByOrderId.get(line.order_id) ?? [];
+    bucket.push(line);
+    linesByOrderId.set(line.order_id, bucket);
+  }
+  if (filters.priceTier !== "all") {
+    orders = orders.filter((order) => {
+      if (order.status !== "paid") return false;
+      return classifyPriceTier(linesByOrderId.get(order.id) ?? []) === filters.priceTier;
+    });
   }
 
   const discountsResult = paidOrderIds.length
@@ -1217,7 +1285,7 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
     postSaleRefunds,
     postSaleDocumentByOrderId,
     postSaleRefundByDocumentId,
-    lines: linesResult.data ?? [],
+    lines: (linesResult.data ?? []).filter((line) => orders.some((order) => order.id === line.order_id)),
     discounts: discountsResult.data ?? [],
     startIso,
     endIso,
@@ -1321,6 +1389,39 @@ async function buildRetailReportsOverviewFromLoadedData(
     saleVoidDocuments.some((document) => document.original_order_id === order.id),
   );
   const soldLines = data.lines;
+  const paidLineRows = soldLines.filter((line) => paidOrders.some((order) => order.id === line.order_id));
+  const priceEconomics = paidLineRows.map((line) => ({ line, economics: calculatePriceTierEconomics({
+    quantity: line.quantity,
+    publicUnitPriceSnapshotCents: line.public_unit_price_snapshot_cents,
+    wholesaleUnitPriceSnapshotCents: line.wholesale_unit_price_snapshot_cents,
+    approvedPriceTier: line.approved_price_tier,
+    approvedUnitPriceCents: line.approved_unit_price_cents,
+    unitPriceCents: line.unit_price_cents,
+    directDiscountCents: line.direct_discount_cents,
+    orderDiscountAllocationCents: line.order_discount_allocation_cents,
+    totalDiscountCents: line.total_discount_cents,
+    unitCostSnapshotCents: line.unit_cost_snapshot_cents,
+  }) }));
+  const wholesaleEconomics = priceEconomics.filter(({ economics }) => economics.tier === "wholesale");
+  const priceComposition = (["public", "wholesale"] as const).map((tier) => ({
+    tier,
+    baseCents: priceEconomics.filter(({ economics }) => economics.tier === tier).reduce((sum, row) => sum + row.economics.approvedBaseCents, 0),
+  }));
+  const decisionCounts = (["requested_approved", "requested_rejected", "cashier_direct"] as const).map((key) => ({
+    key,
+    count: paidLineRows.filter((candidate) => classifyPriceTierDecision({ requestedPriceTier: candidate.requested_price_tier, approvedPriceTier: candidate.approved_price_tier, quantity: candidate.quantity }) === key).length,
+  }));
+  const anomalies = paidLineRows.flatMap((line) => {
+    const economics = calculatePriceTierEconomics({ quantity: line.quantity, publicUnitPriceSnapshotCents: line.public_unit_price_snapshot_cents, wholesaleUnitPriceSnapshotCents: line.wholesale_unit_price_snapshot_cents, approvedPriceTier: line.approved_price_tier, approvedUnitPriceCents: line.approved_unit_price_cents, unitPriceCents: line.unit_price_cents, directDiscountCents: line.direct_discount_cents, orderDiscountAllocationCents: line.order_discount_allocation_cents, totalDiscountCents: line.total_discount_cents, unitCostSnapshotCents: line.unit_cost_snapshot_cents });
+    const order = paidOrders.find((candidate) => candidate.id === line.order_id)!;
+    const issues: string[] = [];
+    if (line.public_unit_price_snapshot_cents === null || line.wholesale_unit_price_snapshot_cents === null) issues.push("missing_snapshots");
+    if (line.approved_price_tier === "wholesale" && line.approved_unit_price_cents !== line.wholesale_unit_price_snapshot_cents) issues.push("wholesale_snapshot_mismatch");
+    if (line.approved_price_tier === "public" && line.approved_unit_price_cents !== line.public_unit_price_snapshot_cents) issues.push("public_snapshot_mismatch");
+    if (line.requested_price_tier === "wholesale" && line.approved_price_tier === "wholesale" && !line.approved_by_pos_user_id) issues.push("missing_approver");
+    if (economics.manualDiscountCents > 0 && economics.priceTierDifferenceCents !== 0 && line.total_discount_cents === economics.priceTierDifferenceCents) issues.push("tier_difference_as_discount");
+    return issues.map((type) => ({ type, orderId: order.id, folio: order.folio }));
+  });
   const soldUnits = soldLines.reduce((sum, line) => sum + parseQuantity(line.quantity), 0);
   const paymentMethods = buildPaymentMethodSummary(data.payments);
   const lineDiscountsCents = paidOrders.reduce((sum, order) => sum + (order.direct_discount_cents ?? 0), 0);
@@ -1491,6 +1592,13 @@ async function buildRetailReportsOverviewFromLoadedData(
       soldLinesCount: soldLines.length,
       soldUnits,
       openShiftsCount: data.shifts.filter((shift) => shift.status === "open").length,
+      wholesaleSalesCount: paidOrders.filter((order) => classifyPriceTier(linesByOrderIdForBuild(data.lines, order.id)) === "wholesale" || classifyPriceTier(linesByOrderIdForBuild(data.lines, order.id)) === "mixed").length,
+      wholesaleBaseCents: wholesaleEconomics.reduce((sum, row) => sum + row.economics.approvedBaseCents, 0),
+      wholesaleDifferenceCents: wholesaleEconomics.reduce((sum, row) => sum + row.economics.priceTierDifferenceCents, 0),
+      wholesaleManualDiscountCents: wholesaleEconomics.reduce((sum, row) => sum + row.economics.manualDiscountCents, 0),
+      priceComposition,
+      decisionCounts,
+      anomalies,
     },
     discountBreakdown: {
       byReason: [...discountByReasonMap.values()].sort(
@@ -1560,7 +1668,9 @@ async function buildRetailReportsOverviewFromLoadedData(
         grossSalesCents: order.subtotal_cents,
         paymentMethod: firstPayment?.payment_method ?? null,
         originDeviceName: data.deviceById.get(order.origin_device_id)?.name ?? null,
+        originKioskLabel: formatKioskLabel(data.deviceById.get(order.origin_device_id)),
         paidDeviceName: order.paid_by_device_id ? data.deviceById.get(order.paid_by_device_id)?.name ?? null : null,
+        paidKioskLabel: order.paid_by_device_id ? formatKioskLabel(data.deviceById.get(order.paid_by_device_id)) : null,
         createdAt: order.created_at,
         paidAt: order.paid_at,
         relevantAt: lastPostSaleAt ?? order.paid_at ?? order.voided_at ?? order.created_at,
@@ -1568,6 +1678,8 @@ async function buildRetailReportsOverviewFromLoadedData(
         cancelReason: getOrderVoidReason(order),
         discountCents: order.discount_cents,
         hasBelowCostLine,
+        priceTier: classifyPriceTier(soldLines.filter((line) => line.order_id === order.id)),
+        wholesaleDifferenceCents: priceEconomics.filter(({ line }) => line.order_id === order.id && line.approved_price_tier === "wholesale").reduce((sum, row) => sum + row.economics.priceTierDifferenceCents, 0),
       };
     }),
   };
@@ -1671,6 +1783,7 @@ export async function getRetailCashShiftReport(
     return {
       cashShiftId: shift.id,
       deviceName: data.deviceById.get(shift.device_id)?.name ?? null,
+      kioskLabel: formatKioskLabel(data.deviceById.get(shift.device_id)),
       openedByName: data.userById.get(shift.opened_by_pos_user_id)?.name ?? null,
       closedByName: shift.closed_by_pos_user_id ? data.userById.get(shift.closed_by_pos_user_id)?.name ?? null : null,
       openedAt: shift.opened_at,

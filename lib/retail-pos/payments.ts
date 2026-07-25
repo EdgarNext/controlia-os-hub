@@ -163,6 +163,16 @@ async function loadPaymentByOrder(
   return data ?? null;
 }
 
+async function assertOrderPriceTiersResolved(tenantId: string, orderId: string) {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase.from('retail_pos_order_lines')
+    .select('price_tier_request_status').eq('tenant_id', tenantId).eq('order_id', orderId);
+  if (error) throw new RetailPosRuntimeError(500, `Unable to validate price tier requests: ${error.message}`);
+  if ((data ?? []).some((line) => line.price_tier_request_status === 'pending')) {
+    throw new RetailPosRuntimeError(409, 'PRICE_TIER_DECISION_REQUIRED');
+  }
+}
+
 async function loadPaidOrderResponse(
   tenantId: string,
   orderId: string,
@@ -324,6 +334,8 @@ export async function payRetailPosOrder(input: {
   if (order.status !== "pending_payment") {
     throw new RetailPosRuntimeError(409, "Only pending_payment retail_pos orders can be paid.");
   }
+
+  await assertOrderPriceTiersResolved(actor.tenantId, input.orderId);
 
   const existingPayment = await loadPaymentByOrder(actor.tenantId, input.orderId, input.trace);
   if (existingPayment) {

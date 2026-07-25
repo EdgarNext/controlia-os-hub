@@ -9,6 +9,9 @@ type VoidOrderBody = {
   order_id: string;
   voided_by_pos_user_id: string;
   void_reason: string | null;
+  void_note?: string | null;
+  expected_revision?: number;
+  command_id?: string;
   deviceId?: unknown;
   deviceSecret?: unknown;
 };

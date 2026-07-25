@@ -14,7 +14,7 @@ import {
 test("el diccionario devuelve los nombres canónicos", () => {
   assert.equal(getRetailReportingLabel("collected_sales"), "Venta cobrada");
   assert.equal(getRetailReportingLabel("commercial_result"), "Resultado comercial del periodo");
-  assert.equal(getRetailReportingLabel("paid_sale_cancellation"), "Anulación de venta pagada");
+  assert.equal(getRetailReportingLabel("paid_sale_cancellation"), "Venta cancelada");
 });
 
 test("no existe Venta comercial neta como nombre requerido", () => {

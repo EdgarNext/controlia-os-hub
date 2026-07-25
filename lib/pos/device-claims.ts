@@ -12,7 +12,8 @@ export const RETAIL_CLAIM_DEVICE_ROLES = [
 export type RetailClaimDeviceRole = (typeof RETAIL_CLAIM_DEVICE_ROLES)[number];
 
 export function isTechnicalRetailKioskName(name: string | null): boolean {
-  return (name ?? "").trim().toUpperCase() === RETAIL_TECHNICAL_KIOSK_NAME;
+  const normalized = (name ?? "").trim().toUpperCase();
+  return normalized === RETAIL_TECHNICAL_KIOSK_NAME || normalized.startsWith("RETAIL STATION ·");
 }
 
 export function isRetailClaimDeviceRole(value: unknown): value is RetailClaimDeviceRole {

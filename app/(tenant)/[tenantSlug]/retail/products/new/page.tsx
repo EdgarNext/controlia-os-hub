@@ -97,6 +97,7 @@ export default async function RetailProductCreatePage({ params }: RetailProductC
           sku: "",
           barcode: "",
           price: "",
+          wholesale_price: "",
           cost: "",
           supplier_id: "",
           sales_unit_code: "pza",
