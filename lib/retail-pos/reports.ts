@@ -935,7 +935,7 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
     await Promise.all([
       supabase
         .from("pos_devices")
-        .select("id, name, status, kiosk_id, kiosks(number, name)")
+        .select("id, name, status, kiosk_id, kiosks!pos_devices_kiosk_id_fkey(number, name)")
         .eq("tenant_id", tenantId)
         .returns<DeviceRow[]>(),
       supabase
