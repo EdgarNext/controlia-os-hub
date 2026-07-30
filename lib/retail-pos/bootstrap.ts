@@ -72,7 +72,8 @@ function assertSupportedDeviceRole(
     deviceRole !== "order_station" &&
     deviceRole !== "cashier_station" &&
     deviceRole !== "backoffice_station" &&
-    deviceRole !== "counter_station"
+    deviceRole !== "counter_station" &&
+    deviceRole !== "multi_station"
   ) {
     throw new RetailPosRuntimeError(403, "POS device role is not supported for retail_pos bootstrap.");
   }
@@ -130,6 +131,15 @@ const BACKOFFICE_ORDER_ENTRY_CAPABILITIES: RetailPosCapability[] = [
   "tickets.print.order",
 ];
 
+const MULTI_STATION_CAPABILITIES: RetailPosCapability[] = Array.from(
+  new Set<RetailPosCapability>([
+    ...ORDER_STATION_CAPABILITIES,
+    ...CASHIER_CAPABILITIES,
+    ...BACKOFFICE_CAPABILITIES,
+    ...BACKOFFICE_ORDER_ENTRY_CAPABILITIES,
+  ]),
+);
+
 function buildCapabilities(input: {
   deviceRole: RetailPosDeviceRole;
   allowOrderEntry: boolean;
@@ -165,6 +175,16 @@ function buildCapabilities(input: {
     return BACKOFFICE_CAPABILITIES;
   }
 
+  if (input.deviceRole === "multi_station") {
+    const capabilities = [...MULTI_STATION_CAPABILITIES];
+    if (input.canApplyDiscounts) capabilities.push("discounts.apply");
+    if (input.canViewCost) {
+      capabilities.push("discounts.view_cost");
+      capabilities.push("post_sale.view_cost");
+    }
+    return capabilities;
+  }
+
   return ORDER_STATION_CAPABILITIES;
 }
 
@@ -196,6 +216,7 @@ function buildConfigVersion(input: {
       auto_print_payment_ticket: input.settings.auto_print_payment_ticket,
       scanner_enabled: input.settings.scanner_enabled,
       is_active: input.settings.is_active,
+      assigned_pos_user_id: input.settings.assigned_pos_user_id,
       updated_at: input.settings.updated_at,
     },
     kiosk: input.kiosk
@@ -264,7 +285,7 @@ function buildCashRegisterSummary(input: {
   device: BootstrapDeviceRow;
 }) {
   if (
-    (input.deviceRole !== "cashier_station" && input.deviceRole !== "counter_station") ||
+    (input.deviceRole !== "cashier_station" && input.deviceRole !== "counter_station" && input.deviceRole !== "multi_station") ||
     !input.kiosk
   ) {
     return null;
@@ -286,7 +307,7 @@ function buildCashierState(input: {
   currentShift: RetailPosCashShift | null;
   operator: BootstrapPosUserRow | null;
 }): RetailPosCashierState | null {
-  if (input.deviceRole !== "cashier_station" && input.deviceRole !== "counter_station") {
+  if (input.deviceRole !== "cashier_station" && input.deviceRole !== "counter_station" && input.deviceRole !== "multi_station") {
     return null;
   }
 
@@ -365,7 +386,7 @@ async function loadBootstrapDeviceSettings(input: {
         supabase
         .from("retail_pos_device_settings")
         .select(
-          "device_id, tenant_id, device_role, allow_order_entry, can_apply_discounts, can_view_cost, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, updated_at",
+          "device_id, tenant_id, device_role, allow_order_entry, can_apply_discounts, can_view_cost, printer_name, printer_driver, auto_print_order_ticket, auto_print_payment_ticket, scanner_enabled, is_active, assigned_pos_user_id, updated_at",
         )
         .abortSignal(signal)
         .eq("tenant_id", input.tenantId)
@@ -468,8 +489,25 @@ async function loadShiftOperator(input: {
 async function loadAssignedOperator(input: {
   tenantId: string;
   deviceRole: RetailPosDeviceRole;
+  assignedPosUserId?: string | null;
   trace?: RuntimePerfTrace;
 }) {
+  if (input.assignedPosUserId) {
+    const operator = await loadShiftOperator({
+      tenantId: input.tenantId,
+      posUserId: input.assignedPosUserId,
+      trace: input.trace,
+    });
+    if (!operator) {
+      throw new RetailPosRuntimeError(403, "La terminal multifunción no tiene un operador asignado activo.");
+    }
+    return operator;
+  }
+
+  if (input.deviceRole === "multi_station") {
+    throw new RetailPosRuntimeError(403, "La terminal multifunción no tiene un operador asignado.");
+  }
+
   const supabase = getSupabaseAdminClient({ trace: input.trace });
   const { data, error } = await runSupabaseReadWithRetry<{ pos_user_id: string }>({
     trace: input.trace,
@@ -552,10 +590,11 @@ export async function getRetailPosBootstrap(input: {
   const activePosUser = await loadAssignedOperator({
     tenantId: tenant.id,
     deviceRole: settings.device_role,
+    assignedPosUserId: settings.assigned_pos_user_id,
     trace: input.trace,
   });
   const currentShift =
-    settings.device_role === "cashier_station" || settings.device_role === "counter_station"
+    settings.device_role === "cashier_station" || settings.device_role === "counter_station" || settings.device_role === "multi_station"
       ? await getOpenRetailPosCashShiftForDevice({
           tenantId: tenant.id,
           deviceRecordId: device.id,

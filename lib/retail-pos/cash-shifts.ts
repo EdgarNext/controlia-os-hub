@@ -11,7 +11,7 @@ import type {
 } from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
-  assertRetailPosDeviceRole,
+  assertRetailPosCashierAccess,
   resolveRetailPosRuntimeActor,
   resolveRetailPosTargetDevice,
   type RetailPosRuntimeActor,
@@ -247,7 +247,7 @@ async function buildRetailPosCashShiftCloseSummary(input: {
 
 function assertCashierSessionOrDevice(actor: RetailPosRuntimeActor) {
   if (actor.mode === "device") {
-    assertRetailPosDeviceRole(actor, ["cashier_station"]);
+    assertRetailPosCashierAccess(actor);
   }
 }
 
@@ -267,7 +267,7 @@ export async function getRetailPosCashShiftCloseSummary(input: {
   const targetDevice = await resolveRetailPosTargetDevice({
     actor,
     deviceRecordId: null,
-    requiredRole: "cashier_station",
+    requiredRole: ["cashier_station", "multi_station"],
   });
 
   const cashShift = await loadRetailPosCashShiftById({
@@ -311,7 +311,7 @@ export async function openRetailPosCashShift(input: {
   const targetDevice = await resolveRetailPosTargetDevice({
     actor,
     deviceRecordId: actor.mode === "device" ? null : input.request.device_id,
-    requiredRole: "cashier_station",
+    requiredRole: ["cashier_station", "multi_station"],
   });
 
   const kioskId: string =
@@ -410,7 +410,7 @@ export async function getCurrentRetailPosCashShift(input: {
   const targetDevice = await resolveRetailPosTargetDevice({
     actor,
     deviceRecordId: input.deviceRecordId,
-    requiredRole: "cashier_station",
+    requiredRole: ["cashier_station", "multi_station"],
   });
 
   const cashShift = await getOpenRetailPosCashShiftForDevice({
@@ -450,7 +450,7 @@ export async function closeRetailPosCashShift(input: {
   const targetDevice = await resolveRetailPosTargetDevice({
     actor,
     deviceRecordId: actor.mode === "device" ? null : input.request.device_id,
-    requiredRole: "cashier_station",
+    requiredRole: ["cashier_station", "multi_station"],
   });
 
   const cashShift = await loadRetailPosCashShiftById({
@@ -529,7 +529,7 @@ export async function getRetailPosDaySummary(input: {
     const targetDevice = await resolveRetailPosTargetDevice({
       actor,
       deviceRecordId: input.deviceRecordId,
-      requiredRole: "cashier_station",
+      requiredRole: ["cashier_station", "multi_station"],
     });
     targetDeviceRecordId = targetDevice.deviceRecordId;
     currentCashShift = await getOpenRetailPosCashShiftForDevice({

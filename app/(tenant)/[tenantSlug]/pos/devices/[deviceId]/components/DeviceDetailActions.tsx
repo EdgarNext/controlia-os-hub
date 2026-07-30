@@ -8,6 +8,7 @@ import {
   type IssueClaimFormState,
   type DeviceModuleKey,
   type PosKioskOption,
+  type RetailPosOperatorOption,
 } from "@/actions/pos/devices/actions";
 import type { RetailClaimDeviceRole } from "@/lib/pos/device-claims";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,7 @@ type DeviceDetailActionsProps = {
   deviceName: string;
   kiosks: PosKioskOption[];
   disabled: boolean;
+  operators: RetailPosOperatorOption[];
 };
 
 export function DeviceDetailActions({
@@ -46,6 +48,7 @@ export function DeviceDetailActions({
   deviceName,
   kiosks,
   disabled,
+  operators,
 }: DeviceDetailActionsProps) {
   const [disableState, disableFormAction, disablePending] = useActionState(disableDeviceAction, initialDisableState);
   const [reissueState, reissueFormAction, reissuePending] = useActionState(reissueClaimAction, initialReissueState);
@@ -113,6 +116,17 @@ export function DeviceDetailActions({
               </div>
               {reissueState.fieldErrors.deviceRole ? (
                 <p className="text-sm text-danger">{reissueState.fieldErrors.deviceRole}</p>
+              ) : null}
+              {deviceRole === "multi_station" ? (
+                <>
+                  <Label htmlFor="assignedPosUserId">Operador de la terminal</Label>
+                  <select id="assignedPosUserId" name="assignedPosUserId" defaultValue="" required className="h-11 w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 text-sm text-foreground">
+                    <option value="" disabled>{operators.length ? "Selecciona un operador" : "No hay operadores activos"}</option>
+                    {operators.map((operator) => <option key={operator.id} value={operator.id}>{operator.name} · {operator.role}</option>)}
+                  </select>
+                  <p className="text-xs text-muted">El cambio se aplicará en el siguiente bootstrap de la terminal.</p>
+                  {reissueState.fieldErrors.assignedPosUserId ? <p className="text-sm text-danger">{reissueState.fieldErrors.assignedPosUserId}</p> : null}
+                </>
               ) : null}
             </div>
           )}

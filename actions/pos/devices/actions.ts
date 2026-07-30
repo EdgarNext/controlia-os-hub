@@ -11,6 +11,8 @@ import {
   type RetailClaimDeviceRole,
 } from "@/lib/pos/device-claims";
 import { hashPosDeviceSecret } from "@/lib/pos/device-auth";
+import { hashPosUserPin } from "@/lib/pos/user-auth";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 const CLAIM_TTL_MINUTES = 15;
@@ -46,6 +48,7 @@ type RetailDeviceSettingsRow = {
   device_role: RetailPosDeviceRole;
   allow_order_entry: boolean;
   is_active: boolean;
+  assigned_pos_user_id: string | null;
 };
 
 type TenantModuleRow = {
@@ -110,6 +113,13 @@ export type PosDeviceListItem = {
   } | null;
 };
 
+export type RetailPosOperatorOption = {
+  id: string;
+  name: string;
+  role: "cashier" | "supervisor" | "admin";
+  isActive: boolean;
+};
+
 export type IssueClaimFormState = {
   error: string | null;
   fieldErrors: {
@@ -119,6 +129,9 @@ export type IssueClaimFormState = {
     deviceRole?: string;
     deviceId?: string;
     confirmPhrase?: string;
+    assignedPosUserId?: string;
+    operatorName?: string;
+    operatorPin?: string;
   };
   result: {
     deviceRecordId: string;
@@ -131,6 +144,8 @@ export type IssueClaimFormState = {
     kioskNumber: number;
     claimCode: string;
     claimExpiresAt: string;
+    assignedPosUserId: string | null;
+    assignedPosUserName: string | null;
   } | null;
 };
 
@@ -395,7 +410,7 @@ async function getDeviceModuleByRecordId(
       .maybeSingle<{ name: string | null }>(),
     supabase
       .from("retail_pos_device_settings")
-      .select("device_id, tenant_id, device_role, allow_order_entry, is_active")
+      .select("device_id, tenant_id, device_role, allow_order_entry, is_active, assigned_pos_user_id")
       .eq("tenant_id", tenantId)
       .eq("device_id", device.id)
       .limit(1)
@@ -564,13 +579,14 @@ async function upsertRetailDeviceSettings(input: {
   deviceRole: RetailClaimDeviceRole;
   userId: string;
   nowIso: string;
+  assignedPosUserId?: string | null;
 }) {
   const supabase = await getSupabaseServerClient();
-  const { error } = await supabase.from("retail_pos_device_settings").upsert({
+  const settings: Record<string, unknown> = {
     device_id: input.deviceRecordId,
     tenant_id: input.tenantId,
     device_role: input.deviceRole,
-    allow_order_entry: input.deviceRole === "order_station",
+    allow_order_entry: input.deviceRole === "order_station" || input.deviceRole === "multi_station",
     printer_name: null,
     printer_driver: null,
     auto_print_order_ticket: true,
@@ -581,11 +597,67 @@ async function upsertRetailDeviceSettings(input: {
     updated_at: input.nowIso,
     created_by: input.userId,
     updated_by: input.userId,
-  });
+  };
+  if (input.assignedPosUserId !== undefined) {
+    settings.assigned_pos_user_id = input.assignedPosUserId;
+  }
+  const { error } = await supabase.from("retail_pos_device_settings").upsert(settings);
 
   if (error) {
     throw new Error(`No fue posible crear o validar retail_pos_device_settings: ${error.message}`);
   }
+}
+
+async function resolveAssignedPosUser(input: {
+  tenantId: string;
+  assignedPosUserId?: string | null;
+  operatorName?: string | null;
+  operatorRole?: "cashier" | "supervisor" | "admin" | null;
+  operatorPin?: string | null;
+  createdBy: string;
+}): Promise<{ id: string; name: string }> {
+  const supabase = getSupabaseAdminClient();
+  const assignedId = normalizeRecordId(input.assignedPosUserId ?? "");
+
+  if (assignedId) {
+    const { data, error } = await supabase
+      .from("pos_users")
+      .select("id, name, is_active")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", assignedId)
+      .limit(1)
+      .maybeSingle<{ id: string; name: string; is_active: boolean }>();
+    if (error) throw new Error(`No fue posible validar el operador POS: ${error.message}`);
+    if (!data || !data.is_active) throw new Error("El operador POS seleccionado no existe o está inactivo.");
+    return { id: data.id, name: data.name };
+  }
+
+  const name = normalizeDeviceName(input.operatorName ?? "");
+  const pin = normalizeDeviceName(input.operatorPin ?? "");
+  const role = input.operatorRole ?? "cashier";
+  if (!name) throw new Error("El nombre del operador POS es obligatorio.");
+  if (pin.length < 4) throw new Error("El PIN del operador POS debe tener al menos 4 caracteres.");
+
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("pos_users")
+    .insert({
+      tenant_id: input.tenantId,
+      name,
+      pin_hash: hashPosUserPin(pin),
+      role,
+      is_active: true,
+      created_at: nowIso,
+      updated_at: nowIso,
+      created_by: input.createdBy,
+      updated_by: input.createdBy,
+    })
+    .select("id, name")
+    .limit(1)
+    .maybeSingle<{ id: string; name: string }>();
+  if (error) throw new Error(`No fue posible crear el operador POS: ${error.message}`);
+  if (!data) throw new Error("No fue posible crear el operador POS.");
+  return data;
 }
 
 async function restoreDeviceSnapshot(snapshot: MutablePosDeviceSnapshot, userId: string, nowIso: string) {
@@ -669,7 +741,7 @@ export async function listDevices(tenantSlug: string): Promise<PosDeviceListItem
 
   const { data: retailSettings, error: retailSettingsError } = await supabase
     .from("retail_pos_device_settings")
-    .select("device_id, tenant_id, device_role, allow_order_entry, is_active")
+    .select("device_id, tenant_id, device_role, allow_order_entry, is_active, assigned_pos_user_id")
     .eq("tenant_id", access.tenant.tenantId)
     .in("device_id", rows.map((row) => row.id));
 
@@ -686,6 +758,25 @@ export async function listDevices(tenantSlug: string): Promise<PosDeviceListItem
     rows.map((row) => toDeviceListItem(row, kiosksById, retailSettingsByDeviceId)),
     access,
   );
+}
+
+export async function listRetailPosOperators(tenantSlug: string): Promise<RetailPosOperatorOption[]> {
+  const access = await resolveDevicesAccess(normalizeTenantSlug(tenantSlug));
+  assertModuleManagementAccess(access, "retail_pos");
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("pos_users")
+    .select("id, name, role, is_active")
+    .eq("tenant_id", access.tenant.tenantId)
+    .eq("is_active", true)
+    .order("name", { ascending: true });
+  if (error) throw new Error(`No fue posible consultar operadores POS: ${error.message}`);
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    name: row.name as string,
+    role: row.role as RetailPosOperatorOption["role"],
+    isActive: Boolean(row.is_active),
+  }));
 }
 
 export async function getDeviceById(tenantSlug: string, deviceRecordId: string): Promise<PosDeviceListItem | null> {
@@ -726,7 +817,7 @@ export async function getDeviceById(tenantSlug: string, deviceRecordId: string):
 
   const { data: retailSettings, error: retailSettingsError } = await supabase
     .from("retail_pos_device_settings")
-    .select("device_id, tenant_id, device_role, allow_order_entry, is_active")
+    .select("device_id, tenant_id, device_role, allow_order_entry, is_active, assigned_pos_user_id")
     .eq("tenant_id", access.tenant.tenantId)
     .eq("device_id", (data as PosDeviceRow).id)
     .limit(1)
@@ -765,6 +856,7 @@ async function issueClaimInternal(input: {
   kioskId?: string | null;
   name: string;
   deviceRole?: RetailClaimDeviceRole | null;
+  assignedPosUserId?: string | null;
   existingDeviceRecordId?: string | null;
 }) {
   const normalizedTenantSlug = normalizeTenantSlug(input.tenantSlug);
@@ -891,6 +983,7 @@ async function issueClaimInternal(input: {
           deviceRole: input.deviceRole!,
           userId: user.id,
           nowIso,
+          assignedPosUserId: input.deviceRole === "multi_station" ? input.assignedPosUserId : undefined,
         });
       } catch (error) {
         await restoreDeviceSnapshot(previousSnapshot!, user.id, nowIso);
@@ -909,6 +1002,8 @@ async function issueClaimInternal(input: {
       kioskNumber: kiosk.number,
       claimCode,
       claimExpiresAt,
+      assignedPosUserId: input.assignedPosUserId ?? null,
+      assignedPosUserName: null,
     };
   }
 
@@ -947,6 +1042,7 @@ async function issueClaimInternal(input: {
         deviceRole: input.deviceRole!,
         userId: user.id,
         nowIso,
+        assignedPosUserId: input.deviceRole === "multi_station" ? input.assignedPosUserId : undefined,
       });
     } catch (error) {
       await cleanupFailedNewRetailDevice(data.id, tenant.tenantId, user.id, nowIso);
@@ -965,6 +1061,8 @@ async function issueClaimInternal(input: {
     kioskNumber: kiosk.number,
     claimCode,
     claimExpiresAt,
+    assignedPosUserId: input.assignedPosUserId ?? null,
+    assignedPosUserName: null,
   };
 }
 
@@ -1066,6 +1164,11 @@ export async function createOrIssueClaimAction(
   const kioskId = normalizeKioskId(formData.get("kioskId"));
   const deviceName = normalizeDeviceName(formData.get("name"));
   const deviceRole = normalizeRetailDeviceRole(formData.get("deviceRole"));
+  const assignedPosUserId = normalizeRecordId(formData.get("assignedPosUserId"));
+  const operatorMode = String(formData.get("operatorMode") ?? "existing").trim();
+  const operatorName = normalizeDeviceName(formData.get("operatorName"));
+  const operatorRole = String(formData.get("operatorRole") ?? "cashier").trim() as "cashier" | "supervisor" | "admin";
+  const operatorPin = normalizeDeviceName(formData.get("operatorPin"));
 
   const fieldErrors: IssueClaimFormState["fieldErrors"] = {};
 
@@ -1087,6 +1190,12 @@ export async function createOrIssueClaimAction(
     fieldErrors.deviceRole = "Selecciona un rol retail.";
   }
 
+  if (moduleKey === "retail_pos" && deviceRole === "multi_station") {
+    if (operatorMode === "existing" && !assignedPosUserId) fieldErrors.assignedPosUserId = "Selecciona un operador POS.";
+    if (operatorMode === "new" && !operatorName) fieldErrors.operatorName = "El nombre del operador es obligatorio.";
+    if (operatorMode === "new" && operatorPin.length < 4) fieldErrors.operatorPin = "El PIN debe tener al menos 4 caracteres.";
+  }
+
   if (Object.keys(fieldErrors).length > 0) {
     return {
       ...initialIssueClaimState,
@@ -1096,12 +1205,25 @@ export async function createOrIssueClaimAction(
 
   try {
     assertModuleManagementAccess(await getDeviceManagementCapabilities(tenantSlug), moduleKey!);
+    const access = await resolveDevicesAccess(tenantSlug);
+    let resolvedAssignedPosUser: { id: string; name: string } | null = null;
+    if (moduleKey === "retail_pos" && deviceRole === "multi_station") {
+      resolvedAssignedPosUser = await resolveAssignedPosUser({
+        tenantId: access.tenant.tenantId,
+        assignedPosUserId: operatorMode === "existing" ? assignedPosUserId : null,
+        operatorName: operatorMode === "new" ? operatorName : null,
+        operatorRole: operatorMode === "new" ? operatorRole : null,
+        operatorPin: operatorMode === "new" ? operatorPin : null,
+        createdBy: access.user.id,
+      });
+    }
     const result = await issueClaimInternal({
       tenantSlug,
       moduleKey: moduleKey!,
       kioskId: moduleKey === "sales_pos" ? kioskId : null,
       name: deviceName,
       deviceRole,
+      assignedPosUserId: resolvedAssignedPosUser?.id ?? null,
     });
 
     revalidateDeviceAdminPaths(tenantSlug);
@@ -1185,6 +1307,7 @@ export async function reissueClaimAction(
   const kioskId = normalizeKioskId(formData.get("kioskId"));
   const deviceName = normalizeDeviceName(formData.get("name"));
   const deviceRole = normalizeRetailDeviceRole(formData.get("deviceRole"));
+  const assignedPosUserId = normalizeRecordId(formData.get("assignedPosUserId"));
   const deviceRecordId = normalizeOptionalDeviceId(formData.get("deviceRecordId"));
   const confirmPhrase = normalizeDeviceName(formData.get("confirmPhrase")).toUpperCase();
 
@@ -1227,6 +1350,9 @@ export async function reissueClaimAction(
         if (currentModule.moduleKey === "retail_pos" && !deviceRole) {
           fieldErrors.deviceRole = "Selecciona un rol retail.";
         }
+        if (currentModule.deviceRole === "multi_station" && !assignedPosUserId) {
+          fieldErrors.assignedPosUserId = "Selecciona un operador POS.";
+        }
       }
     } catch (error) {
       return {
@@ -1244,12 +1370,23 @@ export async function reissueClaimAction(
   }
 
   try {
+    const access = await resolveDevicesAccess(tenantSlug);
+    let resolvedAssignedPosUserId: string | null = null;
+    if (effectiveModuleKey === "retail_pos" && deviceRole === "multi_station") {
+      const operator = await resolveAssignedPosUser({
+        tenantId: access.tenant.tenantId,
+        assignedPosUserId,
+        createdBy: access.user.id,
+      });
+      resolvedAssignedPosUserId = operator.id;
+    }
     const result = await issueClaimInternal({
       tenantSlug,
       moduleKey: effectiveModuleKey!,
       kioskId: effectiveModuleKey === "sales_pos" ? kioskId : null,
       name: deviceName,
       deviceRole: effectiveModuleKey === "retail_pos" ? deviceRole : null,
+      assignedPosUserId: resolvedAssignedPosUserId,
       existingDeviceRecordId: deviceRecordId,
     });
 

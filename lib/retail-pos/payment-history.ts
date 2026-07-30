@@ -1,6 +1,6 @@
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
-  assertRetailPosDeviceRole,
+  assertRetailPosCashierAccess,
   resolveRetailPosRuntimeActor,
 } from "./auth";
 import { RetailPosRuntimeError } from "./errors";
@@ -171,7 +171,7 @@ export async function listRetailPosPaymentHistory(input: {
     deviceSecret: input.deviceSecret,
   });
 
-  assertRetailPosDeviceRole(actor, ["cashier_station"]);
+  assertRetailPosCashierAccess(actor);
 
   const paidFromIso = normalizeIso(input.paidFrom, "paid_from");
   const paidToIso = normalizeIso(input.paidTo, "paid_to");
@@ -329,7 +329,9 @@ export async function listRetailPosPaymentHistory(input: {
     );
   }
 
-  const postSaleCapabilitiesEnabled = actor.deviceRole === "cashier_station" && deviceSettingsResult.data?.is_active === true;
+  const postSaleCapabilitiesEnabled =
+    (actor.deviceRole === "cashier_station" || actor.deviceRole === "multi_station") &&
+    deviceSettingsResult.data?.is_active === true;
   const ordersById = new Map((ordersResult.data ?? []).map((order) => [order.id, order]));
   const operatorsById = new Map((operatorsResult.data ?? []).map((operator) => [operator.id, operator]));
   const printedOrderIds = new Set((ticketEventsResult.data ?? []).map((event) => event.order_id));

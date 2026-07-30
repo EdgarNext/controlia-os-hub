@@ -3,7 +3,7 @@ import type {
   RetailPosPriceTierDecisionCommandResult,
 } from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import { assertRetailPosDeviceRole, resolveRetailPosRuntimeActor } from "./auth";
+import { assertRetailPosCashierAccess, resolveRetailPosRuntimeActor } from "./auth";
 import {
   beginRetailPosCommand,
   completeRetailPosCommand,
@@ -27,7 +27,7 @@ export async function resolveRetailPosPriceTierCommand(input: {
   if (actor.mode !== "device" || !actor.deviceRecordId || !actor.devicePublicId) {
     throw new RetailPosRuntimeError(401, "device auth is required for price tier decisions.");
   }
-  assertRetailPosDeviceRole(actor, ["cashier_station"]);
+  assertRetailPosCashierAccess(actor);
   if (input.command.command_type !== "price_tier_decision") throw new RetailPosRuntimeError(400, "command_type must be price_tier_decision.");
   const commandId = requiredString(input.command.command_id, "command_id");
   const deviceId = requiredString(input.command.device_id, "device_id");

@@ -6,7 +6,7 @@ import type {
 } from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
-  assertRetailPosDeviceRole,
+  assertRetailPosCashierAccess,
   resolveRetailPosRuntimeActor,
 } from "./auth";
 import { RetailPosRuntimeError } from "./errors";
@@ -477,7 +477,7 @@ export async function checkoutRetailPosOrderWithDiscountsCommand(input: {
     throw new RetailPosRuntimeError(401, "device auth is required for retail_pos discount checkout.");
   }
 
-  assertRetailPosDeviceRole(actor, ["cashier_station"]);
+  assertRetailPosCashierAccess(actor);
 
   if (input.command.command_type !== "discount_checkout") {
     throw new RetailPosRuntimeError(400, "command_type must be discount_checkout.");

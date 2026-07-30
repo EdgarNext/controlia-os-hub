@@ -31,7 +31,7 @@ import type {
 } from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
-  assertRetailPosDeviceRole,
+  assertRetailPosCashierAccess,
   resolveRetailPosRuntimeActor,
 } from "./auth";
 import { RetailPosRuntimeError } from "./errors";
@@ -290,7 +290,7 @@ function getPostSaleCapabilities(input: {
   settingsActive: boolean;
   canViewCost: boolean;
 }): RetailPosCapability[] {
-  if (input.deviceRole !== "cashier_station" || !input.settingsActive) {
+  if ((input.deviceRole !== "cashier_station" && input.deviceRole !== "multi_station") || !input.settingsActive) {
     return [];
   }
 
@@ -831,7 +831,7 @@ async function resolvePostSaleActor(input: {
     throw new RetailPosRuntimeError(401, "device auth is required for retail_pos post sale.");
   }
 
-  assertRetailPosDeviceRole(actor, ["cashier_station"]);
+  assertRetailPosCashierAccess(actor);
 
   const settings = await loadDeviceSettings({
     tenantId: actor.tenantId,

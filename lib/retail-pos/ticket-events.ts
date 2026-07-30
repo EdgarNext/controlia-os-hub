@@ -8,7 +8,7 @@ import type {
 } from "@/shared/types/retail-pos";
 import {
   assertRetailPosOrderTicketAccess,
-  assertRetailPosDeviceRole,
+  assertRetailPosCashierAccess,
   resolveRetailPosRuntimeActor,
 } from "./auth";
 import { RetailPosRuntimeError } from "./errors";
@@ -216,7 +216,7 @@ export async function recordRetailPosTicketEvent(input: {
   const metadata = normalizeMetadata(input.request.metadata);
 
   if (ticketType === "payment" || ticketType === "post_sale") {
-    assertRetailPosDeviceRole(actor, ["cashier_station"]);
+    assertRetailPosCashierAccess(actor);
   } else {
     assertRetailPosOrderTicketAccess(actor);
   }

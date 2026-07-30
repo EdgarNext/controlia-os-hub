@@ -5,6 +5,7 @@ import {
   getDeviceById,
   getDeviceManagementCapabilities,
   getNextAvailableKioskNumber,
+  listRetailPosOperators,
   listDevices,
   listKiosksForDevices,
 } from "@/actions/pos/devices/actions";
@@ -59,6 +60,7 @@ type DeviceNewPageResult =
       tenantSlug: string;
       capabilities: Awaited<ReturnType<typeof getDeviceManagementCapabilities>>;
       kiosks: Awaited<ReturnType<typeof listKiosksForDevices>>;
+      operators: Awaited<ReturnType<typeof listRetailPosOperators>>;
       nextKioskNumber: number;
     }
   | {
@@ -73,6 +75,7 @@ type DeviceDetailPageResult =
       tenantSlug: string;
       device: NonNullable<Awaited<ReturnType<typeof getDeviceById>>>;
       kiosks: Awaited<ReturnType<typeof listKiosksForDevices>>;
+      operators: Awaited<ReturnType<typeof listRetailPosOperators>>;
     }
   | {
       ok: false;
@@ -186,9 +189,10 @@ async function loadDeviceNewPage(
 ): Promise<DeviceNewPageResult> {
   try {
     const capabilities = await getDeviceManagementCapabilities(tenantSlug);
-    const [kiosks, nextKioskNumber] = await Promise.all([
+    const [kiosks, nextKioskNumber, operators] = await Promise.all([
       capabilities.canManageSalesPosDevices ? listKiosksForDevices(tenantSlug) : Promise.resolve([]),
       capabilities.canManageSalesPosDevices ? getNextAvailableKioskNumber(tenantSlug) : Promise.resolve(1),
+      capabilities.canManageRetailPosDevices ? listRetailPosOperators(tenantSlug) : Promise.resolve([]),
     ]);
 
     return {
@@ -196,6 +200,7 @@ async function loadDeviceNewPage(
       tenantSlug,
       capabilities,
       kiosks,
+      operators,
       nextKioskNumber,
     };
   } catch (error) {
@@ -217,10 +222,13 @@ async function loadDeviceDetailPage(
   context: DeviceAdminRouteContext,
 ): Promise<DeviceDetailPageResult> {
   try {
-    const [device, kiosks] = await Promise.all([
+    const [device, kiosks, operators] = await Promise.all([
       getDeviceById(tenantSlug, deviceId),
       getDeviceManagementCapabilities(tenantSlug).then((capabilities) =>
         capabilities.canManageSalesPosDevices ? listKiosksForDevices(tenantSlug) : [],
+      ),
+      getDeviceManagementCapabilities(tenantSlug).then((capabilities) =>
+        capabilities.canManageRetailPosDevices ? listRetailPosOperators(tenantSlug) : [],
       ),
     ]);
 
@@ -233,6 +241,7 @@ async function loadDeviceDetailPage(
       tenantSlug,
       device,
       kiosks,
+      operators,
     };
   } catch (error) {
     if (isTenantAccessDeniedError(error)) {
@@ -370,6 +379,7 @@ export async function DeviceAdminNewPage({ tenantSlug, context }: DeviceAdminNew
             kiosks={result.kiosks}
             canManageSalesPosDevices={result.capabilities.canManageSalesPosDevices}
             canManageRetailPosDevices={result.capabilities.canManageRetailPosDevices}
+            operators={result.operators}
           />
           {result.capabilities.canManageSalesPosDevices && result.kiosks.length === 0 ? (
             <StatePanel
@@ -457,6 +467,7 @@ export async function DeviceAdminDetailPage({ tenantSlug, deviceId, context }: D
         kioskId={result.device.kioskId}
         deviceName={result.device.name}
         kiosks={result.kiosks}
+        operators={result.operators}
         disabled={result.device.status === "disabled"}
       />
     </div>

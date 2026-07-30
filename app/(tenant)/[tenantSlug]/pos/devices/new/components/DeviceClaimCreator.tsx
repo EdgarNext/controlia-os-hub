@@ -6,6 +6,7 @@ import {
   type DeviceModuleKey,
   type IssueClaimFormState,
   type PosKioskOption,
+  type RetailPosOperatorOption,
 } from "@/actions/pos/devices/actions";
 import {
   RETAIL_CLAIM_DEVICE_ROLES,
@@ -27,6 +28,7 @@ type DeviceClaimCreatorProps = {
   kiosks: PosKioskOption[];
   canManageSalesPosDevices: boolean;
   canManageRetailPosDevices: boolean;
+  operators: RetailPosOperatorOption[];
 };
 
 function formatClaimExpiry(value: string): string {
@@ -49,6 +51,7 @@ export function DeviceClaimCreator({
   kiosks,
   canManageSalesPosDevices,
   canManageRetailPosDevices,
+  operators,
 }: DeviceClaimCreatorProps) {
   const [state, formAction, isPending] = useActionState(createOrIssueClaimAction, initialState);
   const [copied, setCopied] = useState(false);
@@ -58,6 +61,7 @@ export function DeviceClaimCreator({
   ];
   const [moduleKey, setModuleKey] = useState<DeviceModuleKey>(allowedModuleKeys[0] ?? "sales_pos");
   const [deviceRole, setDeviceRole] = useState<RetailClaimDeviceRole>(RETAIL_CLAIM_DEVICE_ROLES[0]);
+  const [operatorMode, setOperatorMode] = useState<'existing' | 'new'>('existing');
   const claimResult = state.result;
 
   async function handleCopy(value: string) {
@@ -144,13 +148,67 @@ export function DeviceClaimCreator({
             >
               {RETAIL_CLAIM_DEVICE_ROLES.map((role) => (
                 <option key={role} value={role}>
-                  {role}
+                  {role === 'multi_station' ? 'Terminal multifunción' : role}
                 </option>
               ))}
             </select>
             {state.fieldErrors.deviceRole ? <p className="text-sm text-danger">{state.fieldErrors.deviceRole}</p> : null}
           </div>
         )}
+
+        {moduleKey === "retail_pos" && deviceRole === "multi_station" ? (
+          <div className="space-y-3 rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
+            <div>
+              <Label htmlFor="operatorMode">Operador de la terminal</Label>
+              <p className="mt-1 text-xs text-muted">La terminal multifunción requiere un operador POS explícito.</p>
+            </div>
+            <select
+              id="operatorMode"
+              name="operatorMode"
+              value={operatorMode}
+              onChange={(event) => setOperatorMode(event.target.value as 'existing' | 'new')}
+              className="h-11 w-full rounded-[var(--radius-base)] border border-border bg-surface px-3 text-sm text-foreground"
+            >
+              <option value="existing">Seleccionar operador existente</option>
+              <option value="new">Crear operador nuevo</option>
+            </select>
+            {operatorMode === 'existing' ? (
+              <>
+                <select
+                  id="assignedPosUserId"
+                  name="assignedPosUserId"
+                  defaultValue=""
+                  className="h-11 w-full rounded-[var(--radius-base)] border border-border bg-surface px-3 text-sm text-foreground"
+                  aria-invalid={Boolean(state.fieldErrors.assignedPosUserId) || undefined}
+                  required
+                >
+                  <option value="" disabled>{operators.length ? 'Selecciona un operador' : 'No hay operadores activos'}</option>
+                  {operators.map((operator) => (
+                    <option key={operator.id} value={operator.id}>{operator.name} · {operator.role}</option>
+                  ))}
+                </select>
+                {state.fieldErrors.assignedPosUserId ? <p className="text-sm text-danger">{state.fieldErrors.assignedPosUserId}</p> : null}
+              </>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Nombre visible" htmlFor="operatorName" errorText={state.fieldErrors.operatorName}>
+                  <Input id="operatorName" name="operatorName" placeholder="POS Multifunción Las Quintas" required />
+                </Field>
+                <Field label="PIN operativo" htmlFor="operatorPin" errorText={state.fieldErrors.operatorPin} helpText="Mínimo 4 caracteres.">
+                  <Input id="operatorPin" name="operatorPin" type="password" inputMode="numeric" required />
+                </Field>
+                <div className="sm:col-span-2">
+                  <Label htmlFor="operatorRole">Rol POS</Label>
+                  <select id="operatorRole" name="operatorRole" defaultValue="cashier" className="mt-1 h-11 w-full rounded-[var(--radius-base)] border border-border bg-surface px-3 text-sm text-foreground">
+                    <option value="cashier">Cajero</option>
+                    <option value="supervisor">Supervisor</option>
+                    <option value="admin">Administrador</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
 
         <Field
           label="Nombre del dispositivo"

@@ -7,6 +7,7 @@ export const RETAIL_CLAIM_DEVICE_ROLES = [
   "cashier_station",
   "backoffice_station",
   "counter_station",
+  "multi_station",
 ] as const;
 
 export type RetailClaimDeviceRole = (typeof RETAIL_CLAIM_DEVICE_ROLES)[number];
@@ -21,7 +22,8 @@ export function isRetailClaimDeviceRole(value: unknown): value is RetailClaimDev
     value === "order_station" ||
     value === "cashier_station" ||
     value === "backoffice_station" ||
-    value === "counter_station"
+    value === "counter_station" ||
+    value === "multi_station"
   );
 }
 

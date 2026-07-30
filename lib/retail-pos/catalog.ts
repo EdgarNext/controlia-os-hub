@@ -706,7 +706,7 @@ function assertBackofficeCatalogReadAccess(actor: Awaited<ReturnType<typeof reso
     return;
   }
 
-  assertRetailPosDeviceRole(actor, ["backoffice_station"]);
+  assertRetailPosDeviceRole(actor, ["backoffice_station", "multi_station"]);
 }
 
 function assertBackofficeCatalogManageAccess(actor: Awaited<ReturnType<typeof resolveRetailPosRuntimeActor>>) {
@@ -714,7 +714,7 @@ function assertBackofficeCatalogManageAccess(actor: Awaited<ReturnType<typeof re
     return;
   }
 
-  assertRetailPosDeviceRole(actor, ["backoffice_station"]);
+  assertRetailPosDeviceRole(actor, ["backoffice_station", "multi_station"]);
 }
 
 function mapBackofficeProductRow(input: {
@@ -1452,7 +1452,7 @@ export async function assignRetailPosProductBarcode(input: {
     throw new RetailPosRuntimeError(401, "device auth is required for retail_pos catalog maintenance.");
   }
 
-  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station", "backoffice_station"]);
+  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station", "backoffice_station", "multi_station"]);
 
   const productId = normalizeRequiredString(input.productId, "productId");
   const barcode = normalizeBarcode(input.request.barcode, { required: true }) as string;
@@ -1532,7 +1532,7 @@ export async function quickCreateRetailPosProduct(input: {
     throw new RetailPosRuntimeError(401, "device auth is required for retail_pos catalog maintenance.");
   }
 
-  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station", "backoffice_station"]);
+  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station", "backoffice_station", "multi_station"]);
 
   const name = normalizeRequiredString(input.request.name, "name");
   const categoryName = normalizeRequiredString(input.request.category_name, "category_name");

@@ -12,6 +12,7 @@ export const RETAIL_POS_DEVICE_ROLES = [
   "cashier_station",
   "backoffice_station",
   "counter_station",
+  "multi_station",
 ] as const;
 
 export const RETAIL_POS_CASH_SHIFT_STATUSES = [
@@ -370,6 +371,7 @@ export type RetailPosDeviceSettings = {
   auto_print_payment_ticket: boolean;
   scanner_enabled: boolean;
   is_active: boolean;
+  assigned_pos_user_id: string | null;
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -395,6 +397,7 @@ export type RetailPosCatalogDeviceSettings = Pick<
   | "auto_print_payment_ticket"
   | "scanner_enabled"
   | "is_active"
+  | "assigned_pos_user_id"
   | "updated_at"
 >;
 
@@ -1813,7 +1816,7 @@ export function canRetailPosApplyDiscounts(
   deviceRole: RetailPosDeviceRole,
   capabilities: readonly RetailPosCapability[],
 ): boolean {
-  return deviceRole === "cashier_station" && hasRetailPosCapability(capabilities, "discounts.apply");
+  return (deviceRole === "cashier_station" || deviceRole === "multi_station") && hasRetailPosCapability(capabilities, "discounts.apply");
 }
 
 export function canRetailPosViewDiscountCosts(

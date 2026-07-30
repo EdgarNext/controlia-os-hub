@@ -11,7 +11,7 @@ import {
   setRuntimeAuthCacheEntry,
 } from "./runtime-auth-cache";
 import { runSupabaseReadWithRetry } from "./runtime-supabase-retry";
-import type { RetailPosDeviceRole } from "@/shared/types/retail-pos";
+import type { RetailPosCapability, RetailPosDeviceRole } from "@/shared/types/retail-pos";
 import { RetailPosRuntimeError } from "./errors";
 
 type TenantRow = {
@@ -46,6 +46,18 @@ type DeviceSettingsRow = {
   is_active: boolean;
 };
 
+const RETAIL_POS_CASHIER_CAPABILITIES: readonly RetailPosCapability[] = [
+  "cashier.status.read",
+  "cashier.shift.open",
+  "cashier.shift.close",
+  "payments.collect",
+  "tickets.print.payment",
+  "post_sale.view",
+  "post_sale.cancel_sale",
+  "post_sale.return",
+  "post_sale.refund",
+];
+
 export type RetailPosTargetDevice = {
   deviceRecordId: string;
   kioskId: string;
@@ -64,7 +76,25 @@ export type RetailPosRuntimeActor = {
   deviceName: string | null;
   deviceRole: RetailPosDeviceRole | null;
   allowOrderEntry: boolean;
+  capabilities: RetailPosCapability[];
 };
+
+function buildRuntimeActorCapabilities(input: {
+  deviceRole: RetailPosDeviceRole;
+  canApplyDiscounts?: boolean;
+  canViewCost?: boolean;
+}): RetailPosCapability[] {
+  if (input.deviceRole !== "cashier_station" && input.deviceRole !== "multi_station") {
+    return [];
+  }
+
+  const capabilities = [...RETAIL_POS_CASHIER_CAPABILITIES];
+  if (input.canApplyDiscounts) capabilities.push("discounts.apply");
+  if (input.canViewCost) {
+    capabilities.push("discounts.view_cost", "post_sale.view_cost");
+  }
+  return capabilities;
+}
 
 function normalizeTenantSlug(tenantSlug: string) {
   return tenantSlug.trim().toLowerCase();
@@ -213,6 +243,7 @@ export async function resolveRetailPosSessionActor(tenantSlug: string): Promise<
     deviceName: null,
     deviceRole: null,
     allowOrderEntry: false,
+    capabilities: [],
   };
 }
 
@@ -314,6 +345,11 @@ export async function authenticateRetailPosDeviceActor(input: {
     deviceName: device.name,
     deviceRole: settings.device_role,
     allowOrderEntry: settings.allow_order_entry,
+    capabilities: buildRuntimeActorCapabilities({
+      deviceRole: settings.device_role,
+      canApplyDiscounts: settings.can_apply_discounts,
+      canViewCost: settings.can_view_cost,
+    }),
   };
 }
 
@@ -421,6 +457,26 @@ export function assertRetailPosDeviceRole(
   }
 }
 
+export function hasRetailPosRuntimeCapability(
+  actor: RetailPosRuntimeActor,
+  capability: RetailPosCapability,
+): boolean {
+  return actor.mode === "session" || actor.capabilities.includes(capability);
+}
+
+export function assertRetailPosCashierAccess(actor: RetailPosRuntimeActor) {
+  if (actor.mode === "session") {
+    return;
+  }
+
+  const missing = RETAIL_POS_CASHIER_CAPABILITIES.find(
+    (capability) => !hasRetailPosRuntimeCapability(actor, capability),
+  );
+  if (missing) {
+    throw new RetailPosRuntimeError(403, "POS device does not have the required cashier capabilities.");
+  }
+}
+
 export function canReadRetailPosOperators(actor: RetailPosRuntimeActor) {
   if (actor.mode !== "device") {
     return true;
@@ -430,7 +486,8 @@ export function canReadRetailPosOperators(actor: RetailPosRuntimeActor) {
     actor.deviceRole === "order_station" ||
     actor.deviceRole === "cashier_station" ||
     actor.deviceRole === "counter_station" ||
-    actor.deviceRole === "backoffice_station"
+    actor.deviceRole === "backoffice_station" ||
+    actor.deviceRole === "multi_station"
   );
 }
 
@@ -455,6 +512,10 @@ export function assertRetailPosOrderEntryAccess(actor: RetailPosRuntimeActor) {
     return;
   }
 
+  if (actor.deviceRole === "multi_station") {
+    return;
+  }
+
   throw new RetailPosRuntimeError(403, "POS device is not allowed to create or sync retail_pos orders.");
 }
 
@@ -463,7 +524,7 @@ export function assertRetailPosOrderTicketAccess(actor: RetailPosRuntimeActor) {
     return;
   }
 
-  if (actor.deviceRole === "cashier_station") {
+  if (actor.deviceRole === "cashier_station" || actor.deviceRole === "multi_station") {
     return;
   }
 
@@ -473,7 +534,7 @@ export function assertRetailPosOrderTicketAccess(actor: RetailPosRuntimeActor) {
 export async function resolveRetailPosTargetDevice(input: {
   actor: RetailPosRuntimeActor;
   deviceRecordId?: string | null;
-  requiredRole?: RetailPosDeviceRole;
+  requiredRole?: RetailPosDeviceRole | RetailPosDeviceRole[];
 }): Promise<RetailPosTargetDevice> {
   const requestedDeviceRecordId = input.deviceRecordId?.trim() || null;
 
@@ -492,7 +553,7 @@ export async function resolveRetailPosTargetDevice(input: {
       throw new RetailPosRuntimeError(403, "Authenticated device does not match requested device.");
     }
 
-    if (input.requiredRole && input.actor.deviceRole !== input.requiredRole) {
+    if (input.requiredRole && !(Array.isArray(input.requiredRole) ? input.requiredRole : [input.requiredRole]).includes(input.actor.deviceRole)) {
       throw new RetailPosRuntimeError(403, "POS device role is not allowed for this operation.");
     }
 
@@ -544,7 +605,7 @@ export async function resolveRetailPosTargetDevice(input: {
     throw new RetailPosRuntimeError(403, "retail_pos device settings are required for this device.");
   }
 
-  if (input.requiredRole && settings.device_role !== input.requiredRole) {
+  if (input.requiredRole && !(Array.isArray(input.requiredRole) ? input.requiredRole : [input.requiredRole]).includes(settings.device_role)) {
     throw new RetailPosRuntimeError(403, "POS device role is not allowed for this operation.");
   }
 

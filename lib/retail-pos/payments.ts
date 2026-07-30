@@ -8,7 +8,7 @@ import type {
 } from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
-  assertRetailPosDeviceRole,
+  assertRetailPosCashierAccess,
   resolveRetailPosRuntimeActor,
   resolveRetailPosTargetDevice,
 } from "./auth";
@@ -249,7 +249,7 @@ export async function payRetailPosOrder(input: {
   const payStartedAt =
     typeof performance !== "undefined" ? performance.now() : Date.now();
   const actor = await resolveRetailPosRuntimeActor(input);
-  assertRetailPosDeviceRole(actor, ["cashier_station"]);
+  assertRetailPosCashierAccess(actor);
 
   if (input.request.tenant_id !== actor.tenantId) {
     throw new RetailPosRuntimeError(400, "tenant_id does not match runtime tenant.");
@@ -264,7 +264,7 @@ export async function payRetailPosOrder(input: {
   const targetDevice = await resolveRetailPosTargetDevice({
     actor,
     deviceRecordId: input.request.device_id ?? null,
-    requiredRole: "cashier_station",
+    requiredRole: ["cashier_station", "multi_station"],
   });
 
   const requestedCashShiftId =

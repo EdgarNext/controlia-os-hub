@@ -35,6 +35,13 @@ type RetailSettingsRow = {
   device_id: string;
   device_role: string;
   is_active: boolean;
+  assigned_pos_user_id: string | null;
+};
+
+type RetailOperatorRow = {
+  id: string;
+  name: string;
+  is_active: boolean;
 };
 
 type KioskRow = {
@@ -166,7 +173,7 @@ export async function POST(request: Request) {
 
     const { data: retailSettings, error: retailSettingsError } = await supabase
       .from("retail_pos_device_settings")
-      .select("device_id, device_role, is_active")
+      .select("device_id, device_role, is_active, assigned_pos_user_id")
       .eq("tenant_id", tenant.id)
       .eq("device_id", claimCandidate.id)
       .eq("is_active", true)
@@ -186,6 +193,25 @@ export async function POST(request: Request) {
 
     if (!isRetailClaimDeviceRole(retailSettings.device_role)) {
       return forbidden("Claim code is not configured with a supported retail_pos device role.");
+    }
+
+    let assignedOperator: RetailOperatorRow | null = null;
+    if (retailSettings.device_role === "multi_station") {
+      if (!retailSettings.assigned_pos_user_id) {
+        return forbidden("La terminal multifunción no tiene un operador asignado.");
+      }
+      const { data: operator, error: operatorError } = await supabase
+        .from("pos_users")
+        .select("id, name, is_active")
+        .eq("tenant_id", tenant.id)
+        .eq("id", retailSettings.assigned_pos_user_id)
+        .limit(1)
+        .maybeSingle<RetailOperatorRow>();
+      if (operatorError) {
+        return NextResponse.json({ ok: false, error: `Unable to resolve assigned POS operator: ${operatorError.message}` }, { status: 500 });
+      }
+      if (!operator?.is_active) return forbidden("El operador asignado no existe o está inactivo.");
+      assignedOperator = operator;
     }
 
     const { data: kiosk, error: kioskError } = await supabase
@@ -250,6 +276,8 @@ export async function POST(request: Request) {
       deviceId: claimedDevice.device_id,
       deviceSecret: nextSecret.secret,
       deviceRole: retailSettings.device_role,
+      assignedPosUserId: assignedOperator?.id ?? null,
+      assignedPosUserName: assignedOperator?.name ?? null,
       bootstrapRequired: true,
     });
   } catch (error) {

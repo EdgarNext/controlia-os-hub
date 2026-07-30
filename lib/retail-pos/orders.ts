@@ -15,6 +15,7 @@ import type {
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   assertRetailPosOrderEntryAccess,
+  assertRetailPosCashierAccess,
   assertRetailPosDeviceRole,
   resolveRetailPosRuntimeActor,
   type RetailPosRuntimeActor,
@@ -1262,7 +1263,7 @@ function assertRetailPosOrderVoidAccess(actor: RetailPosRuntimeActor) {
     return;
   }
 
-  if (actor.deviceRole === "order_station" || actor.deviceRole === "cashier_station" || actor.deviceRole === "backoffice_station") {
+  if (actor.deviceRole === "order_station" || actor.deviceRole === "cashier_station" || actor.deviceRole === "backoffice_station" || actor.deviceRole === "multi_station") {
     return;
   }
 
@@ -1435,7 +1436,7 @@ export async function getRetailPosOrderById(input: {
     deviceSecret: input.deviceSecret,
   });
 
-  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station"]);
+  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station", "multi_station"]);
   return loadOrderDetail(actor.tenantId, input.orderId);
 }
 
@@ -1453,7 +1454,7 @@ export async function getRetailPosOrderByFolio(input: {
     trace: input.trace,
   });
 
-  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station"]);
+  assertRetailPosDeviceRole(actor, ["order_station", "cashier_station", "multi_station"]);
 
   const folio = asTrimmedString(input.folio);
   if (!folio) {
@@ -1530,7 +1531,7 @@ export async function listRetailPosRecentPendingOrders(input: {
     deviceId: input.deviceId,
     deviceSecret: input.deviceSecret,
   });
-  assertRetailPosDeviceRole(actor, ["cashier_station"]);
+  assertRetailPosCashierAccess(actor);
 
   const limit = Math.max(1, Math.min(5, Math.trunc(input.limit ?? 5)));
   const supabase = getSupabaseAdminClient();

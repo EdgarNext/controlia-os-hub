@@ -7,7 +7,7 @@ import type {
 } from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
-  assertRetailPosDeviceRole,
+  assertRetailPosCashierAccess,
   resolveRetailPosRuntimeActor,
 } from "./auth";
 import {
@@ -277,7 +277,7 @@ export async function previewRetailPosOrderDiscounts(input: {
     trace: input.trace,
   });
 
-  assertRetailPosDeviceRole(actor, ["cashier_station"]);
+  assertRetailPosCashierAccess(actor);
 
   if (actor.mode !== "device" || !actor.deviceRecordId) {
     throw new RetailPosRuntimeError(403, "CASHIER_STATION_REQUIRED");
