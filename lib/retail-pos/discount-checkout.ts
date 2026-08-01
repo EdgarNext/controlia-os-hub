@@ -10,7 +10,7 @@ import {
   resolveRetailPosRuntimeActor,
 } from "./auth";
 import { RetailPosRuntimeError } from "./errors";
-import { assertRetailPosHistoricalSaleLine } from "../../../shared/retail-pos/historical-sale-line";
+import { assertRetailPosHistoricalSaleLine } from "@/shared/retail-pos/historical-sale-line";
 import type { RuntimePerfTrace } from "./runtime-perf";
 import { runSupabaseReadWithRetry } from "./runtime-supabase-retry";
 import {
