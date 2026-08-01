@@ -310,6 +310,14 @@ const retailNavDomain: TenantNavDomainConfig = {
       moduleKeys: ["retail_pos"],
       pageKey: "catalog",
     },
+    {
+      href: (tenantSlug) => `/${tenantSlug}/retail/costing`,
+      label: "Costeo",
+      iconKey: "catalog",
+      match: "prefix",
+      moduleKeys: ["retail_pos"],
+      pageKey: "catalog",
+    },
   ],
 };
 

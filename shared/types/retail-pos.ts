@@ -894,6 +894,42 @@ export type RetailPosCapability =
   | "counter_sale.create_offline"
   | "counter_sale.sync";
 
+export type RetailPosCostingProductSearchMatchType =
+  | "exact_name"
+  | "name_prefix"
+  | "token_match"
+  | "fts"
+  | "trigram"
+  | "exact_sku"
+  | "sku_prefix";
+
+export type RetailPosCostingProductSearchResult = {
+  productId: string;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  brand: string | null;
+  categoryName: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  salesUnitCode: string | null;
+  salesUnitLabel: string | null;
+  costCents: number;
+  publicPriceCents: number;
+  wholesalePriceCents: number;
+  matchType?: RetailPosCostingProductSearchMatchType;
+  rankScore?: number;
+};
+
+export type RetailPosCostingProductSearchResponse = {
+  results: RetailPosCostingProductSearchResult[];
+  meta: {
+    query: string;
+    count: number;
+    supplierOnly: boolean;
+  };
+};
+
 export type RetailPosDiscountAuthorizationRecord = {
   required: boolean;
   status: RetailPosDiscountAuthorizationStatus;
@@ -1916,3 +1952,150 @@ export function normalizeRetailPosQuantity(
 
   return normalized === "0.000" ? null : normalized;
 }
+
+export type RetailPosPurchaseCostingStatus = "draft" | "calculated" | "applied" | "voided";
+export const RETAIL_POS_PURCHASE_COSTING_PRICE_MODES = ["suggested", "rounded", "manual"] as const;
+export type RetailPosPurchaseCostingPriceMode = (typeof RETAIL_POS_PURCHASE_COSTING_PRICE_MODES)[number];
+export type RetailPosPurchaseCostingWarningCode =
+  | "WHOLESALE_MARKUP_ABOVE_PUBLIC"
+  | "PUBLIC_PRICE_BELOW_BASE_COST"
+  | "WHOLESALE_PRICE_BELOW_BASE_COST"
+  | "PUBLIC_FINAL_PRICE_DIFFERS_FROM_SUGGESTED"
+  | "WHOLESALE_FINAL_PRICE_DIFFERS_FROM_SUGGESTED";
+
+export type RetailPosPurchaseCostingSummary = {
+  id: string;
+  supplierId: string | null;
+  supplierName: string | null;
+  invoiceReference: string | null;
+  invoiceDate: string | null;
+  status: RetailPosPurchaseCostingStatus;
+  lineCount: number;
+  subtotalCents: number;
+  taxCents: number;
+  discountCents: number;
+  netTotalCents: number;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RetailPosPurchaseCostingLine = {
+  id: string;
+  productId: string;
+  lineNumber: number;
+  productNameSnapshot: string;
+  productSkuSnapshot: string | null;
+  productSupplierNameSnapshot: string | null;
+  purchasedQuantity: string;
+  purchaseUnitLabel: string;
+  unitsPerPurchaseUnit: string;
+  salesUnitCodeSnapshot: string;
+  salesUnitLabelSnapshot: string;
+  invoiceUnitCostCents: number;
+  effectivePublicMarkupBps: number;
+  effectiveWholesaleMarkupBps: number;
+  publicMarkupOverrideBps: number | null;
+  wholesaleMarkupOverrideBps: number | null;
+  subtotalCents: number | null;
+  taxCents: number | null;
+  grossTotalCents: number | null;
+  discountCents: number | null;
+  netTotalCents: number | null;
+  saleUnitsQuantity: string | null;
+  baseUnitCostCents: number | null;
+  suggestedPublicPriceCents: number | null;
+  suggestedWholesalePriceCents: number | null;
+  finalPublicPriceCents: number | null;
+  finalWholesalePriceCents: number | null;
+  publicPriceMode: RetailPosPurchaseCostingPriceMode;
+  wholesalePriceMode: RetailPosPurchaseCostingPriceMode;
+  previousCostCents: number | null;
+  previousPublicPriceCents: number;
+  previousWholesalePriceCents: number;
+  warnings: RetailPosPurchaseCostingWarningCode[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RetailPosPurchaseCostingDetail = {
+  id: string;
+  tenantId: string;
+  supplierId: string | null;
+  supplierName: string | null;
+  invoiceReference: string | null;
+  invoiceDate: string | null;
+  status: RetailPosPurchaseCostingStatus;
+  taxRateBps: number;
+  discountRateBps: number;
+  defaultPublicMarkupBps: number;
+  defaultWholesaleMarkupBps: number;
+  defaultPublicPriceMode: RetailPosPurchaseCostingPriceMode;
+  defaultWholesalePriceMode: RetailPosPurchaseCostingPriceMode;
+  subtotalCents: number;
+  taxCents: number;
+  grossTotalCents: number;
+  discountCents: number;
+  netTotalCents: number;
+  totalSaleUnits: string;
+  revision: number;
+  createdByPosUserId: string | null;
+  createdByPosUserName: string | null;
+  calculatedByPosUserId: string | null;
+  calculatedByPosUserName: string | null;
+  appliedByPosUserId: string | null;
+  appliedByPosUserName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  calculatedAt: string | null;
+  appliedAt: string | null;
+  lines: RetailPosPurchaseCostingLine[];
+};
+
+export type RetailPosPurchaseCostingAppliedProduct = {
+  id: string;
+  name: string;
+  previousCostCents: number | null;
+  appliedCostCents: number;
+  previousPublicPriceCents: number;
+  appliedPublicPriceCents: number;
+  previousWholesalePriceCents: number;
+  appliedWholesalePriceCents: number;
+};
+
+export type RetailPosPurchaseCostingApplyResult = {
+  document: RetailPosPurchaseCostingDetail;
+  updatedProducts: RetailPosPurchaseCostingAppliedProduct[];
+};
+
+export type CreatePurchaseCostingInput = {
+  supplierId?: string | null;
+  invoiceReference?: string | null;
+  invoiceDate?: string | null;
+  taxRateBps?: number;
+  discountRateBps?: number;
+  defaultPublicMarkupBps: number;
+  defaultWholesaleMarkupBps: number;
+  defaultPublicPriceMode?: RetailPosPurchaseCostingPriceMode;
+  defaultWholesalePriceMode?: RetailPosPurchaseCostingPriceMode;
+};
+
+export type UpdatePurchaseCostingHeaderInput = Partial<Pick<CreatePurchaseCostingInput, "supplierId" | "invoiceReference" | "invoiceDate" | "taxRateBps" | "discountRateBps" | "defaultPublicMarkupBps" | "defaultWholesaleMarkupBps" | "defaultPublicPriceMode" | "defaultWholesalePriceMode">> & { expectedRevision: number };
+
+export type AddPurchaseCostingLineInput = {
+  expectedRevision: number;
+  productId: string;
+  purchasedQuantity: string;
+  purchaseUnitLabel: string;
+  unitsPerPurchaseUnit: string;
+  invoiceUnitCostCents: number;
+  publicMarkupOverrideBps?: number | null;
+  wholesaleMarkupOverrideBps?: number | null;
+  finalPublicPriceCents?: number | null;
+  finalWholesalePriceCents?: number | null;
+  publicPriceMode?: RetailPosPurchaseCostingPriceMode;
+  wholesalePriceMode?: RetailPosPurchaseCostingPriceMode;
+};
+
+export type UpdatePurchaseCostingLineInput = Partial<Omit<AddPurchaseCostingLineInput, "expectedRevision" | "productId">> & { expectedRevision: number };
+export type CalculatePurchaseCostingInput = { expectedRevision: number };

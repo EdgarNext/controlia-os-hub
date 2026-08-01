@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type ButtonVariant = "primary" | "secondary" | "success" | "warning" | "danger";
+type ButtonVariant = "primary" | "secondary" | "success" | "warning" | "danger" | "ghost";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   isLoading?: boolean;
@@ -15,6 +15,7 @@ const variants: Record<ButtonVariant, string> = {
   success: "bg-success text-foreground hover:opacity-90",
   warning: "bg-warning text-foreground hover:opacity-90",
   danger: "bg-danger text-primary-foreground hover:opacity-90",
+  ghost: "bg-transparent text-foreground hover:bg-surface-2",
 };
 
 export function Button({
