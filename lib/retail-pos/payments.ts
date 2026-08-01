@@ -1,10 +1,10 @@
+import { createHash } from "node:crypto";
 import type {
   PayRetailPosOrderRequest,
   PayRetailPosOrderResponse,
   RetailPosOrder,
   RetailPosPayCommand,
   RetailPosPayCommandResult,
-  RetailPosPayment,
 } from "@/shared/types/retail-pos";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
@@ -13,12 +13,6 @@ import {
   resolveRetailPosTargetDevice,
 } from "./auth";
 import { getOpenRetailPosCashShiftForDevice } from "./cash-shifts";
-import {
-  beginRetailPosCommand,
-  completeRetailPosCommand,
-  markRetailPosCommandRetryableError,
-  rejectRetailPosCommand,
-} from "./commands";
 import { RetailPosRuntimeError } from "./errors";
 import type { RuntimePerfTrace } from "./runtime-perf";
 import { runSupabaseReadWithRetry } from "./runtime-supabase-retry";
@@ -31,7 +25,6 @@ type PosUserRow = {
 
 type OrderRow = RetailPosOrder;
 
-type PaymentRow = RetailPosPayment;
 type CashShiftRow = {
   id: string;
   tenant_id: string;
@@ -54,6 +47,22 @@ type CashShiftRow = {
 
 const ORDER_SELECT =
   "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
+
+function buildNormalCheckoutCommandId(input: {
+  tenantId: string;
+  orderId: string;
+  deviceId: string;
+  posUserId: string;
+  cashShiftId: string;
+  paymentMethod: string;
+  amountCents: number;
+  receivedAmountCents: number | null;
+  cardReference: string | null;
+}) {
+  return `pay_${createHash("sha256")
+    .update(JSON.stringify(input))
+    .digest("hex")}`;
+}
 
 function ensureNonNegativeInteger(value: unknown, field: string) {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
@@ -134,69 +143,6 @@ async function loadOrderForPayment(
   return data;
 }
 
-async function loadPaymentByOrder(
-  tenantId: string,
-  orderId: string,
-  trace?: RuntimePerfTrace,
-) {
-  const supabase = getSupabaseAdminClient({ trace });
-  const { data, error } = await runSupabaseReadWithRetry<PaymentRow>({
-    trace,
-    step: "existing_payment_lookup",
-    query: (signal) =>
-      supabase
-        .from("retail_pos_payments")
-        .select(
-          "id, tenant_id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, card_reference, paid_at, created_at, created_by",
-        )
-        .abortSignal(signal)
-        .eq("tenant_id", tenantId)
-        .eq("order_id", orderId)
-        .limit(1)
-        .maybeSingle<PaymentRow>(),
-  });
-
-  if (error) {
-    throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment: ${error.message}`);
-  }
-
-  return data ?? null;
-}
-
-async function assertOrderPriceTiersResolved(tenantId: string, orderId: string) {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase.from('retail_pos_order_lines')
-    .select('price_tier_request_status').eq('tenant_id', tenantId).eq('order_id', orderId);
-  if (error) throw new RetailPosRuntimeError(500, `Unable to validate price tier requests: ${error.message}`);
-  if ((data ?? []).some((line) => line.price_tier_request_status === 'pending')) {
-    throw new RetailPosRuntimeError(409, 'PRICE_TIER_DECISION_REQUIRED');
-  }
-}
-
-async function loadPaidOrderResponse(
-  tenantId: string,
-  orderId: string,
-  trace?: RuntimePerfTrace,
-): Promise<PayRetailPosOrderResponse> {
-  const reloadStartedAt =
-    typeof performance !== "undefined" ? performance.now() : Date.now();
-  const [order, payment] = await Promise.all([
-    loadOrderForPayment(tenantId, orderId, trace),
-    loadPaymentByOrder(tenantId, orderId, trace),
-  ]);
-
-  if (!payment) {
-    throw new RetailPosRuntimeError(500, "retail_pos payment record was expected but not found.");
-  }
-
-  trace?.addDuration(
-    "post_payment_reload",
-    (typeof performance !== "undefined" ? performance.now() : Date.now()) -
-      reloadStartedAt,
-  );
-  return { order, payment };
-}
-
 function addPayTotalTrace(trace: RuntimePerfTrace | undefined, startedAt: number) {
   trace?.addDuration(
     "pay_total",
@@ -242,6 +188,8 @@ export async function payRetailPosOrder(input: {
   tenantSlug: string;
   orderId: string;
   request: PayRetailPosOrderRequest;
+  commandId?: string;
+  commandReplayRef?: { current: boolean };
   deviceId?: string | null;
   deviceSecret?: string | null;
   trace?: RuntimePerfTrace;
@@ -318,29 +266,12 @@ export async function payRetailPosOrder(input: {
 
   const order = await loadOrderForPayment(actor.tenantId, input.orderId, input.trace);
 
-  if (order.status === "paid") {
-    const existingPayment = await loadPaymentByOrder(actor.tenantId, input.orderId, input.trace);
-    if (existingPayment) {
-      addPayTotalTrace(input.trace, payStartedAt);
-      return { order, payment: existingPayment };
-    }
-    throw new RetailPosRuntimeError(409, "retail_pos order is already paid.");
-  }
-
-  if (order.status === "cancelled" || order.status === "voided") {
+  if (order.status !== "paid" && (order.status === "cancelled" || order.status === "voided")) {
     throw new RetailPosRuntimeError(409, "Voided retail_pos orders cannot be paid.");
   }
 
-  if (order.status !== "pending_payment") {
+  if (order.status !== "paid" && order.status !== "pending_payment") {
     throw new RetailPosRuntimeError(409, "Only pending_payment retail_pos orders can be paid.");
-  }
-
-  await assertOrderPriceTiersResolved(actor.tenantId, input.orderId);
-
-  const existingPayment = await loadPaymentByOrder(actor.tenantId, input.orderId, input.trace);
-  if (existingPayment) {
-    addPayTotalTrace(input.trace, payStartedAt);
-    return { order, payment: existingPayment };
   }
 
   const amountCents = ensureNonNegativeInteger(input.request.amount_cents, "amount_cents");
@@ -348,13 +279,11 @@ export async function payRetailPosOrder(input: {
     throw new RetailPosRuntimeError(400, "amount_cents must be greater than zero.");
   }
 
-  if (amountCents !== order.total_cents) {
+  if (!input.commandId && amountCents !== order.total_cents) {
     throw new RetailPosRuntimeError(409, "amount_cents must equal retail_pos order total_cents in phase 1.");
   }
 
   let receivedAmountCents: number | null = null;
-  let changeCents = 0;
-
   if (input.request.payment_method === "cash") {
     receivedAmountCents = ensureNonNegativeInteger(
       input.request.received_amount_cents,
@@ -365,7 +294,6 @@ export async function payRetailPosOrder(input: {
       throw new RetailPosRuntimeError(400, "received_amount_cents must be greater than or equal to amount_cents for cash payments.");
     }
 
-    changeCents = receivedAmountCents - amountCents;
   } else if (input.request.payment_method === "card") {
     if (input.request.received_amount_cents !== null) {
       throw new RetailPosRuntimeError(400, "received_amount_cents must be null for card payments.");
@@ -375,51 +303,64 @@ export async function payRetailPosOrder(input: {
   }
 
   const supabase = getSupabaseAdminClient({ trace: input.trace });
-  const insertStartedAt =
+  const commandId =
+    input.commandId ??
+    buildNormalCheckoutCommandId({
+      tenantId: actor.tenantId,
+      orderId: input.orderId,
+      deviceId: targetDevice.deviceRecordId,
+      posUserId: input.request.pos_user_id,
+      cashShiftId: currentOpenShift.id,
+      paymentMethod: input.request.payment_method,
+      amountCents,
+      receivedAmountCents,
+      cardReference: input.request.card_reference,
+    });
+  const rpcStartedAt =
     typeof performance !== "undefined" ? performance.now() : Date.now();
-  const { data, error } = await supabase
-    .from("retail_pos_payments")
-    .insert({
-      tenant_id: actor.tenantId,
+  const { data, error } = await supabase.rpc("retail_pos_checkout_order_normal_v1", {
+    p_tenant_id: actor.tenantId,
+    p_device_id: targetDevice.deviceRecordId,
+    p_payload: {
+      command_id: commandId,
       order_id: input.orderId,
       cash_shift_id: currentOpenShift.id,
-      device_id: targetDevice.deviceRecordId,
-      pos_user_id: input.request.pos_user_id,
+      operator_id: input.request.pos_user_id,
       payment_method: input.request.payment_method,
       amount_cents: amountCents,
       received_amount_cents: receivedAmountCents,
-      change_cents: changeCents,
       card_reference: input.request.card_reference,
-    })
-    .select(
-      "id, tenant_id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, card_reference, paid_at, created_at, created_by",
-    )
-    .limit(1)
-    .maybeSingle<PaymentRow>();
-  const insertDurationMs =
+    },
+  });
+  const rpcDurationMs =
     (typeof performance !== "undefined" ? performance.now() : Date.now()) -
-    insertStartedAt;
-  input.trace?.recordSupabaseDuration(insertDurationMs);
-  input.trace?.addDuration("payment_insert", insertDurationMs);
+    rpcStartedAt;
+  input.trace?.recordSupabaseDuration(rpcDurationMs);
+  input.trace?.addDuration("normal_checkout_rpc", rpcDurationMs);
 
   if (error) {
-    if (error.code === "23505") {
-      const duplicatePayment = await loadPaymentByOrder(actor.tenantId, input.orderId, input.trace);
-      if (duplicatePayment) {
-        const response = await loadPaidOrderResponse(actor.tenantId, input.orderId, input.trace);
-        addPayTotalTrace(input.trace, payStartedAt);
-        return response;
-      }
-    }
-
-    throw new RetailPosRuntimeError(400, `Unable to create retail_pos payment: ${error.message}`);
+    const status =
+      error.message === "ORDER_NOT_FOUND"
+        ? 404
+        : [
+              "PAYMENT_INVALID",
+              "HISTORICAL_SALE_LINE_INVALID",
+              "HISTORICAL_COST_REQUIRED",
+              "HISTORICAL_SALE_LINES_REQUIRED",
+            ].includes(error.message)
+          ? 422
+          : 409;
+    throw new RetailPosRuntimeError(status, error.message);
   }
 
-  if (!data) {
-    throw new RetailPosRuntimeError(500, "retail_pos payment insert did not return a record.");
+  if (!data || typeof data !== "object" || !("result" in data)) {
+    throw new RetailPosRuntimeError(500, "retail_pos normal checkout did not return a result.");
   }
 
-  const response = await loadPaidOrderResponse(actor.tenantId, input.orderId, input.trace);
+  if (input.commandReplayRef) {
+    input.commandReplayRef.current = (data as { status?: string }).status === "replayed";
+  }
+  const response = (data as { result: PayRetailPosOrderResponse }).result;
   addPayTotalTrace(input.trace, payStartedAt);
   return response;
 }
@@ -462,75 +403,37 @@ export async function payRetailPosOrderCommand(input: {
     throw new RetailPosRuntimeError(409, "command device_id does not match authenticated retail_pos device.");
   }
 
-  const begin = await beginRetailPosCommand<PayRetailPosOrderResponse>({
-    tenantId: actor.tenantId,
-    commandId,
-    commandType: "pay",
-    deviceId: actor.deviceRecordId,
-    posUserId: operatorId,
-    cashShiftId,
+  const replayRef = { current: false };
+  const paymentResponse = await payRetailPosOrder({
+    tenantSlug: input.tenantSlug,
     orderId,
-    requestPayload: input.command as unknown as Record<string, unknown>,
+    commandId,
+    commandReplayRef: replayRef,
+    request: {
+      tenant_id: actor.tenantId,
+      order_id: orderId,
+      cash_shift_id: cashShiftId,
+      device_id: actor.deviceRecordId,
+      pos_user_id: operatorId,
+      payment_method: payload.payment_method,
+      amount_cents: payload.amount_cents,
+      received_amount_cents: payload.received_amount_cents,
+      card_reference: payload.card_reference,
+    },
+    deviceId: input.deviceId,
+    deviceSecret: input.deviceSecret,
+    trace: input.trace,
   });
 
-  if (begin.kind === "replay") {
-    return begin.result;
-  }
-
-  try {
-    const paymentResponse = await payRetailPosOrder({
-      tenantSlug: input.tenantSlug,
-      orderId,
-      request: {
-        tenant_id: actor.tenantId,
-        order_id: orderId,
-        cash_shift_id: cashShiftId,
-        device_id: actor.deviceRecordId,
-        pos_user_id: operatorId,
-        payment_method: payload.payment_method,
-        amount_cents: payload.amount_cents,
-        received_amount_cents: payload.received_amount_cents,
-        card_reference: payload.card_reference,
-      },
-      deviceId: input.deviceId,
-      deviceSecret: input.deviceSecret,
-      trace: input.trace,
-    });
-
-    const result: RetailPosPayCommandResult = {
-      command_id: commandId,
-      command_type: "pay",
-      status: "completed",
-      idempotent_replay: false,
-      device_id: actor.deviceRecordId,
-      operator_id: operatorId,
-      cash_shift_id: cashShiftId,
-      result: paymentResponse,
-      server_time: new Date().toISOString(),
-    };
-
-    await completeRetailPosCommand({
-      tenantId: actor.tenantId,
-      commandId,
-      result,
-    });
-
-    return result;
-  } catch (error) {
-    if (error instanceof RetailPosRuntimeError && error.status < 500) {
-      await rejectRetailPosCommand({
-        tenantId: actor.tenantId,
-        commandId,
-        error,
-      });
-      throw error;
-    }
-
-    await markRetailPosCommandRetryableError({
-      tenantId: actor.tenantId,
-      commandId,
-      error,
-    });
-    throw error;
-  }
+  return {
+    command_id: commandId,
+    command_type: "pay",
+    status: replayRef.current ? "replayed" : "completed",
+    idempotent_replay: replayRef.current,
+    device_id: actor.deviceRecordId,
+    operator_id: operatorId,
+    cash_shift_id: cashShiftId,
+    result: paymentResponse,
+    server_time: new Date().toISOString(),
+  } satisfies RetailPosPayCommandResult;
 }

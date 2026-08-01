@@ -423,7 +423,7 @@ export async function listRetailPosPaymentHistory(input: {
       const totalDiscountCents = order?.discount_cents ?? 0;
       const priceLines = linesByOrderId.get(payment.order_id) ?? [];
       const priceTier = classifyPriceTier(priceLines);
-      const wholesaleDifferenceCents = priceLines.filter((line) => line.approved_price_tier === "wholesale").reduce((sum, line) => sum + calculatePriceTierEconomics(line).priceTierDifferenceCents, 0);
+      const wholesaleDifferenceCents = priceLines.filter((line) => line.approved_price_tier === "wholesale").reduce((sum, line) => sum + (calculatePriceTierEconomics(line).priceTierDifferenceCents ?? 0), 0);
 
       return {
         payment_id: payment.id,

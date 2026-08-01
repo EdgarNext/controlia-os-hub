@@ -11,6 +11,7 @@ import {
   formatRetailReportingQuantity,
 } from "@/lib/retail-pos/reporting-formatters";
 import { getRetailReportingLabel } from "@/lib/retail-pos/reporting-semantics";
+import { getRetailPriceTierLabel } from "@/lib/retail-pos/reporting-presentation";
 import { formatRetailReportAuditNote } from "@/lib/retail-pos/reporting-ui";
 import { cn } from "@/lib/utils";
 import styles from "./retail-report-skeleton.module.css";
@@ -51,7 +52,7 @@ export function buildRetailReportsFilters(searchParams: RetailReportsSearchParam
       | "paid"
       | "voided"
       | undefined,
-    priceTier: getSingleSearchParam(searchParams.priceTier) as "all" | "public" | "wholesale" | "mixed" | undefined,
+    priceTier: getSingleSearchParam(searchParams.priceTier) as "all" | "public" | "wholesale" | "unknown" | undefined,
   };
 }
 
@@ -444,10 +445,10 @@ export function RetailReportsFiltersCard({
         <label className="space-y-1 text-sm">
           <span className="text-xs font-medium text-muted">Uso de precio</span>
           <select name="priceTier" defaultValue={filters.priceTier} className="w-full rounded-[var(--radius-base)] border border-border bg-background px-3 py-2 text-sm text-foreground">
-            <option value="all">Todos</option>
-            <option value="public">Precio público</option>
-            <option value="wholesale">Precio mayoreo</option>
-            <option value="mixed">Precios mixtos</option>
+            <option value="all">Todos los niveles</option>
+            <option value="public">{getRetailPriceTierLabel("public")}</option>
+            <option value="wholesale">{getRetailPriceTierLabel("wholesale")}</option>
+            <option value="unknown">{getRetailPriceTierLabel("unknown")}</option>
           </select>
         </label>
 
@@ -976,8 +977,8 @@ export function RetailSalesDiscountBreakdown({
 
         <div className="space-y-3 text-sm">
           <div className="flex items-start justify-between gap-3">
-            <span className="text-muted">{getRetailReportingLabel("granted_discount")}</span>
-            <span className="font-medium text-foreground">{formatCurrency(report.summary.discountsCents)}</span>
+            <span className="text-muted">Descuento adicional</span>
+            <span className="font-medium text-foreground">{formatCurrency(report.summary.commercialMetrics.discountAdditionalCents)}</span>
           </div>
           <div className="flex items-start justify-between gap-3">
             <span className="text-muted">Operaciones con descuento</span>
@@ -1080,11 +1081,14 @@ export function RetailSalesOrdersTable({
         <thead>
           <tr className="border-b border-border text-left text-muted">
             <th className="px-2 py-2">Folio</th>
-            <th className="px-2 py-2">Fecha y hora de cobro</th>
-            <th className="px-2 py-2">Total antes de descuento</th>
-            <th className="px-2 py-2">Descuento</th>
             <th className="px-2 py-2">Tipo de precio</th>
-            <th className="px-2 py-2">Diferencia mayoreo</th>
+            <th className="px-2 py-2">Diferencia entre niveles</th>
+            <th className="px-2 py-2">Fecha y hora de cobro</th>
+            <th className="px-2 py-2">Precio base histórico</th>
+            <th className="px-2 py-2">Total antes de descuento</th>
+            <th className="px-2 py-2">Descuento adicional</th>
+            <th className="px-2 py-2">Costo histórico</th>
+            <th className="px-2 py-2">Margen</th>
             <th className="px-2 py-2">Venta cobrada</th>
             <th className="px-2 py-2">Método de cobro</th>
             <th className="px-2 py-2">Estado de postventa</th>
@@ -1134,11 +1138,12 @@ export function RetailSalesOrdersTable({
                 <td className="px-2 py-2">{order.priceTier === "wholesale" ? "Mayoreo" : order.priceTier === "mixed" ? "Mixto" : "Público"}</td>
                 <td className="px-2 py-2">{order.wholesaleDifferenceCents !== 0 ? formatCurrency(order.wholesaleDifferenceCents) : <span className="text-muted">—</span>}</td>
                 <td className="px-2 py-2">{formatDateTime(order.paidAt)}</td>
+                <td className="px-2 py-2">{order.historicalBaseCents === null ? <span className="text-muted">No disponible</span> : formatCurrency(order.historicalBaseCents)}</td>
                 <td className="px-2 py-2">{formatCurrency(order.grossSalesCents)}</td>
                 <td className="px-2 py-2">
-                  {order.discountCents > 0 ? (
+                  {order.additionalDiscountCents !== null && order.additionalDiscountCents > 0 ? (
                     <div className="space-y-1">
-                      <div>{formatCurrency(order.discountCents)}</div>
+                      <div>{formatCurrency(order.additionalDiscountCents)}</div>
                       <span className="inline-flex rounded-full bg-warning/10 px-2 py-1 text-[11px] font-medium text-foreground">
                         Con descuento
                       </span>
@@ -1147,6 +1152,12 @@ export function RetailSalesOrdersTable({
                     <span className="text-muted">—</span>
                   )}
                 </td>
+                <td className="px-2 py-2">
+                  {order.historicalCostCents === null ? (
+                    <div><span className="text-muted">No disponible</span>{order.costCoverageTotalLines > 0 ? <div className="text-xs text-muted">{order.costCoverageLines}/{order.costCoverageTotalLines} líneas</div> : null}</div>
+                  ) : formatCurrency(order.historicalCostCents)}
+                </td>
+                <td className="px-2 py-2">{order.grossMarginCents === null ? <span className="text-muted">No disponible</span> : formatCurrency(order.grossMarginCents)}</td>
                 <td className="px-2 py-2">{formatCurrency(order.totalCents)}</td>
                 <td className="px-2 py-2">{formatCompactPaymentMethodLabel(order.paymentMethod)}</td>
                 <td className="px-2 py-2">{order.postSaleLabel ?? "Sin postventa"}</td>

@@ -24,14 +24,21 @@ import type {
   RetailPosPostSaleRefundStatus,
   RetailPosZReportV1,
 } from "@/shared/types/retail-pos";
-import { calculatePriceTierEconomics, classifyPriceTier, classifyPriceTierDecision, type PriceTier } from "./price-tier-economics";
+import {
+  buildRetailCommercialCoverage,
+  calculatePriceTierEconomics,
+  classifyPriceTier,
+  classifyPriceTierDecision,
+  type PriceTier,
+  type PriceTierClassification,
+} from "./price-tier-economics";
 
 type RetailReportsFiltersInput = {
   dateFrom?: string | null;
   dateTo?: string | null;
   deviceId?: string | null;
   orderStatus?: "all" | "pending_payment" | "paid" | "voided" | null;
-  priceTier?: "all" | "public" | "wholesale" | "mixed" | null;
+  priceTier?: "all" | "public" | "wholesale" | "mixed" | "unknown" | null;
 };
 
 type RetailPostSaleReportFiltersInput = {
@@ -56,7 +63,7 @@ type RetailReportsFilters = {
   dateTo: string;
   deviceId: string | null;
   orderStatus: "all" | "pending_payment" | "paid" | "voided";
-  priceTier: "all" | "public" | "wholesale" | "mixed";
+  priceTier: "all" | "public" | "wholesale" | "mixed" | "unknown";
 };
 
 export type RetailPostSaleReportFilters = {
@@ -304,7 +311,35 @@ export type RetailReportsOverview = {
     wholesaleBaseCents: number;
     wholesaleDifferenceCents: number;
     wholesaleManualDiscountCents: number;
-    priceComposition: Array<{ tier: "public" | "wholesale"; baseCents: number }>;
+    priceComposition: Array<{ tier: PriceTierClassification; baseCents: number | null }>;
+    commercialMetrics: {
+      grossSalesCents: number;
+      discountAdditionalCents: number;
+      netSalesCents: number;
+      netSalesWithCostCents: number;
+      grossMarginCents: number;
+      marginPercentBps: number | null;
+      belowCostLinesCount: number;
+      belowCostSalesCents: number;
+      belowCostMarginCents: number;
+    };
+    priceTierCoverage: {
+      publicLines: number;
+      wholesaleLines: number;
+      unknownLines: number;
+      publicNetSalesCents: number;
+      wholesaleNetSalesCents: number;
+      unknownNetSalesCents: number;
+    };
+    costCoverage: {
+      totalLines: number;
+      linesWithCost: number;
+      linesWithoutCost: number;
+      netSalesWithCostCents: number;
+      netSalesWithoutCostCents: number;
+      costCoverageByLinesBps: number | null;
+      costCoverageByAmountBps: number | null;
+    };
     decisionCounts: Array<{ key: "requested_approved" | "requested_rejected" | "cashier_direct"; count: number }>;
     anomalies: Array<{ type: string; orderId: string; folio: string }>;
   };
@@ -372,8 +407,14 @@ export type RetailReportsOverview = {
     cancelReason: string | null;
     discountCents: number;
     hasBelowCostLine: boolean;
-    priceTier: "public" | "wholesale" | "mixed";
+    priceTier: "public" | "wholesale" | "mixed" | "unknown";
     wholesaleDifferenceCents: number;
+    historicalBaseCents: number | null;
+    additionalDiscountCents: number | null;
+    historicalCostCents: number | null;
+    grossMarginCents: number | null;
+    costCoverageLines: number;
+    costCoverageTotalLines: number;
   }>;
 };
 
@@ -640,7 +681,9 @@ function normalizeOrderStatus(
 }
 
 function normalizePriceTier(value: string | null | undefined): RetailReportsFilters["priceTier"] {
-  return value === "public" || value === "wholesale" || value === "mixed" ? value : "all";
+  return value === "public" || value === "wholesale" || value === "mixed" || value === "unknown"
+    ? value
+    : "all";
 }
 
 function normalizePostSaleOperationType(
@@ -1397,15 +1440,22 @@ async function buildRetailReportsOverviewFromLoadedData(
     approvedPriceTier: line.approved_price_tier,
     approvedUnitPriceCents: line.approved_unit_price_cents,
     unitPriceCents: line.unit_price_cents,
+    lineSubtotalCents: line.line_subtotal_cents,
+    lineTotalCents: line.line_total_cents,
     directDiscountCents: line.direct_discount_cents,
     orderDiscountAllocationCents: line.order_discount_allocation_cents,
     totalDiscountCents: line.total_discount_cents,
     unitCostSnapshotCents: line.unit_cost_snapshot_cents,
   }) }));
   const wholesaleEconomics = priceEconomics.filter(({ economics }) => economics.tier === "wholesale");
-  const priceComposition = (["public", "wholesale"] as const).map((tier) => ({
+  const commercialCoverage = buildRetailCommercialCoverage(priceEconomics);
+  const priceComposition = (["public", "wholesale", "unknown"] as const).map((tier) => ({
     tier,
-    baseCents: priceEconomics.filter(({ economics }) => economics.tier === tier).reduce((sum, row) => sum + row.economics.approvedBaseCents, 0),
+    baseCents: tier === "unknown"
+      ? null
+      : priceEconomics
+          .filter(({ economics }) => economics.tier === tier)
+          .reduce((sum, row) => sum + (row.economics.approvedBaseCents ?? 0), 0),
   }));
   const decisionCounts = (["requested_approved", "requested_rejected", "cashier_direct"] as const).map((key) => ({
     key,
@@ -1419,7 +1469,7 @@ async function buildRetailReportsOverviewFromLoadedData(
     if (line.approved_price_tier === "wholesale" && line.approved_unit_price_cents !== line.wholesale_unit_price_snapshot_cents) issues.push("wholesale_snapshot_mismatch");
     if (line.approved_price_tier === "public" && line.approved_unit_price_cents !== line.public_unit_price_snapshot_cents) issues.push("public_snapshot_mismatch");
     if (line.requested_price_tier === "wholesale" && line.approved_price_tier === "wholesale" && !line.approved_by_pos_user_id) issues.push("missing_approver");
-    if (economics.manualDiscountCents > 0 && economics.priceTierDifferenceCents !== 0 && line.total_discount_cents === economics.priceTierDifferenceCents) issues.push("tier_difference_as_discount");
+    if (economics.manualDiscountCents !== null && economics.manualDiscountCents > 0 && economics.priceTierDifferenceCents !== null && economics.priceTierDifferenceCents !== 0 && line.total_discount_cents === economics.priceTierDifferenceCents) issues.push("tier_difference_as_discount");
     return issues.map((type) => ({ type, orderId: order.id, folio: order.folio }));
   });
   const soldUnits = soldLines.reduce((sum, line) => sum + parseQuantity(line.quantity), 0);
@@ -1485,11 +1535,32 @@ async function buildRetailReportsOverviewFromLoadedData(
     discountByCashierMap.set(cashierKey, cashierBucket);
   }
 
-  const belowCostLines = soldLines.filter((line) => line.below_cost_after_discount === true);
+  const belowCostRows = priceEconomics.filter(({ economics }) => economics.belowCost);
+  const belowCostLines = belowCostRows.map(({ line }) => line);
   const belowCostOrderIds = new Set(belowCostLines.map((line) => line.order_id));
-  const belowCostNetSalesCents = paidOrders
-    .filter((order) => belowCostOrderIds.has(order.id))
-    .reduce((sum, order) => sum + order.total_cents, 0);
+  const belowCostNetSalesCents = belowCostRows.reduce(
+    (sum, row) => sum + row.economics.belowCostSalesCents,
+    0,
+  );
+  const belowCostMarginCents = belowCostRows.reduce(
+    (sum, row) => sum + row.economics.belowCostMarginCents,
+    0,
+  );
+  const grossMarginCents = priceEconomics.reduce(
+    (sum, row) => sum + (row.economics.finalMarginCents ?? 0),
+    0,
+  );
+  const marginPercentBps = commercialCoverage.netSalesWithCostCents === 0
+    ? null
+    : Math.round((grossMarginCents * 10_000) / commercialCoverage.netSalesWithCostCents);
+  const commercialGrossSalesCents = priceEconomics.reduce(
+    (sum, row) => sum + (row.economics.approvedBaseCents ?? 0),
+    0,
+  );
+  const discountAdditionalCents = priceEconomics.reduce(
+    (sum, row) => sum + (row.economics.manualDiscountCents ?? 0),
+    0,
+  );
 
   const netSalesCents = paidOrders.reduce((sum, order) => sum + order.total_cents, 0);
   const netAfterCancellationsCents = netSalesCents - cancellationAmountCents;
@@ -1593,10 +1664,38 @@ async function buildRetailReportsOverviewFromLoadedData(
       soldUnits,
       openShiftsCount: data.shifts.filter((shift) => shift.status === "open").length,
       wholesaleSalesCount: paidOrders.filter((order) => classifyPriceTier(linesByOrderIdForBuild(data.lines, order.id)) === "wholesale" || classifyPriceTier(linesByOrderIdForBuild(data.lines, order.id)) === "mixed").length,
-      wholesaleBaseCents: wholesaleEconomics.reduce((sum, row) => sum + row.economics.approvedBaseCents, 0),
-      wholesaleDifferenceCents: wholesaleEconomics.reduce((sum, row) => sum + row.economics.priceTierDifferenceCents, 0),
-      wholesaleManualDiscountCents: wholesaleEconomics.reduce((sum, row) => sum + row.economics.manualDiscountCents, 0),
+      wholesaleBaseCents: wholesaleEconomics.reduce((sum, row) => sum + (row.economics.approvedBaseCents ?? 0), 0),
+      wholesaleDifferenceCents: wholesaleEconomics.reduce((sum, row) => sum + (row.economics.priceTierDifferenceCents ?? 0), 0),
+      wholesaleManualDiscountCents: wholesaleEconomics.reduce((sum, row) => sum + (row.economics.manualDiscountCents ?? 0), 0),
       priceComposition,
+      commercialMetrics: {
+        grossSalesCents: commercialGrossSalesCents,
+        discountAdditionalCents,
+        netSalesCents: commercialCoverage.totalNetSalesCents,
+        netSalesWithCostCents: commercialCoverage.netSalesWithCostCents,
+        grossMarginCents,
+        marginPercentBps,
+        belowCostLinesCount: belowCostRows.length,
+        belowCostSalesCents: belowCostNetSalesCents,
+        belowCostMarginCents,
+      },
+      priceTierCoverage: {
+        publicLines: commercialCoverage.publicLines,
+        wholesaleLines: commercialCoverage.wholesaleLines,
+        unknownLines: commercialCoverage.unknownLines,
+        publicNetSalesCents: commercialCoverage.publicNetSalesCents,
+        wholesaleNetSalesCents: commercialCoverage.wholesaleNetSalesCents,
+        unknownNetSalesCents: commercialCoverage.unknownNetSalesCents,
+      },
+      costCoverage: {
+        totalLines: commercialCoverage.totalLines,
+        linesWithCost: commercialCoverage.linesWithCost,
+        linesWithoutCost: commercialCoverage.linesWithoutCost,
+        netSalesWithCostCents: commercialCoverage.netSalesWithCostCents,
+        netSalesWithoutCostCents: commercialCoverage.netSalesWithoutCostCents,
+        costCoverageByLinesBps: commercialCoverage.costCoverageByLinesBps,
+        costCoverageByAmountBps: commercialCoverage.costCoverageByAmountBps,
+      },
       decisionCounts,
       anomalies,
     },
@@ -1636,6 +1735,21 @@ async function buildRetailReportsOverviewFromLoadedData(
       const hasBelowCostLine = soldLines.some(
         (line) => line.order_id === order.id && line.below_cost_after_discount === true,
       );
+      const orderEconomics = priceEconomics.filter(({ line }) => line.order_id === order.id);
+      const knownBaseRows = orderEconomics.filter(({ economics }) => economics.approvedBaseCents !== null);
+      const costRows = orderEconomics.filter(({ economics }) => economics.costCents !== null);
+      const historicalBaseCents = knownBaseRows.length > 0
+        ? knownBaseRows.reduce((sum, row) => sum + (row.economics.approvedBaseCents ?? 0), 0)
+        : null;
+      const additionalDiscountCents = knownBaseRows.length > 0
+        ? knownBaseRows.reduce((sum, row) => sum + (row.economics.manualDiscountCents ?? 0), 0)
+        : null;
+      const historicalCostCents = orderEconomics.length > 0 && costRows.length === orderEconomics.length
+        ? costRows.reduce((sum, row) => sum + (row.economics.costCents ?? 0), 0)
+        : null;
+      const grossMarginCents = costRows.length > 0
+        ? costRows.reduce((sum, row) => sum + (row.economics.finalMarginCents ?? 0), 0)
+        : null;
       const lastPostSaleAt =
         postSaleDocuments
           .map((document) => document.confirmed_at ?? document.created_at)
@@ -1679,7 +1793,13 @@ async function buildRetailReportsOverviewFromLoadedData(
         discountCents: order.discount_cents,
         hasBelowCostLine,
         priceTier: classifyPriceTier(soldLines.filter((line) => line.order_id === order.id)),
-        wholesaleDifferenceCents: priceEconomics.filter(({ line }) => line.order_id === order.id && line.approved_price_tier === "wholesale").reduce((sum, row) => sum + row.economics.priceTierDifferenceCents, 0),
+        wholesaleDifferenceCents: orderEconomics.filter(({ economics }) => economics.tier === "wholesale").reduce((sum, row) => sum + (row.economics.priceTierDifferenceCents ?? 0), 0),
+        historicalBaseCents,
+        additionalDiscountCents,
+        historicalCostCents,
+        grossMarginCents,
+        costCoverageLines: costRows.length,
+        costCoverageTotalLines: orderEconomics.length,
       };
     }),
   };

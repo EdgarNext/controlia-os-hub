@@ -10,6 +10,7 @@ import {
   resolveRetailPosRuntimeActor,
 } from "./auth";
 import { RetailPosRuntimeError } from "./errors";
+import { assertRetailPosHistoricalSaleLine } from "../../../shared/retail-pos/historical-sale-line";
 import type { RuntimePerfTrace } from "./runtime-perf";
 import { runSupabaseReadWithRetry } from "./runtime-supabase-retry";
 import {
@@ -575,6 +576,27 @@ export async function checkoutRetailPosOrderWithDiscountsCommand(input: {
     productIds: lines.map((line) => line.product_id),
     trace: input.trace,
   });
+
+  const historicalLineIssues = lines.flatMap((line) =>
+    assertRetailPosHistoricalSaleLine(
+      {
+        lineNumber: line.line_number,
+        quantity: line.quantity,
+        publicUnitPriceSnapshotCents: line.public_unit_price_snapshot_cents,
+        wholesaleUnitPriceSnapshotCents: line.wholesale_unit_price_snapshot_cents,
+        approvedPriceTier: line.approved_price_tier,
+        approvedUnitPriceCents: line.approved_unit_price_cents,
+        unitPriceCents: line.unit_price_cents,
+        unitCostSnapshotCents:
+          line.unit_cost_snapshot_cents ?? costsByProductId.get(line.product_id) ?? null,
+      },
+    ).issues,
+  );
+  if (historicalLineIssues.length) {
+    throw new RetailPosRuntimeError(409, "HISTORICAL_SALE_LINE_INVALID", "HISTORICAL_SALE_LINE_INVALID", {
+      issues: historicalLineIssues,
+    });
+  }
 
   const calculationLines = lines.map((line) => ({
     ...line,

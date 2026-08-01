@@ -9,6 +9,8 @@ import {
 import { RetailReportPeriodContext } from "../_components/RetailReportPeriodContext";
 import { RetailSalesActivityChart } from "../_components/charts/RetailSalesActivityChart";
 import { RetailSalesAdjustmentsChart } from "../_components/charts/RetailSalesAdjustmentsChart";
+import { RetailSalesPriceTierChart } from "../_components/charts/RetailSalesPriceTierChart";
+import { getRetailCostCoverageNotice, getRetailPriceTierLabel } from "@/lib/retail-pos/reporting-presentation";
 import {
   RetailMetricGrid,
   RetailSalesDiscountBreakdown,
@@ -47,6 +49,11 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
   const hasPostSale = report.summary.cancelledSalesCount > 0 || report.summary.returnedCents > 0;
   const hasActivity = hasSales || hasPostSale;
   const revertedAmountCents = report.summary.cancelledSalesCents + report.summary.returnedCents;
+  const commercial = report.summary.commercialMetrics;
+  const coverage = report.summary.costCoverage;
+  const coverageNotice = getRetailCostCoverageNotice(coverage);
+  const levelTotalCents = report.summary.priceTierCoverage.publicNetSalesCents + report.summary.priceTierCoverage.wholesaleNetSalesCents + report.summary.priceTierCoverage.unknownNetSalesCents;
+  const levelShare = (amountCents: number) => levelTotalCents > 0 ? `${((amountCents / levelTotalCents) * 100).toFixed(1)}%` : "Sin ventas";
   const activityTrendPoints = report.activityTrend.points.map((point) => ({
     ...point,
     href: buildRetailReportHref({
@@ -118,8 +125,8 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
           <RetailMetricGrid
             items={[
               {
-                label: getRetailReportingLabel("collected_sales"),
-                value: formatCurrency(report.summary.netSalesCents),
+                label: "Ventas netas",
+                value: formatCurrency(commercial.netSalesCents),
                 detail: `${formatNumber(report.summary.paidOrders)} ventas pagadas`,
                 explanation: getRetailReportingTerm("collected_sales").description,
                 href: salesBaseHref,
@@ -128,7 +135,7 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
               {
                 label: getRetailReportingLabel("commercial_result"),
                 value: formatCurrency(report.summary.commercialNetCents),
-                detail: `${getRetailReportingLabel("collected_sales")} ${formatCurrency(report.summary.netSalesCents)}`,
+                detail: `Resultado después de postventa: ${formatCurrency(report.summary.commercialNetCents)}`,
                 explanation: getRetailReportingTerm("commercial_result").description,
                 href: salesBaseHref,
                 linkLabel: "Ver resultado",
@@ -153,15 +160,34 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
                 href: salesBaseHref,
                 linkLabel: "Ver tendencia",
               },
+              {
+                label: "Descuento adicional",
+                value: formatCurrency(commercial.discountAdditionalCents),
+                detail: "Sin incluir la diferencia propia del precio mayoreo",
+                href: `${salesBaseHref}#sales-discount-breakdown`,
+                linkLabel: "Ver desglose",
+              },
+              {
+                label: "Margen bruto",
+                value: coverage.linesWithCost === 0 ? "No disponible" : formatCurrency(commercial.grossMarginCents),
+                detail: coverageNotice ?? (coverage.totalLines === 0 ? "Sin líneas vendidas" : `Cobertura de costo: ${coverage.linesWithCost} de ${coverage.totalLines} líneas`),
+                tone: coverageNotice ? "warning" : "default",
+              },
+              {
+                label: "Ventas debajo del costo",
+                value: formatCurrency(commercial.belowCostSalesCents),
+                detail: `${formatNumber(commercial.belowCostLinesCount)} líneas afectadas`,
+                tone: commercial.belowCostSalesCents > 0 ? "warning" : "default",
+              },
             ]}
           />
 
-          <RetailSectionCard title="Uso de precio mayoreo" description="La diferencia frente a precio público no se contabiliza como descuento manual.">
+          <RetailSectionCard title="Nivel de precio histórico" description="La diferencia frente a precio público es una decisión de precio, no un descuento manual.">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <div><div className="text-xs text-muted">Ventas con mayoreo</div><div className="text-xl font-semibold">{formatNumber(report.summary.wholesaleSalesCount)}</div></div>
-              <div><div className="text-xs text-muted">Venta base a mayoreo</div><div className="text-xl font-semibold">{formatCurrency(report.summary.wholesaleBaseCents)}</div></div>
-              <div><div className="text-xs text-muted">Diferencia frente a precio público</div><div className="text-xl font-semibold">{formatCurrency(report.summary.wholesaleDifferenceCents)}</div></div>
-              <div><div className="text-xs text-muted">Descuentos manuales adicionales</div><div className="text-xl font-semibold">{formatCurrency(report.summary.wholesaleManualDiscountCents)}</div></div>
+              <div><div className="text-xs text-muted">{getRetailPriceTierLabel("public")}</div><div className="text-xl font-semibold">{formatCurrency(report.summary.priceTierCoverage.publicNetSalesCents)}</div><div className="text-xs text-muted">{levelShare(report.summary.priceTierCoverage.publicNetSalesCents)} · {formatNumber(report.summary.priceTierCoverage.publicLines)} líneas</div></div>
+              <div><div className="text-xs text-muted">{getRetailPriceTierLabel("wholesale")}</div><div className="text-xl font-semibold">{formatCurrency(report.summary.priceTierCoverage.wholesaleNetSalesCents)}</div><div className="text-xs text-muted">{levelShare(report.summary.priceTierCoverage.wholesaleNetSalesCents)} · {formatNumber(report.summary.priceTierCoverage.wholesaleLines)} líneas</div></div>
+              <div><div className="text-xs text-muted">{getRetailPriceTierLabel("unknown")}</div><div className="text-xl font-semibold">{formatCurrency(report.summary.priceTierCoverage.unknownNetSalesCents)}</div><div className="text-xs text-muted">{levelShare(report.summary.priceTierCoverage.unknownNetSalesCents)} · {formatNumber(report.summary.priceTierCoverage.unknownLines)} líneas</div></div>
+              <div><div className="text-xs text-muted">Diferencia frente a precio público</div><div className="text-xl font-semibold">{formatCurrency(report.summary.wholesaleDifferenceCents)}</div><div className="text-xs text-muted">No es descuento manual</div></div>
             </div>
           </RetailSectionCard>
 
@@ -176,8 +202,8 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
                   <span className="font-medium text-foreground">{formatCurrency(report.summary.grossSalesCents)}</span>
                 </div>
                 <div className="flex items-start justify-between gap-3">
-                  <span className="text-muted">Menos: {getRetailReportingLabel("granted_discount")}</span>
-                  <span className="font-medium text-foreground">{formatCurrency(report.summary.discountsCents)}</span>
+                  <span className="text-muted">Menos: descuento adicional</span>
+                  <span className="font-medium text-foreground">{formatCurrency(commercial.discountAdditionalCents)}</span>
                 </div>
                 <div className="flex items-start justify-between gap-3 border-t border-border pt-3">
                   <span className="text-muted">{getRetailReportingLabel("collected_sales")}</span>
@@ -236,6 +262,7 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
           </RetailSectionCard>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+            <RetailSalesPriceTierChart coverage={report.summary.priceTierCoverage} />
             <RetailSalesActivityChart
               granularity={report.activityTrend.granularity}
               points={activityTrendPoints}
@@ -249,7 +276,7 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
           <RetailSectionCard
             id="sales-discount-breakdown"
             title="Descuentos y operaciones debajo del costo"
-            description="Descuento total concedido, desglose por motivo y usuario, y número de operaciones con al menos una línea debajo del costo."
+            description="Descuento adicional, desglose por motivo y usuario, y número de operaciones con al menos una línea debajo del costo."
           >
             <RetailSalesDiscountBreakdown report={report} />
           </RetailSectionCard>
