@@ -1,11 +1,11 @@
-const assert = require("node:assert/strict");
-const test = require("node:test");
-const {
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
   buildRetailPosDiscountCalculationFingerprint,
   buildRetailPosDiscountCalculationFingerprintPayload,
   buildRetailPosDiscountCalculationSummary,
   buildRetailPosDiscountPreviewResponse,
-} = require("./discount-calculation.ts");
+} from "./discount-calculation";
 
 const LINES = [
   {

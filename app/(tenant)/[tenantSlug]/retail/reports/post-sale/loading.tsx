@@ -9,7 +9,7 @@ export default function RetailReportsPostSaleLoading() {
   return (
     <RetailReportLoadingState
       title="Postventa"
-      description="Reporte específico para anulaciones de venta pagada, devoluciones y reembolsos registrados dentro del rango seleccionado."
+      description="Reporte específico para ventas canceladas, devoluciones y reembolsos registrados dentro del rango seleccionado."
     >
       <RetailSectionCardSkeleton
         title="Filtros de postventa"

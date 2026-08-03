@@ -9,11 +9,13 @@ type CommitBody = {
   command_id: string;
   operator_id: string;
   order_id: string;
+  payment_transaction_id: string;
   cash_shift_id: string;
   expected_order_revision: number;
   reason_code: string;
   comment: string | null;
   refund_method: "cash" | "card_external";
+  acknowledge_cash_refund: boolean;
 };
 
 function jsonError(input: {
@@ -77,6 +79,7 @@ export async function POST(
         operatorId: body.operator_id,
         request: {
           order_id: body.order_id,
+          payment_transaction_id: body.payment_transaction_id,
           cash_shift_id: body.cash_shift_id,
           expected_order_revision: body.expected_order_revision,
           reason_code: body.reason_code as Parameters<
@@ -84,6 +87,7 @@ export async function POST(
           >[0]["request"]["reason_code"],
           comment: body.comment,
           refund_method: body.refund_method,
+          acknowledge_cash_refund: body.acknowledge_cash_refund,
         },
         deviceId: getOptionalHeader(request, "x-retail-pos-device-id"),
         deviceSecret: getOptionalHeader(request, "x-retail-pos-device-secret"),

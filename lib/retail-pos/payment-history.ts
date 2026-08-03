@@ -5,6 +5,11 @@ import {
 } from "./auth";
 import { RetailPosRuntimeError } from "./errors";
 import { calculatePriceTierEconomics, classifyPriceTier, type PriceTier } from "./price-tier-economics";
+import { buildRetailPosPaymentEvidence, PAYMENT_APPLICATION_SELECT } from "./payment-evidence";
+import type {
+  RetailPosOrderPaymentApplication,
+  RetailPosPaymentTransaction,
+} from "@/shared/types/retail-pos";
 
 type PaymentHistoryPaymentRow = {
   id: string;
@@ -13,7 +18,16 @@ type PaymentHistoryPaymentRow = {
   pos_user_id: string;
   payment_method: "cash" | "card";
   amount_cents: number;
+  received_amount_cents: number | null;
+  change_cents: number;
+  card_reference: string | null;
+  cash_shift_id: string;
+  device_id: string;
   paid_at: string;
+  created_at: string;
+  created_by: string | null;
+  payment_transaction_id: string | null;
+  payment_sequence: number | null;
 };
 
 type PaymentHistoryOrderRow = {
@@ -27,18 +41,31 @@ type PaymentHistoryOrderRow = {
   total_cents: number;
   direct_discount_cents: number | null;
   order_discount_cents: number | null;
+  revision: number;
+  paid_at: string | null;
+  created_at: string;
+  cashier_pos_user_id: string | null;
+  paid_by_device_id: string | null;
 };
 type PaymentHistoryLineRow = {
+  id: string;
   order_id: string;
+  line_number: number;
+  product_name: string;
+  variant_name: string | null;
+  sku: string | null;
+  sales_unit_label: string;
   quantity: string | number;
   public_unit_price_snapshot_cents: number | null;
   wholesale_unit_price_snapshot_cents: number | null;
   approved_price_tier: PriceTier | null;
   approved_unit_price_cents: number | null;
   unit_price_cents: number;
+  discount_cents: number;
   direct_discount_cents: number | null;
   order_discount_allocation_cents: number | null;
   total_discount_cents: number | null;
+  line_total_cents: number;
 };
 
 type PaymentHistoryOperatorRow = {
@@ -54,6 +81,13 @@ type PaymentHistoryDeviceSettingsRow = {
 type PaymentTicketEventRow = {
   order_id: string;
   event_type: "printed" | "reprinted" | "print_failed";
+  created_at: string;
+};
+
+type PostSaleTicketEventRow = {
+  order_id: string;
+  event_type: "printed" | "reprinted" | "print_failed";
+  payload: Record<string, unknown>;
   created_at: string;
 };
 
@@ -88,6 +122,29 @@ type PaymentHistoryPostSaleRefundRow = {
   amount_cents: number;
   external_reference: string | null;
 };
+
+function getPostSalePrintEvidence(documentId: string, events: PostSaleTicketEventRow[]) {
+  const matching = events
+    .filter((event) => {
+      const metadata = event.payload?.metadata;
+      if (!metadata || typeof metadata !== "object") return false;
+      const record = metadata as Record<string, unknown>;
+      const legacyPayload = record.payload;
+      const legacyDocumentId = legacyPayload && typeof legacyPayload === "object"
+        ? (legacyPayload as Record<string, unknown>).post_sale_document_id
+        : undefined;
+      return record.post_sale_document_id === documentId || legacyDocumentId === documentId;
+    })
+    .sort((left, right) => right.created_at.localeCompare(left.created_at));
+  const latest = matching[0] ?? null;
+  const successful = matching.filter((event) => event.event_type === "printed" || event.event_type === "reprinted");
+  return {
+    print_status: latest?.event_type ?? "not_printed",
+    print_count: successful.length,
+    reprint_count: successful.filter((event) => event.event_type === "reprinted").length,
+    last_printed_at: successful[0]?.created_at ?? null,
+  } as const;
+}
 
 function normalizeIso(value: string | null | undefined, field: string) {
   if (!value?.trim()) {
@@ -184,12 +241,12 @@ export async function listRetailPosPaymentHistory(input: {
   const supabase = getSupabaseAdminClient();
   const { data: payments, error: paymentsError } = await supabase
     .from("retail_pos_payments")
-    .select("id, tenant_id, order_id, pos_user_id, payment_method, amount_cents, paid_at")
+    .select("id, tenant_id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, card_reference, paid_at, created_at, created_by, payment_transaction_id, payment_sequence")
     .eq("tenant_id", actor.tenantId)
     .gte("paid_at", paidFromIso)
     .lt("paid_at", paidToIso)
     .order("paid_at", { ascending: false })
-    .limit(limit)
+    .limit(Math.min(limit * 2, 200))
     .returns<PaymentHistoryPaymentRow[]>();
 
   if (paymentsError) {
@@ -200,11 +257,40 @@ export async function listRetailPosPaymentHistory(input: {
   }
 
   const orderIds = Array.from(new Set((payments ?? []).map((payment) => payment.order_id))).filter(Boolean);
+  const paymentTransactionIds = Array.from(
+    new Set((payments ?? []).map((payment) => payment.payment_transaction_id).filter((value): value is string => Boolean(value))),
+  );
   const paymentOperatorIds = Array.from(
     new Set((payments ?? []).map((payment) => payment.pos_user_id)).values(),
   ).filter(Boolean);
 
-  const [deviceSettingsResult, ordersResult, ticketEventsResult, postSaleDocumentsResult, linesResult] =
+  const [transactionsResult, applicationsResult] = await Promise.all([
+    paymentTransactionIds.length
+      ? supabase
+          .from("retail_pos_payment_transactions")
+          .select("id, tenant_id, command_id, fingerprint, total_applied_cents, expected_order_revision, cash_shift_id, device_id, pos_user_id, confirmed_at, created_at, created_by")
+          .eq("tenant_id", actor.tenantId)
+          .in("id", paymentTransactionIds)
+          .returns<RetailPosPaymentTransaction[]>()
+      : Promise.resolve({ data: [] as RetailPosPaymentTransaction[], error: null }),
+    paymentTransactionIds.length
+      ? supabase
+          .from("retail_pos_order_payment_applications")
+          .select(PAYMENT_APPLICATION_SELECT)
+          .eq("tenant_id", actor.tenantId)
+          .in("payment_transaction_id", paymentTransactionIds)
+          .returns<RetailPosOrderPaymentApplication[]>()
+      : Promise.resolve({ data: [] as RetailPosOrderPaymentApplication[], error: null }),
+  ]);
+
+  if (transactionsResult.error) {
+    throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment transactions: ${transactionsResult.error.message}`);
+  }
+  if (applicationsResult.error) {
+    throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment applications: ${applicationsResult.error.message}`);
+  }
+
+  const [deviceSettingsResult, ordersResult, ticketEventsResult, postSaleTicketEventsResult, postSaleDocumentsResult, linesResult] =
     await Promise.all([
       supabase
         .from("retail_pos_device_settings")
@@ -217,22 +303,32 @@ export async function listRetailPosPaymentHistory(input: {
       ? supabase
           .from("retail_pos_orders")
           .select(
-            "id, tenant_id, folio, origin_local_folio, status, subtotal_cents, discount_cents, total_cents, direct_discount_cents, order_discount_cents",
+            "id, tenant_id, folio, origin_local_folio, status, subtotal_cents, discount_cents, total_cents, direct_discount_cents, order_discount_cents, revision, paid_at, created_at, cashier_pos_user_id, paid_by_device_id",
           )
           .eq("tenant_id", actor.tenantId)
           .in("id", orderIds)
           .returns<PaymentHistoryOrderRow[]>()
       : Promise.resolve({ data: [] as PaymentHistoryOrderRow[], error: null }),
-    orderIds.length
-      ? supabase
-          .from("retail_pos_ticket_events")
-          .select("order_id, event_type, created_at")
+      orderIds.length
+        ? supabase
+            .from("retail_pos_ticket_events")
+            .select("order_id, event_type, created_at")
           .eq("tenant_id", actor.tenantId)
           .eq("ticket_type", "payment")
           .in("order_id", orderIds)
           .in("event_type", ["printed", "reprinted"])
-          .returns<PaymentTicketEventRow[]>()
+            .returns<PaymentTicketEventRow[]>()
       : Promise.resolve({ data: [] as PaymentTicketEventRow[], error: null }),
+      orderIds.length
+        ? supabase
+            .from("retail_pos_ticket_events")
+            .select("order_id, event_type, payload, created_at")
+            .eq("tenant_id", actor.tenantId)
+            .in("order_id", orderIds)
+            .eq("ticket_type", "post_sale")
+            .in("event_type", ["printed", "reprinted", "print_failed"])
+            .returns<PostSaleTicketEventRow[]>()
+        : Promise.resolve({ data: [] as PostSaleTicketEventRow[], error: null }),
     orderIds.length
       ? supabase
           .from("retail_pos_post_sale_documents")
@@ -250,7 +346,7 @@ export async function listRetailPosPaymentHistory(input: {
           .returns<PaymentHistoryPostSaleDocumentRow[]>()
       : Promise.resolve({ data: [] as PaymentHistoryPostSaleDocumentRow[], error: null }),
       orderIds.length
-        ? supabase.from("retail_pos_order_lines").select("order_id, quantity, public_unit_price_snapshot_cents, wholesale_unit_price_snapshot_cents, approved_price_tier, approved_unit_price_cents, unit_price_cents, direct_discount_cents, order_discount_allocation_cents, total_discount_cents").eq("tenant_id", actor.tenantId).in("order_id", orderIds).returns<PaymentHistoryLineRow[]>()
+        ? supabase.from("retail_pos_order_lines").select("id, order_id, line_number, product_name, variant_name, sku, sales_unit_label, quantity, public_unit_price_snapshot_cents, wholesale_unit_price_snapshot_cents, approved_price_tier, approved_unit_price_cents, unit_price_cents, discount_cents, direct_discount_cents, order_discount_allocation_cents, total_discount_cents, line_total_cents").eq("tenant_id", actor.tenantId).in("order_id", orderIds).order("line_number", { ascending: true }).returns<PaymentHistoryLineRow[]>()
         : Promise.resolve({ data: [] as PaymentHistoryLineRow[], error: null }),
   ]);
 
@@ -279,6 +375,12 @@ export async function listRetailPosPaymentHistory(input: {
     throw new RetailPosRuntimeError(
       500,
       `Unable to load retail_pos payment history ticket events: ${ticketEventsResult.error.message}`,
+    );
+  }
+  if (postSaleTicketEventsResult.error) {
+    throw new RetailPosRuntimeError(
+      500,
+      `Unable to load retail_pos post-sale ticket events: ${postSaleTicketEventsResult.error.message}`,
     );
   }
   if (linesResult.error) throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment history lines: ${linesResult.error.message}`);
@@ -333,6 +435,10 @@ export async function listRetailPosPaymentHistory(input: {
     (actor.deviceRole === "cashier_station" || actor.deviceRole === "multi_station") &&
     deviceSettingsResult.data?.is_active === true;
   const ordersById = new Map((ordersResult.data ?? []).map((order) => [order.id, order]));
+  const transactionsById = new Map((transactionsResult.data ?? []).map((transaction) => [transaction.id, transaction]));
+  const applicationsByTransactionId = new Map(
+    (applicationsResult.data ?? []).map((application) => [application.payment_transaction_id, application]),
+  );
   const operatorsById = new Map((operatorsResult.data ?? []).map((operator) => [operator.id, operator]));
   const printedOrderIds = new Set((ticketEventsResult.data ?? []).map((event) => event.order_id));
   const ticketEvents = ticketEventsResult.data ?? [];
@@ -348,11 +454,41 @@ export async function listRetailPosPaymentHistory(input: {
     postSaleByOrderId.set(document.original_order_id, current);
   }
 
+  const paymentGroups = new Map<string, PaymentHistoryPaymentRow[]>();
+  for (const payment of payments ?? []) {
+    if (!payment.payment_transaction_id) {
+      throw new RetailPosRuntimeError(500, "PAYMENT_TRANSACTION_NOT_FOUND", "PAYMENT_TRANSACTION_NOT_FOUND");
+    }
+    const current = paymentGroups.get(payment.payment_transaction_id) ?? [];
+    current.push(payment);
+    paymentGroups.set(payment.payment_transaction_id, current);
+  }
+  const evidenceByTransactionId = new Map<string, ReturnType<typeof buildRetailPosPaymentEvidence>>();
+  for (const [transactionId, group] of paymentGroups) {
+    const paymentAnchor = group[0];
+    const order = paymentAnchor ? ordersById.get(paymentAnchor.order_id) : null;
+    if (!order) throw new RetailPosRuntimeError(500, "PAYMENT_EVIDENCE_NOT_FOUND", "PAYMENT_EVIDENCE_NOT_FOUND");
+    const transaction = transactionsById.get(transactionId) ?? null;
+    const application = applicationsByTransactionId.get(transactionId) ?? null;
+    const evidence = buildRetailPosPaymentEvidence({
+      order,
+      lines: linesByOrderId.get(order.id) ?? [],
+      paymentTransaction: transaction,
+      application,
+      payments: group,
+    });
+    evidenceByTransactionId.set(transactionId, evidence);
+  }
+
   return {
-    items: (payments ?? []).map((payment) => {
-      const order = ordersById.get(payment.order_id);
-      const operator = operatorsById.get(payment.pos_user_id);
-      const postSaleDocumentsForOrder = (postSaleByOrderId.get(payment.order_id) ?? [])
+    items: Array.from(paymentGroups.entries()).slice(0, limit).map(([transactionId, transactionPayments]) => {
+      const paymentAnchor = transactionPayments[0];
+      if (!paymentAnchor) throw new RetailPosRuntimeError(500, "PAYMENT_EVIDENCE_NOT_FOUND", "PAYMENT_EVIDENCE_NOT_FOUND");
+      const evidence = evidenceByTransactionId.get(transactionId);
+      if (!evidence) throw new RetailPosRuntimeError(500, "PAYMENT_EVIDENCE_NOT_FOUND", "PAYMENT_EVIDENCE_NOT_FOUND");
+      const order = ordersById.get(paymentAnchor.order_id);
+      const operator = operatorsById.get(paymentAnchor.pos_user_id);
+      const postSaleDocumentsForOrder = (postSaleByOrderId.get(paymentAnchor.order_id) ?? [])
         .slice()
         .sort((left, right) => left.created_at.localeCompare(right.created_at));
       const latestPostSaleDocument =
@@ -375,7 +511,7 @@ export async function listRetailPosPaymentHistory(input: {
       );
       const eligibleAmountCents = hasCompletedSaleVoid
         ? 0
-        : Math.max((order?.total_cents ?? payment.amount_cents) - totalReturnedAmountCents, 0);
+        : Math.max((order?.total_cents ?? paymentAnchor.amount_cents) - totalReturnedAmountCents, 0);
       const returnState =
         hasCompletedSaleVoid || eligibleAmountCents <= 0
           ? "fully_returned"
@@ -410,6 +546,7 @@ export async function listRetailPosPaymentHistory(input: {
             (refund?.refund_method ?? document.refund_method) === "card_external" &&
             (refund?.status ?? document.refund_status) === "pending",
           can_print_receipt: true,
+          ...getPostSalePrintEvidence(document.id, postSaleTicketEventsResult.data ?? []),
         };
       });
       const pendingExternalRefundCount = postSaleHistoryDocuments.filter(
@@ -421,28 +558,32 @@ export async function listRetailPosPaymentHistory(input: {
       const lineDiscountCents = order?.direct_discount_cents ?? 0;
       const orderDiscountCents = order?.order_discount_cents ?? 0;
       const totalDiscountCents = order?.discount_cents ?? 0;
-      const priceLines = linesByOrderId.get(payment.order_id) ?? [];
+      const priceLines = linesByOrderId.get(paymentAnchor.order_id) ?? [];
       const priceTier = classifyPriceTier(priceLines);
       const wholesaleDifferenceCents = priceLines.filter((line) => line.approved_price_tier === "wholesale").reduce((sum, line) => sum + (calculatePriceTierEconomics(line).priceTierDifferenceCents ?? 0), 0);
 
       return {
-        payment_id: payment.id,
-        order_id: payment.order_id,
+        payment_id: evidence.payment_transaction.id,
+        payment_transaction_id: evidence.payment_transaction.id,
+        payment_evidence: evidence,
+        order_id: paymentAnchor.order_id,
         order_folio: order?.folio ?? "",
         order_local_folio: order?.origin_local_folio ?? null,
-        amount_cents: payment.amount_cents,
-        gross_cents: order?.subtotal_cents ?? payment.amount_cents,
+        amount_cents: evidence.application.amount_cents,
+        gross_cents: order?.subtotal_cents ?? paymentAnchor.amount_cents,
         line_discount_cents: lineDiscountCents,
         order_discount_cents: orderDiscountCents,
         total_discount_cents: totalDiscountCents,
-        payment_method: payment.payment_method,
+        payment_method: evidence.payment_summary === "card" ? "card" : "cash",
+        payment_summary: evidence.payment_summary,
+        payments: evidence.payments,
         order_status: orderStatus,
         payment_status_label: getPaymentStatusLabel(orderStatus),
-        paid_at: payment.paid_at,
-        operator_id: payment.pos_user_id ?? null,
+        paid_at: paymentAnchor.paid_at,
+        operator_id: paymentAnchor.pos_user_id ?? null,
         operator_name: operator?.name ?? null,
-        has_printed_receipt: printedOrderIds.has(payment.order_id),
-        receipt_status_label: getReceiptStatusLabel(payment.order_id, ticketEvents),
+        has_printed_receipt: printedOrderIds.has(paymentAnchor.order_id),
+        receipt_status_label: getReceiptStatusLabel(paymentAnchor.order_id, ticketEvents),
         has_discounts: totalDiscountCents > 0,
         price_tier: priceTier,
         wholesale_difference_cents: wholesaleDifferenceCents,

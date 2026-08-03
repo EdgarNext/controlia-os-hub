@@ -6,6 +6,11 @@ import type {
   RetailPosPayCommand,
   RetailPosPayCommandResult,
 } from "@/shared/types/retail-pos";
+import {
+  normalizeRetailPosPaymentTenders,
+  type RetailPosPaymentTenderDraft,
+} from "@/shared/retail-pos/mixed-payments";
+import { buildRetailPosPaymentEvidence } from "./payment-evidence";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   assertRetailPosCashierAccess,
@@ -46,7 +51,7 @@ type CashShiftRow = {
 };
 
 const ORDER_SELECT =
-  "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
+  "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, revision, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
 
 function buildNormalCheckoutCommandId(input: {
   tenantId: string;
@@ -64,12 +69,27 @@ function buildNormalCheckoutCommandId(input: {
     .digest("hex")}`;
 }
 
-function ensureNonNegativeInteger(value: unknown, field: string) {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw new RetailPosRuntimeError(400, `${field} must be a non-negative integer.`);
+function normalizePaymentRequest(request: PayRetailPosOrderRequest) {
+  const hasTenders = "tenders" in request && request.tenders !== undefined;
+  const hasLegacy = "payment_method" in request;
+  if (hasTenders === hasLegacy) {
+    throw new RetailPosRuntimeError(400, "PAYMENT_INPUT_AMBIGUOUS");
   }
-
-  return value;
+  const tenders: RetailPosPaymentTenderDraft[] = hasTenders
+    ? request.tenders
+    : [{
+        sequence: 1,
+        method: request.payment_method,
+        amount_cents: request.amount_cents,
+        received_amount_cents: request.received_amount_cents,
+        reference: request.card_reference,
+      }];
+  const normalized = normalizeRetailPosPaymentTenders(tenders);
+  if (!normalized.ok) {
+    const code = normalized.errors[0]?.code ?? "PAYMENT_TENDERS_INVALID_JSON";
+    throw new RetailPosRuntimeError(400, code, code);
+  }
+  return normalized.tenders;
 }
 
 function normalizeRequiredString(value: unknown, field: string) {
@@ -149,6 +169,23 @@ function addPayTotalTrace(trace: RuntimePerfTrace | undefined, startedAt: number
     (typeof performance !== "undefined" ? performance.now() : Date.now()) -
       startedAt,
   );
+}
+
+function requireCurrentOrderRevision(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new RetailPosRuntimeError(500, "ORDER_REVISION_UNAVAILABLE", "ORDER_REVISION_UNAVAILABLE");
+  }
+  return value as number;
+}
+
+function requireExpectedOrderRevision(value: unknown): number {
+  if (value === null || value === undefined) {
+    throw new RetailPosRuntimeError(422, "ORDER_REVISION_REQUIRED", "ORDER_REVISION_REQUIRED");
+  }
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new RetailPosRuntimeError(422, "ORDER_REVISION_INVALID", "ORDER_REVISION_INVALID");
+  }
+  return value as number;
 }
 
 async function loadCashShiftByIdForPayment(input: {
@@ -274,32 +311,19 @@ export async function payRetailPosOrder(input: {
     throw new RetailPosRuntimeError(409, "Only pending_payment retail_pos orders can be paid.");
   }
 
-  const amountCents = ensureNonNegativeInteger(input.request.amount_cents, "amount_cents");
-  if (amountCents <= 0) {
-    throw new RetailPosRuntimeError(400, "amount_cents must be greater than zero.");
+  const expectedOrderRevision = requireExpectedOrderRevision(input.request.expected_order_revision);
+  const currentOrderRevision = requireCurrentOrderRevision(order.revision);
+  if (expectedOrderRevision !== currentOrderRevision) {
+    throw new RetailPosRuntimeError(409, "La orden cambió desde que fue cargada.", "ORDER_REVISION_CONFLICT", {
+      expected_revision: expectedOrderRevision,
+      current_revision: currentOrderRevision,
+    });
   }
 
-  if (!input.commandId && amountCents !== order.total_cents) {
-    throw new RetailPosRuntimeError(409, "amount_cents must equal retail_pos order total_cents in phase 1.");
-  }
-
-  let receivedAmountCents: number | null = null;
-  if (input.request.payment_method === "cash") {
-    receivedAmountCents = ensureNonNegativeInteger(
-      input.request.received_amount_cents,
-      "received_amount_cents",
-    );
-
-    if (receivedAmountCents < amountCents) {
-      throw new RetailPosRuntimeError(400, "received_amount_cents must be greater than or equal to amount_cents for cash payments.");
-    }
-
-  } else if (input.request.payment_method === "card") {
-    if (input.request.received_amount_cents !== null) {
-      throw new RetailPosRuntimeError(400, "received_amount_cents must be null for card payments.");
-    }
-  } else {
-    throw new RetailPosRuntimeError(400, "payment_method must be cash or card.");
+  const tenders = normalizePaymentRequest(input.request);
+  const amountCents = tenders.reduce((sum, tender) => sum + tender.amount_cents, 0);
+  if (amountCents !== order.total_cents) {
+    throw new RetailPosRuntimeError(409, "PAYMENT_AMOUNT_MISMATCH");
   }
 
   const supabase = getSupabaseAdminClient({ trace: input.trace });
@@ -311,14 +335,14 @@ export async function payRetailPosOrder(input: {
       deviceId: targetDevice.deviceRecordId,
       posUserId: input.request.pos_user_id,
       cashShiftId: currentOpenShift.id,
-      paymentMethod: input.request.payment_method,
+      paymentMethod: tenders.map((tender) => `${tender.method}:${tender.amount_cents}:${tender.received_amount_cents ?? ""}:${tender.reference ?? ""}`).join("|"),
       amountCents,
-      receivedAmountCents,
-      cardReference: input.request.card_reference,
+      receivedAmountCents: null,
+      cardReference: null,
     });
   const rpcStartedAt =
     typeof performance !== "undefined" ? performance.now() : Date.now();
-  const { data, error } = await supabase.rpc("retail_pos_checkout_order_normal_v1", {
+  const { data, error } = await supabase.rpc("retail_pos_checkout_order_normal_v2", {
     p_tenant_id: actor.tenantId,
     p_device_id: targetDevice.deviceRecordId,
     p_payload: {
@@ -326,10 +350,8 @@ export async function payRetailPosOrder(input: {
       order_id: input.orderId,
       cash_shift_id: currentOpenShift.id,
       operator_id: input.request.pos_user_id,
-      payment_method: input.request.payment_method,
-      amount_cents: amountCents,
-      received_amount_cents: receivedAmountCents,
-      card_reference: input.request.card_reference,
+      expected_order_revision: currentOrderRevision,
+      tenders,
     },
   });
   const rpcDurationMs =
@@ -339,18 +361,53 @@ export async function payRetailPosOrder(input: {
   input.trace?.addDuration("normal_checkout_rpc", rpcDurationMs);
 
   if (error) {
+    const rpcCode = typeof error.message === "string" && /^[A-Z0-9_]+$/.test(error.message)
+      ? error.message
+      : "PAYMENT_RPC_FAILED";
+    input.trace?.log({
+      step: "normal_checkout_rpc_error",
+      ok: false,
+      status: 400,
+      extra: {
+        rpc: "retail_pos_checkout_order_normal_v2",
+        rpc_code: rpcCode,
+        order_id: input.orderId,
+        expected_order_revision: order.revision,
+        total_cents: order.total_cents,
+        tender_count: tenders.length,
+        tenders: tenders.map((tender) => ({
+          sequence: tender.sequence,
+          method: tender.method,
+          amount_cents: tender.amount_cents,
+          received_amount_cents: tender.received_amount_cents,
+          reference_present: Boolean(tender.reference),
+        })),
+      },
+      error,
+    });
     const status =
       error.message === "ORDER_NOT_FOUND"
         ? 404
         : [
               "PAYMENT_INVALID",
+              "PAYMENT_OPERATOR_INVALID",
+              "PAYMENT_ORDER_ID_REQUIRED",
+              "PAYMENT_COMMAND_ID_REQUIRED",
+              "ORDER_REVISION_REQUIRED",
+              "ORDER_REVISION_INVALID",
+              "PAYMENT_TOTAL_INVALID",
               "HISTORICAL_SALE_LINE_INVALID",
-              "HISTORICAL_COST_REQUIRED",
-              "HISTORICAL_SALE_LINES_REQUIRED",
-            ].includes(error.message)
+            "HISTORICAL_COST_REQUIRED",
+            "HISTORICAL_SALE_LINES_REQUIRED",
+          ].includes(error.message)
           ? 422
+          : rpcCode === "PAYMENT_RPC_FAILED"
+            ? 500
           : 409;
-    throw new RetailPosRuntimeError(status, error.message);
+    throw new RetailPosRuntimeError(status, rpcCode, rpcCode, {
+      source: "retail_pos_checkout_order_normal_v2",
+      postgres_code: typeof error.code === "string" ? error.code : null,
+    });
   }
 
   if (!data || typeof data !== "object" || !("result" in data)) {
@@ -361,6 +418,21 @@ export async function payRetailPosOrder(input: {
     input.commandReplayRef.current = (data as { status?: string }).status === "replayed";
   }
   const response = (data as { result: PayRetailPosOrderResponse }).result;
+  if (!Array.isArray(response.payments) || response.payments.length < 1 || response.payments.length > 2) {
+    throw new RetailPosRuntimeError(500, "PAYMENT_RESPONSE_INVALID");
+  }
+  response.payment = response.payments.length === 1 ? response.payments[0] ?? null : null;
+  response.payment_evidence = buildRetailPosPaymentEvidence({
+    order: response.order,
+    lines: [],
+    paymentTransaction: response.payment_transaction ?? null,
+    application: response.application ?? null,
+    payments: response.payments.map((payment) => ({
+      ...payment,
+      payment_transaction_id: payment.payment_transaction_id ?? null,
+      payment_sequence: payment.payment_sequence ?? null,
+    })),
+  });
   addPayTotalTrace(input.trace, payStartedAt);
   return response;
 }
@@ -404,22 +476,34 @@ export async function payRetailPosOrderCommand(input: {
   }
 
   const replayRef = { current: false };
+  const paymentRequest = (Array.isArray(payload.tenders)
+    ? {
+        tenant_id: actor.tenantId,
+        order_id: orderId,
+        cash_shift_id: cashShiftId,
+        device_id: actor.deviceRecordId,
+        pos_user_id: operatorId,
+        expected_order_revision: payload.expected_order_revision,
+        tenders: payload.tenders,
+      }
+    : {
+        tenant_id: actor.tenantId,
+        order_id: orderId,
+        cash_shift_id: cashShiftId,
+        device_id: actor.deviceRecordId,
+        pos_user_id: operatorId,
+        expected_order_revision: payload.expected_order_revision,
+        payment_method: payload.payment_method,
+        amount_cents: payload.amount_cents,
+        received_amount_cents: payload.received_amount_cents,
+        card_reference: payload.card_reference,
+      }) as PayRetailPosOrderRequest;
   const paymentResponse = await payRetailPosOrder({
     tenantSlug: input.tenantSlug,
     orderId,
     commandId,
     commandReplayRef: replayRef,
-    request: {
-      tenant_id: actor.tenantId,
-      order_id: orderId,
-      cash_shift_id: cashShiftId,
-      device_id: actor.deviceRecordId,
-      pos_user_id: operatorId,
-      payment_method: payload.payment_method,
-      amount_cents: payload.amount_cents,
-      received_amount_cents: payload.received_amount_cents,
-      card_reference: payload.card_reference,
-    },
+    request: paymentRequest,
     deviceId: input.deviceId,
     deviceSecret: input.deviceSecret,
     trace: input.trace,

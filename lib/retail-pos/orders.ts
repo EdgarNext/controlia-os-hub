@@ -7,6 +7,8 @@ import type {
   RetailPosOrderDiscountOverview,
   RetailPosOrder,
   RetailPosOrderLine,
+  RetailPosOrderPaymentApplication,
+  RetailPosPaymentTransaction,
   RetailPosPersistedOrderDiscount,
   RetailPosRecentPendingOrderSummary,
   UpdateRetailPosOrderRequest,
@@ -21,6 +23,7 @@ import {
   type RetailPosRuntimeActor,
 } from "./auth";
 import { RetailPosRuntimeError } from "./errors";
+import { buildRetailPosPaymentEvidence, PAYMENT_APPLICATION_SELECT } from "./payment-evidence";
 import type { RuntimePerfTrace } from "./runtime-perf";
 import { runSupabaseReadWithRetry } from "./runtime-supabase-retry";
 import {
@@ -70,7 +73,12 @@ type PaymentRow = {
   paid_at: string;
   created_at: string;
   created_by: string | null;
+  payment_transaction_id: string | null;
+  payment_sequence: number | null;
 };
+
+type PaymentTransactionRow = RetailPosPaymentTransaction;
+type PaymentApplicationRow = RetailPosOrderPaymentApplication;
 
 type PersistedOrderDiscountRow = Omit<
   RetailPosPersistedOrderDiscount,
@@ -123,6 +131,7 @@ type ResolvedOrderInputLine = {
   approved_price_tier_source: "default_public" | "counter_request" | "cashier_direct" | null;
   approved_by_pos_user_id: string | null;
   approved_at: string | null;
+  unit_cost_snapshot_cents: number;
 };
 
 type CurrentOrderContext = {
@@ -579,31 +588,12 @@ async function loadOrderDetail(
 ): Promise<GetRetailPosOrderResponse> {
   const detailStartedAt =
     typeof performance !== "undefined" ? performance.now() : Date.now();
-  const supabase = getSupabaseAdminClient({ trace });
   const context = await loadOrderContext(tenantId, orderId, trace);
 
-  const [{ data: payment, error: paymentError }, discounts] = await Promise.all([
-    runSupabaseReadWithRetry<PaymentRow>({
-      trace,
-      step: "payment_lookup",
-      query: (signal) =>
-        supabase
-          .from("retail_pos_payments")
-          .select(
-            "id, tenant_id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, card_reference, paid_at, created_at, created_by",
-          )
-          .abortSignal(signal)
-          .eq("tenant_id", tenantId)
-          .eq("order_id", orderId)
-          .limit(1)
-          .maybeSingle<PaymentRow>(),
-    }),
+  const [paymentEvidence, discounts] = await Promise.all([
+    loadRetailPosPaymentEvidence({ tenantId, order: context.order, lines: context.lines, trace }),
     loadPersistedOrderDiscounts({ tenantId, orderId, trace }),
   ]);
-
-  if (paymentError) {
-    throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment: ${paymentError.message}`);
-  }
 
   trace?.addDuration(
     "order_detail",
@@ -613,7 +603,8 @@ async function loadOrderDetail(
   return {
     order: context.order,
     lines: context.lines,
-    payment: payment ?? null,
+    payment: paymentEvidence?.payment ?? null,
+    payment_evidence: paymentEvidence,
     discounts,
     discount_overview: buildOrderDiscountOverview({
       order: context.order,
@@ -621,6 +612,90 @@ async function loadOrderDetail(
       discounts,
     }),
   };
+}
+
+async function loadRetailPosPaymentEvidence(input: {
+  tenantId: string;
+  order: OrderRow;
+  lines: OrderLineRow[];
+  trace?: RuntimePerfTrace;
+}) {
+  const supabase = getSupabaseAdminClient({ trace: input.trace });
+  const paymentsResult = await runSupabaseReadWithRetry<PaymentRow[]>({
+    trace: input.trace,
+    step: "payment_evidence_payments",
+    query: (signal) =>
+      supabase
+        .from("retail_pos_payments")
+        .select(
+          "id, tenant_id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, card_reference, paid_at, created_at, created_by, payment_transaction_id, payment_sequence",
+        )
+        .abortSignal(signal)
+        .eq("tenant_id", input.tenantId)
+        .eq("order_id", input.order.id)
+        .order("payment_sequence", { ascending: true })
+        .returns<PaymentRow[]>(),
+  });
+
+  if (paymentsResult.error) {
+    throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment evidence: ${paymentsResult.error.message}`);
+  }
+
+  const payments = paymentsResult.data ?? [];
+  if (payments.length === 0) return null;
+
+  const transactionIds = Array.from(
+    new Set(payments.map((payment) => payment.payment_transaction_id).filter((value): value is string => Boolean(value))),
+  );
+  if (transactionIds.length !== 1) {
+    throw new RetailPosRuntimeError(500, "PAYMENT_EVIDENCE_INCONSISTENT", "PAYMENT_EVIDENCE_INCONSISTENT");
+  }
+
+  const [transactionResult, applicationResult] = await Promise.all([
+    runSupabaseReadWithRetry<PaymentTransactionRow>({
+      trace: input.trace,
+      step: "payment_evidence_transaction",
+      query: (signal) =>
+        supabase
+          .from("retail_pos_payment_transactions")
+          .select("id, tenant_id, command_id, fingerprint, total_applied_cents, expected_order_revision, cash_shift_id, device_id, pos_user_id, confirmed_at, created_at, created_by")
+          .abortSignal(signal)
+          .eq("tenant_id", input.tenantId)
+          .eq("id", transactionIds[0])
+          .limit(1)
+          .maybeSingle<PaymentTransactionRow>(),
+    }),
+    runSupabaseReadWithRetry<PaymentApplicationRow>({
+      trace: input.trace,
+      step: "payment_evidence_application",
+      query: (signal) =>
+        supabase
+          .from("retail_pos_order_payment_applications")
+          .select(PAYMENT_APPLICATION_SELECT)
+          .abortSignal(signal)
+          .eq("tenant_id", input.tenantId)
+          .eq("order_id", input.order.id)
+          .eq("payment_transaction_id", transactionIds[0])
+          .order("application_sequence", { ascending: true })
+          .limit(1)
+          .maybeSingle<PaymentApplicationRow>(),
+    }),
+  ]);
+
+  if (transactionResult.error) {
+    throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment transaction: ${transactionResult.error.message}`);
+  }
+  if (applicationResult.error) {
+    throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment application: ${applicationResult.error.message}`);
+  }
+
+  return buildRetailPosPaymentEvidence({
+    order: input.order,
+    lines: input.lines,
+    paymentTransaction: transactionResult.data ?? null,
+    application: applicationResult.data ?? null,
+    payments,
+  });
 }
 
 async function loadOrderDetailFromOrderContext(
@@ -634,7 +709,7 @@ async function loadOrderDetailFromOrderContext(
     typeof performance !== "undefined" ? performance.now() : Date.now();
   const supabase = getSupabaseAdminClient({ trace: input.trace });
 
-  const [linesResult, paymentResult, discounts] = await Promise.all([
+  const [linesResult, discounts] = await Promise.all([
     runSupabaseReadWithRetry<OrderLineRow[]>({
       trace: input.trace,
       step: "order_lines",
@@ -647,21 +722,6 @@ async function loadOrderDetailFromOrderContext(
           .eq("order_id", input.order.id)
           .order("line_number", { ascending: true }),
     }),
-    runSupabaseReadWithRetry<PaymentRow>({
-      trace: input.trace,
-      step: "payment_lookup",
-      query: (signal) =>
-        supabase
-          .from("retail_pos_payments")
-          .select(
-            "id, tenant_id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, card_reference, paid_at, created_at, created_by",
-          )
-          .abortSignal(signal)
-          .eq("tenant_id", input.tenantId)
-          .eq("order_id", input.order.id)
-          .limit(1)
-          .maybeSingle<PaymentRow>(),
-    }),
     loadPersistedOrderDiscounts({
       tenantId: input.tenantId,
       orderId: input.order.id,
@@ -673,9 +733,13 @@ async function loadOrderDetailFromOrderContext(
     throw new RetailPosRuntimeError(500, `Unable to load retail_pos order lines: ${linesResult.error.message}`);
   }
 
-  if (paymentResult.error) {
-    throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment: ${paymentResult.error.message}`);
-  }
+  const lines = asArray(linesResult.data);
+  const paymentEvidence = await loadRetailPosPaymentEvidence({
+    tenantId: input.tenantId,
+    order: input.order,
+    lines,
+    trace: input.trace,
+  });
 
   input.trace?.addDuration(
     "order_detail",
@@ -685,12 +749,13 @@ async function loadOrderDetailFromOrderContext(
 
   return {
     order: input.order,
-    lines: asArray(linesResult.data),
-    payment: paymentResult.data ?? null,
+    lines,
+    payment: paymentEvidence?.payment ?? null,
+    payment_evidence: paymentEvidence,
     discounts,
     discount_overview: buildOrderDiscountOverview({
       order: input.order,
-      lines: asArray(linesResult.data),
+      lines,
       discounts,
     }),
   };
@@ -713,7 +778,7 @@ async function resolveLineSnapshots(input: {
   const productsPromise = supabase
       .from("retail_pos_products")
       .select(
-        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at",
+        "id, tenant_id, category_id, name, brand, sku, barcode, unit_price_cents, wholesale_price_cents, cost_cents, sales_unit_code, sales_unit_label, allow_decimal_quantity, has_variants, is_active, deleted_at",
       )
       .eq("tenant_id", input.tenantId)
       .eq("is_active", true)
@@ -791,15 +856,38 @@ async function resolveLineSnapshots(input: {
     const currentCatalogUnitPriceCents = variant?.unit_price_cents ?? product.unit_price_cents;
     const providedUnitPriceCents = ensurePositiveInteger(line.unit_price_cents, "unit_price_cents");
     const requestedPriceTier = line.requested_price_tier ?? "public";
-    const publicSnapshot = line.public_unit_price_snapshot_cents ?? providedUnitPriceCents;
-    const wholesaleSnapshot = line.wholesale_unit_price_snapshot_cents ?? variant?.wholesale_price_cents ?? product.wholesale_price_cents;
+    if (line.public_unit_price_snapshot_cents === undefined || line.public_unit_price_snapshot_cents === null ||
+        line.wholesale_unit_price_snapshot_cents === undefined || line.wholesale_unit_price_snapshot_cents === null) {
+      throw new RetailPosRuntimeError(400, "ORDER_LINE_PRICE_SNAPSHOT_REQUIRED");
+    }
+    const publicSnapshot = line.public_unit_price_snapshot_cents;
+    const wholesaleSnapshot = line.wholesale_unit_price_snapshot_cents;
     const requestedUnitPrice = line.requested_unit_price_cents ?? publicSnapshot;
     if (requestedPriceTier !== "public" && requestedPriceTier !== "wholesale") {
-      throw new RetailPosRuntimeError(400, `Line ${lineNumber} has an invalid requested price tier.`);
+      throw new RetailPosRuntimeError(400, "ORDER_LINE_PRICE_TIER_INVALID");
     }
     const expectedRequestedPrice = requestedPriceTier === "wholesale" ? wholesaleSnapshot : publicSnapshot;
-    if (requestedUnitPrice !== expectedRequestedPrice || providedUnitPriceCents !== requestedUnitPrice) {
-      throw new RetailPosRuntimeError(400, `Line ${lineNumber} requested price does not match its price snapshot.`);
+    if (requestedUnitPrice !== expectedRequestedPrice) {
+      throw new RetailPosRuntimeError(400, "ORDER_LINE_UNIT_PRICE_MISMATCH", "The requested price does not match its price snapshot.");
+    }
+    const approvedPriceTier = line.approved_price_tier;
+    if (approvedPriceTier !== "public" && approvedPriceTier !== "wholesale") {
+      throw new RetailPosRuntimeError(400, "ORDER_LINE_PRICE_TIER_REQUIRED");
+    }
+    const approvedUnitPriceCents = line.approved_unit_price_cents;
+    if (!Number.isSafeInteger(approvedUnitPriceCents) || (approvedUnitPriceCents as number) < 0) {
+      throw new RetailPosRuntimeError(400, "ORDER_LINE_APPROVED_PRICE_MISMATCH");
+    }
+    const expectedApprovedPrice = approvedPriceTier === "wholesale" ? wholesaleSnapshot : publicSnapshot;
+    if (approvedUnitPriceCents !== expectedApprovedPrice) {
+      throw new RetailPosRuntimeError(400, "ORDER_LINE_APPROVED_PRICE_MISMATCH");
+    }
+    if (providedUnitPriceCents !== approvedUnitPriceCents) {
+      throw new RetailPosRuntimeError(400, "ORDER_LINE_UNIT_PRICE_MISMATCH");
+    }
+    const productCostCents = product.cost_cents;
+    if (!Number.isSafeInteger(productCostCents) || (productCostCents as number) <= 0) {
+      throw new RetailPosRuntimeError(422, "ORDER_LINE_COST_SNAPSHOT_REQUIRED");
     }
     const snapshotProductName = asTrimmedString(line.product_name) ?? product.name;
     const snapshotVariantName =
@@ -847,11 +935,12 @@ async function resolveLineSnapshots(input: {
       requested_unit_price_cents: requestedUnitPrice,
       requested_by_pos_user_id: line.requested_by_pos_user_id ?? null,
       requested_at: line.requested_at ?? null,
-      approved_price_tier: line.approved_price_tier ?? null,
-      approved_unit_price_cents: line.approved_unit_price_cents ?? null,
+      approved_price_tier: approvedPriceTier,
+      approved_unit_price_cents: approvedUnitPriceCents,
       approved_price_tier_source: line.approved_price_tier_source ?? null,
       approved_by_pos_user_id: line.approved_by_pos_user_id ?? null,
       approved_at: line.approved_at ?? null,
+      unit_cost_snapshot_cents: productCostCents as number,
     };
   });
 }
@@ -919,6 +1008,7 @@ async function insertOrderLines(tenantId: string, orderId: string, lines: Resolv
     approved_price_tier_source: line.approved_price_tier_source,
     approved_by_pos_user_id: line.approved_by_pos_user_id,
     approved_at: line.approved_at,
+    unit_cost_snapshot_cents: line.unit_cost_snapshot_cents,
   }));
 
   const { error } = await supabase.from("retail_pos_order_lines").insert(payload);
@@ -1059,6 +1149,19 @@ async function syncOrderLines(tenantId: string, orderId: string, lines: Resolved
           allow_decimal_quantity: line.allow_decimal_quantity,
           quantity: line.quantity,
           unit_price_cents: line.unit_price_cents,
+          public_unit_price_snapshot_cents: line.public_unit_price_snapshot_cents,
+          wholesale_unit_price_snapshot_cents: line.wholesale_unit_price_snapshot_cents,
+          requested_price_tier: line.requested_price_tier,
+          price_tier_request_status: line.price_tier_request_status,
+          requested_unit_price_cents: line.requested_unit_price_cents,
+          requested_by_pos_user_id: line.requested_by_pos_user_id,
+          requested_at: line.requested_at,
+          approved_price_tier: line.approved_price_tier,
+          approved_unit_price_cents: line.approved_unit_price_cents,
+          approved_price_tier_source: line.approved_price_tier_source,
+          approved_by_pos_user_id: line.approved_by_pos_user_id,
+          approved_at: line.approved_at,
+          unit_cost_snapshot_cents: line.unit_cost_snapshot_cents,
           discount_cents: line.discount_cents,
         })
         .eq("tenant_id", tenantId)
@@ -1087,6 +1190,19 @@ async function syncOrderLines(tenantId: string, orderId: string, lines: Resolved
       allow_decimal_quantity: line.allow_decimal_quantity,
       quantity: line.quantity,
       unit_price_cents: line.unit_price_cents,
+      public_unit_price_snapshot_cents: line.public_unit_price_snapshot_cents,
+      wholesale_unit_price_snapshot_cents: line.wholesale_unit_price_snapshot_cents,
+      requested_price_tier: line.requested_price_tier,
+      price_tier_request_status: line.price_tier_request_status,
+      requested_unit_price_cents: line.requested_unit_price_cents,
+      requested_by_pos_user_id: line.requested_by_pos_user_id,
+      requested_at: line.requested_at,
+      approved_price_tier: line.approved_price_tier,
+      approved_unit_price_cents: line.approved_unit_price_cents,
+      approved_price_tier_source: line.approved_price_tier_source,
+      approved_by_pos_user_id: line.approved_by_pos_user_id,
+      approved_at: line.approved_at,
+      unit_cost_snapshot_cents: line.unit_cost_snapshot_cents,
       line_subtotal_cents: 0,
       discount_cents: line.discount_cents,
       line_total_cents: 0,

@@ -180,22 +180,37 @@ async function loadRetailPosCashShiftById(input: {
 
 async function computeExpectedCashCents(tenantId: string, cashShiftId: string, openingFloatCents: number) {
   const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("retail_pos_payments")
-    .select("amount_cents, payment_method")
-    .eq("tenant_id", tenantId)
-    .eq("cash_shift_id", cashShiftId)
-    .eq("payment_method", "cash");
+  const [paymentsResult, movementsResult] = await Promise.all([
+    supabase
+      .from("retail_pos_payments")
+      .select("amount_cents, payment_method")
+      .eq("tenant_id", tenantId)
+      .eq("cash_shift_id", cashShiftId)
+      .eq("payment_method", "cash"),
+    supabase
+      .from("retail_pos_cash_movements")
+      .select("amount_cents, movement_type")
+      .eq("tenant_id", tenantId)
+      .eq("cash_shift_id", cashShiftId)
+      .eq("movement_type", "post_sale_cash_refund"),
+  ]);
 
-  if (error) {
-    throw new RetailPosRuntimeError(500, `Unable to compute expected retail_pos cash: ${error.message}`);
+  if (paymentsResult.error) {
+    throw new RetailPosRuntimeError(500, `Unable to compute expected retail_pos cash: ${paymentsResult.error.message}`);
+  }
+  if (movementsResult.error) {
+    throw new RetailPosRuntimeError(500, `Unable to load retail_pos cash movements: ${movementsResult.error.message}`);
   }
 
-  const cashPaymentsCents = ((data ?? []) as PaymentSummaryRow[]).reduce(
+  const cashPaymentsCents = ((paymentsResult.data ?? []) as PaymentSummaryRow[]).reduce(
     (sum: number, row: PaymentSummaryRow) => sum + row.amount_cents,
     0,
   );
-  return openingFloatCents + cashPaymentsCents;
+  const cashRefundsCents = ((movementsResult.data ?? []) as Array<{ amount_cents: number }>).reduce(
+    (sum: number, row) => sum + row.amount_cents,
+    0,
+  );
+  return openingFloatCents + cashPaymentsCents - cashRefundsCents;
 }
 
 async function buildRetailPosCashShiftCloseSummary(input: {
@@ -205,7 +220,7 @@ async function buildRetailPosCashShiftCloseSummary(input: {
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from("retail_pos_payments")
-    .select("amount_cents, payment_method")
+    .select("amount_cents, payment_method, received_amount_cents, change_cents")
     .eq("tenant_id", input.tenantId)
     .eq("cash_shift_id", input.cashShift.id);
 
@@ -220,10 +235,11 @@ async function buildRetailPosCashShiftCloseSummary(input: {
   const cardSalesCents = payments
     .filter((payment) => payment.payment_method === "card")
     .reduce((sum, payment) => sum + payment.amount_cents, 0);
-  const expectedCashCents =
-    typeof input.cashShift.expected_cash_cents === "number"
-      ? input.cashShift.expected_cash_cents
-      : input.cashShift.opening_float_cents + cashSalesCents;
+  const expectedCashCents = await computeExpectedCashCents(
+    input.tenantId,
+    input.cashShift.id,
+    input.cashShift.opening_float_cents,
+  );
 
   return {
     cash_shift_id: input.cashShift.id,

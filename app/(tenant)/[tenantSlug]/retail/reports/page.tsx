@@ -9,6 +9,7 @@ import { RetailPaymentMixChart } from "./_components/charts/RetailPaymentMixChar
 import { RetailSalesTrendChart } from "./_components/charts/RetailSalesTrendChart";
 import {
   RetailAuditPanel,
+  RetailFinancialSummaryPanel,
   RetailMetricGrid,
   RetailOverviewRecentOrdersTable,
   RetailReportsFiltersCard,
@@ -233,6 +234,28 @@ export default async function RetailReportsOverviewPage({
             ]}
           />
 
+          <RetailFinancialSummaryPanel summary={overview.financialSummary} title="Caja y pagos del periodo" />
+
+          <RetailSectionCard
+            title="Alcance de caja"
+            description="Las ventas cobradas pueden existir fuera de los turnos incluidos en el periodo o filtro seleccionado."
+          >
+            {overview.summary.paidOutsideShiftCount > 0 ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs text-muted">Ventas pagadas fuera de los turnos mostrados</p>
+                  <p className="text-lg font-semibold text-foreground">{formatNumber(overview.summary.paidOutsideShiftCount)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted">Importe fuera de turnos</p>
+                  <p className="text-lg font-semibold text-foreground">{formatCurrency(overview.summary.paidOutsideShiftCents)}</p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">Todas las ventas cobradas del periodo tienen un turno de caja asociado.</p>
+            )}
+          </RetailSectionCard>
+
           <RetailSectionCard
             title="Desglose del resultado comercial"
             description="Separa los ajustes ya incluidos en el resultado comercial de los movimientos financieros que todavía están pendientes."
@@ -269,7 +292,7 @@ export default async function RetailReportsOverviewPage({
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-muted">No se registraron anulaciones o devoluciones en este periodo.</p>
+              <p className="text-sm text-muted">No se registraron cancelaciones o devoluciones en este periodo.</p>
             )}
           </RetailSectionCard>
 

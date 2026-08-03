@@ -55,7 +55,7 @@ const TERMS: Record<RetailReportingTermKey, RetailReportingTerm> = {
     key: "commercial_result",
     label: "Resultado comercial del periodo",
     description:
-      "Venta cobrada menos anulaciones de venta pagada y devoluciones registradas durante el mismo periodo.",
+      "Venta cobrada menos cancelaciones de venta pagada y devoluciones registradas durante el mismo periodo.",
     format: "currency",
   },
   voided_order_before_payment: {
@@ -79,7 +79,7 @@ const TERMS: Record<RetailReportingTermKey, RetailReportingTerm> = {
   reimbursement: {
     key: "reimbursement",
     label: "Reembolso",
-    description: "Salida de dinero relacionada con una anulación de venta pagada o una devolución.",
+    description: "Salida de dinero relacionada con una cancelación de venta pagada o una devolución.",
     format: "currency",
   },
   cash_collections: {
@@ -144,7 +144,7 @@ const TERMS: Record<RetailReportingTermKey, RetailReportingTerm> = {
   },
   expected_cash_from_sales_and_reimbursements: {
     key: "expected_cash_from_sales_and_reimbursements",
-    label: "Efectivo esperado por ventas y reembolsos",
+    label: "Efectivo esperado al cierre",
     description:
       "Fondo inicial más cobros en efectivo menos reembolsos en efectivo completados, conforme a la fórmula actual.",
     format: "currency",
@@ -193,12 +193,12 @@ export const RETAIL_REPORTING_PERIOD_NOTES = {
   overview: {
     primaryDateLabel: "Criterio principal: fecha de cobro para ventas y fecha registrada para postventa.",
     note:
-      "Las ventas se incluyen según su fecha de cobro. Las anulaciones y devoluciones se incluyen según la fecha en que fueron registradas. Una operación de postventa puede corresponder a una venta de un periodo anterior.",
+      "Las ventas se incluyen según su fecha de cobro. Las cancelaciones y devoluciones se incluyen según la fecha en que fueron registradas. Una operación de postventa puede corresponder a una venta de un periodo anterior.",
   },
   sales: {
     primaryDateLabel: "Criterio principal: fecha de cobro para ventas y fecha registrada para postventa.",
     note:
-      "Las ventas se incluyen según su fecha de cobro. Las anulaciones y devoluciones se incluyen según la fecha en que fueron registradas. Una operación de postventa puede corresponder a una venta de un periodo anterior.",
+      "Las ventas se incluyen según su fecha de cobro. Las cancelaciones y devoluciones se incluyen según la fecha en que fueron registradas. Una operación de postventa puede corresponder a una venta de un periodo anterior.",
   },
   cash: {
     primaryDateLabel: "Criterio principal: apertura o cierre del turno dentro del periodo.",

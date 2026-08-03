@@ -4,8 +4,8 @@ import { RetailPosRuntimeError } from "@/lib/retail-pos/errors";
 
 type RouteParams = { tenantSlug: string };
 
-function jsonError(status: number, message: string) {
-  return NextResponse.json({ ok: false, error: message }, { status });
+function jsonError(status: number, message: string, code?: string | null) {
+  return NextResponse.json({ ok: false, error: message, code: code ?? null }, { status });
 }
 
 function getOptionalSearchParam(request: NextRequest, key: string) {
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest, context: { params: Promise<Route
     return NextResponse.json(payload);
   } catch (error) {
     if (error instanceof RetailPosRuntimeError) {
-      return jsonError(error.status, error.message);
+      return jsonError(error.status, error.message, error.code);
     }
 
     const message =

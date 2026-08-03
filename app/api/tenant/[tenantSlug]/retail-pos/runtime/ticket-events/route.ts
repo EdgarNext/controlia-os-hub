@@ -50,8 +50,8 @@ export async function POST(request: NextRequest, context: { params: Promise<Rout
         error_message: body.error_message as string | null | undefined,
         metadata: (body.metadata as Record<string, unknown> | null | undefined) ?? null,
       },
-      deviceId: asTrimmedString(body.deviceId),
-      deviceSecret: asTrimmedString(body.deviceSecret),
+      deviceId: asTrimmedString(body.deviceId) ?? asTrimmedString(request.headers.get('x-retail-pos-device-id')),
+      deviceSecret: asTrimmedString(body.deviceSecret) ?? asTrimmedString(request.headers.get('x-retail-pos-device-secret')),
     });
 
     return NextResponse.json(payload);

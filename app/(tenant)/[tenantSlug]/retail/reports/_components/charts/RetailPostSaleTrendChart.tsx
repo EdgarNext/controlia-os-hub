@@ -87,7 +87,7 @@ export function RetailPostSaleTrendChart({ granularity, points }: RetailPostSale
   return (
     <RetailChartCard
       title="Evolución de operaciones de postventa"
-      description="Compara por periodo las anulaciones de venta pagada, devoluciones totales y devoluciones parciales usando la fecha registrada del documento."
+      description="Compara por periodo las ventas canceladas, devoluciones totales y devoluciones parciales usando la fecha registrada del documento."
       footer={
         points.length > 0 ? (
             <details className="text-xs text-muted">
@@ -97,7 +97,7 @@ export function RetailPostSaleTrendChart({ granularity, points }: RetailPostSale
                   <thead>
                     <tr className="border-b border-border text-muted">
                       <th className="px-2 py-1">Periodo</th>
-                      <th className="px-2 py-1">Anulaciones</th>
+                      <th className="px-2 py-1">Ventas canceladas</th>
                       <th className="px-2 py-1">Devoluciones totales</th>
                       <th className="px-2 py-1">Devoluciones parciales</th>
                     </tr>
@@ -165,7 +165,7 @@ export function RetailPostSaleTrendChart({ granularity, points }: RetailPostSale
                         label={String(label)}
                         rows={[
                           {
-                            label: "Anulaciones de venta pagada",
+                            label: "Venta cancelada",
                             value:
                               mode === "operations"
                                 ? formatRetailReportingCount(point.saleCancellationsCount)
@@ -194,7 +194,7 @@ export function RetailPostSaleTrendChart({ granularity, points }: RetailPostSale
                 <Bar
                   stackId="post-sale"
                   dataKey={mode === "operations" ? "saleCancellationsCount" : "saleCancellationsCents"}
-                  name="Anulaciones de venta pagada"
+                  name="Venta cancelada"
                   fill="var(--danger)"
                   radius={[6, 6, 0, 0]}
                   isAnimationActive={false}

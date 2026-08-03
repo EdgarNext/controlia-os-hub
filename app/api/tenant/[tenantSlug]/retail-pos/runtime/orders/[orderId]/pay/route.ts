@@ -2,19 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { payRetailPosOrder } from "@/lib/retail-pos/payments";
 import { RetailPosRuntimeError } from "@/lib/retail-pos/errors";
 import { createRuntimePerfTrace } from "@/lib/retail-pos/runtime-perf";
+import type { PayRetailPosOrderRequest } from "@/shared/types/retail-pos";
 
 type RouteParams = { tenantSlug: string; orderId: string };
 
-type PayOrderBody = {
-  tenant_id: string;
-  order_id: string;
-  cash_shift_id?: string | null;
-  device_id?: string | null;
-  pos_user_id: string;
-  payment_method: "cash" | "card";
-  amount_cents: number;
-  received_amount_cents: number | null;
-  card_reference: string | null;
+type PayOrderBody = PayRetailPosOrderRequest & {
   deviceId?: unknown;
   deviceSecret?: unknown;
 };

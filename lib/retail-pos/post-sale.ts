@@ -4,6 +4,8 @@ import type {
   RetailPosOrder,
   RetailPosOrderLine,
   RetailPosPayment,
+  RetailPosPaymentTransaction,
+  RetailPosOrderPaymentApplication,
   RetailPosPostSaleCashMovementType,
   RetailPosPostSaleCancellationCommitRequest,
   RetailPosPostSaleCancellationCommitResponse,
@@ -23,12 +25,15 @@ import type {
   RetailPosPostSaleReturnTotals,
   RetailPosPostSaleReasonCode,
   RetailPosPostSaleRefund,
+  RetailPosPostSaleRefundComponent,
   RetailPosPostSaleCardRefundConfirmRequest,
   RetailPosPostSaleCardRefundConfirmResponse,
   RetailPosCashMovement,
   RetailPosDeviceRole,
   RetailPosQuantityString,
 } from "@/shared/types/retail-pos";
+import { buildRetailPosPaymentEvidence, PAYMENT_APPLICATION_SELECT } from "./payment-evidence";
+import { buildRetailPosPostSaleRefundAllocation } from "@/shared/retail-pos/post-sale-refund-allocation";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   assertRetailPosCashierAccess,
@@ -56,6 +61,7 @@ type OrderLineRow = RetailPosOrderLine & {
 type PostSaleDocumentRow = RetailPosPostSaleDocument;
 type PostSaleLineRow = RetailPosPostSaleLine;
 type PostSaleRefundRow = RetailPosPostSaleRefund;
+type PostSaleRefundComponentRow = RetailPosPostSaleRefundComponent;
 type CashMovementRow = RetailPosCashMovement;
 
 type ReturnCommitRpcPayload = {
@@ -122,6 +128,8 @@ const POST_SALE_LINE_SELECT =
   "id, tenant_id, post_sale_document_id, original_order_line_id, line_number, quantity_sold, quantity_previously_returned, quantity_returned_now, line_subtotal_cents_historical, direct_discount_cents_historical, order_discount_allocated_cents_historical, line_net_cents_historical, returned_gross_amount_cents, returned_direct_discount_cents, returned_order_discount_cents, returned_total_discount_cents, returned_net_amount_cents, created_at";
 const POST_SALE_REFUND_SELECT =
   "id, tenant_id, post_sale_document_id, refund_method, status, amount_cents, currency_code, cash_shift_id, external_reference, processed_by_pos_user_id, processed_by_device_id, processed_at, origin_command_id, created_at, updated_at";
+const POST_SALE_REFUND_COMPONENT_SELECT =
+  "id, tenant_id, post_sale_document_id, original_payment_transaction_id, original_payment_id, original_payment_sequence, refund_method, amount_cents, status, external_reference, confirmed_by_pos_user_id, confirmed_at, created_at";
 const CASH_MOVEMENT_SELECT =
   "id, tenant_id, cash_shift_id, post_sale_document_id, post_sale_refund_id, movement_type, amount_cents, note, created_by_pos_user_id, created_by_device_id, occurred_at, origin_command_id, created_at";
 
@@ -137,6 +145,11 @@ const SALE_CANCELLATION_RPC_SAFE_MESSAGES = new Set([
   "POST_SALE_CONFLICT",
   "SALE_CANCELLATION_CONFLICT",
   "POST_SALE_CANCELLATION_INVALID",
+  "POST_SALE_NOT_ALLOWED",
+  "POST_SALE_DOCUMENT_ALREADY_EXISTS",
+  "POST_SALE_PAYMENT_EVIDENCE_INCONSISTENT",
+  "POST_SALE_REFUND_COMPONENT_INVALID",
+  "POST_SALE_PAYMENT_METHOD_UNSUPPORTED",
   "SALE_CANCELLATION_FAILED",
   "CASH_SHIFT_NOT_OPEN",
   "COMMAND_PAYLOAD_MISMATCH",
@@ -152,6 +165,9 @@ const CARD_REFUND_RPC_SAFE_MESSAGES = new Set([
   "POST_SALE_REFUND_ALREADY_COMPLETED",
   "POST_SALE_REFUND_REFERENCE_REQUIRED",
   "POST_SALE_REFUND_INVALID",
+  "POST_SALE_CARD_REFUND_NOT_REQUIRED",
+  "POST_SALE_CARD_REFUND_ALREADY_CONFIRMED",
+  "POST_SALE_EXTERNAL_REFERENCE_REQUIRED",
   "COMMAND_PAYLOAD_MISMATCH",
   "COMMAND_IN_PROGRESS",
 ]);
@@ -452,24 +468,28 @@ async function loadOrder(input: {
   return data;
 }
 
-async function loadPaymentByOrder(input: {
+async function loadPaymentByTransaction(input: {
   tenantId: string;
   orderId: string;
+  paymentTransactionId: string | null;
   trace?: RuntimePerfTrace;
 }) {
   const supabase = getSupabaseAdminClient({ trace: input.trace });
   const { data, error } = await runSupabaseReadWithRetry<PaymentRow>({
     trace: input.trace,
     step: "post_sale_payment",
-    query: (signal) =>
-      supabase
+    query: (signal) => {
+      let query = supabase
         .from("retail_pos_payments")
         .select(PAYMENT_SELECT)
         .abortSignal(signal)
         .eq("tenant_id", input.tenantId)
-        .eq("order_id", input.orderId)
-        .limit(1)
-        .maybeSingle<PaymentRow>(),
+        .eq("order_id", input.orderId);
+      if (input.paymentTransactionId) {
+        query = query.eq("payment_transaction_id", input.paymentTransactionId);
+      }
+      return query.limit(1).maybeSingle<PaymentRow>();
+    },
   });
 
   if (error) {
@@ -481,6 +501,91 @@ async function loadPaymentByOrder(input: {
   }
 
   return data;
+}
+
+async function loadPaymentByOrder(input: {
+  tenantId: string;
+  orderId: string;
+  trace?: RuntimePerfTrace;
+}) {
+  return loadPaymentByTransaction({ ...input, paymentTransactionId: null });
+}
+
+async function loadPaymentEvidenceByOrder(input: {
+  tenantId: string;
+  order: OrderRow;
+  lines: OrderLineRow[];
+  trace?: RuntimePerfTrace;
+}) {
+  const supabase = getSupabaseAdminClient({ trace: input.trace });
+  const { data: payments, error: paymentsError } = await runSupabaseReadWithRetry<
+    Array<PaymentRow & { payment_transaction_id: string | null; payment_sequence: number | null }>
+  >({
+    trace: input.trace,
+    step: "post_sale_payment_evidence_payments",
+    query: (signal) =>
+      supabase
+        .from("retail_pos_payments")
+        .select("id, tenant_id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, card_reference, paid_at, created_at, created_by, payment_transaction_id, payment_sequence")
+        .abortSignal(signal)
+        .eq("tenant_id", input.tenantId)
+        .eq("order_id", input.order.id)
+        .order("payment_sequence", { ascending: true })
+        .returns<Array<PaymentRow & { payment_transaction_id: string | null; payment_sequence: number | null }>>(),
+  });
+
+  if (paymentsError) {
+    throw new RetailPosRuntimeError(500, `Unable to load retail_pos payment evidence: ${paymentsError.message}`);
+  }
+  const paymentRows = payments ?? [];
+  const transactionIds = Array.from(
+    new Set(paymentRows.map((payment) => payment.payment_transaction_id).filter((value): value is string => Boolean(value))),
+  );
+  if (transactionIds.length !== 1) {
+    throw new RetailPosRuntimeError(500, "PAYMENT_EVIDENCE_INCONSISTENT", "PAYMENT_EVIDENCE_INCONSISTENT");
+  }
+
+  const [transactionResult, applicationResult] = await Promise.all([
+    runSupabaseReadWithRetry<RetailPosPaymentTransaction>({
+      trace: input.trace,
+      step: "post_sale_payment_evidence_transaction",
+      query: (signal) =>
+        supabase
+          .from("retail_pos_payment_transactions")
+          .select("id, tenant_id, command_id, fingerprint, total_applied_cents, expected_order_revision, cash_shift_id, device_id, pos_user_id, confirmed_at, created_at, created_by")
+          .abortSignal(signal)
+          .eq("tenant_id", input.tenantId)
+          .eq("id", transactionIds[0])
+          .limit(1)
+          .maybeSingle<RetailPosPaymentTransaction>(),
+    }),
+    runSupabaseReadWithRetry<RetailPosOrderPaymentApplication>({
+      trace: input.trace,
+      step: "post_sale_payment_evidence_application",
+      query: (signal) =>
+        supabase
+          .from("retail_pos_order_payment_applications")
+          .select(PAYMENT_APPLICATION_SELECT)
+          .abortSignal(signal)
+          .eq("tenant_id", input.tenantId)
+          .eq("order_id", input.order.id)
+          .eq("payment_transaction_id", transactionIds[0])
+          .eq("application_sequence", 1)
+          .limit(1)
+          .maybeSingle<RetailPosOrderPaymentApplication>(),
+    }),
+  ]);
+
+  if (transactionResult.error || applicationResult.error) {
+    throw new RetailPosRuntimeError(500, "PAYMENT_EVIDENCE_INCONSISTENT", "PAYMENT_EVIDENCE_INCONSISTENT");
+  }
+  return buildRetailPosPaymentEvidence({
+    order: input.order,
+    lines: input.lines,
+    paymentTransaction: transactionResult.data ?? null,
+    application: applicationResult.data ?? null,
+    payments: paymentRows,
+  });
 }
 
 async function loadOrderLines(input: {
@@ -736,6 +841,32 @@ async function loadPostSaleRefundByDocument(input: {
   }
 
   return data ?? null;
+}
+
+async function loadPostSaleRefundComponents(input: {
+  tenantId: string;
+  documentId: string;
+  trace?: RuntimePerfTrace;
+}) {
+  const supabase = getSupabaseAdminClient({ trace: input.trace });
+  const { data, error } = await runSupabaseReadWithRetry<PostSaleRefundComponentRow[]>({
+    trace: input.trace,
+    step: "post_sale_refund_components",
+    query: (signal) =>
+      supabase
+        .from("retail_pos_post_sale_refund_components")
+        .select(POST_SALE_REFUND_COMPONENT_SELECT)
+        .abortSignal(signal)
+        .eq("tenant_id", input.tenantId)
+        .eq("post_sale_document_id", input.documentId)
+        .order("original_payment_sequence", { ascending: true })
+        .returns<PostSaleRefundComponentRow[]>(),
+  });
+  if (error) {
+    if (error.code === "42P01" || error.message.includes("does not exist")) return [];
+    throw new RetailPosRuntimeError(500, `Unable to load retail_pos refund components: ${error.message}`);
+  }
+  return data ?? [];
 }
 
 async function loadPostSaleRefundById(input: {
@@ -1243,7 +1374,7 @@ async function loadPostSaleDetailById(input: {
   trace?: RuntimePerfTrace;
 }): Promise<RetailPosPostSaleDetailResponse> {
   const document = await loadPostSaleDocumentById(input);
-  const [lines, refund, originalOrder, originalPayment, originalOrderLines, completedReturnLines] =
+  const [lines, refund, originalOrder, originalPayment, originalOrderLines, completedReturnLines, refundComponents] =
     await Promise.all([
     loadPostSaleLines({
       tenantId: input.tenantId,
@@ -1275,7 +1406,20 @@ async function loadPostSaleDetailById(input: {
       orderId: document.original_order_id,
       trace: input.trace,
     }),
+    loadPostSaleRefundComponents({
+      tenantId: input.tenantId,
+      documentId: input.documentId,
+      trace: input.trace,
+    }),
   ]);
+
+  const originalPaymentEvidence = await loadPaymentEvidenceByOrder({
+    tenantId: input.tenantId,
+    order: originalOrder,
+    lines: originalOrderLines,
+    trace: input.trace,
+  });
+  const refundAllocation = buildRetailPosPostSaleRefundAllocation(originalPaymentEvidence);
 
   const { accumulatedLines, returnState } = buildReturnAccumulatedState({
     orderLines: originalOrderLines,
@@ -1291,6 +1435,9 @@ async function loadPostSaleDetailById(input: {
     original_order_lines: originalOrderLines,
     accumulated_lines: accumulatedLines,
     return_state: returnState,
+    original_payment_evidence: originalPaymentEvidence,
+    refund_allocation: refundAllocation,
+    refund_components: refundComponents,
   };
 }
 
@@ -1306,12 +1453,21 @@ export async function previewRetailPosSaleCancellation(input: {
   assertPostSaleCapability(capabilities, "post_sale.cancel_sale");
 
   const orderId = normalizeRequiredString(input.request.order_id, "order_id");
+  const paymentTransactionId = normalizeRequiredString(
+    input.request.payment_transaction_id,
+    "payment_transaction_id",
+  );
   const reasonCode = normalizeReasonCode(input.request.reason_code);
   const comment = normalizeOptionalString(input.request.comment);
 
   const [order, payment, lines, existingSaleCancellation] = await Promise.all([
     loadOrder({ tenantId: actor.tenantId, orderId, trace: input.trace }),
-    loadPaymentByOrder({ tenantId: actor.tenantId, orderId, trace: input.trace }),
+    loadPaymentByTransaction({
+      tenantId: actor.tenantId,
+      orderId,
+      paymentTransactionId,
+      trace: input.trace,
+    }),
     loadOrderLines({ tenantId: actor.tenantId, orderId, trace: input.trace }),
     loadSaleCancellationDocumentByOrder({
       tenantId: actor.tenantId,
@@ -1331,6 +1487,14 @@ export async function previewRetailPosSaleCancellation(input: {
       "SALE_ALREADY_CANCELLED",
     );
   }
+
+  const originalPaymentEvidence = await loadPaymentEvidenceByOrder({
+    tenantId: actor.tenantId,
+    order,
+    lines,
+    trace: input.trace,
+  });
+  const refundAllocation = buildRetailPosPostSaleRefundAllocation(originalPaymentEvidence);
 
   return {
     original_order: order,
@@ -1368,6 +1532,14 @@ export async function previewRetailPosSaleCancellation(input: {
             },
           ]
         : [],
+    original_payment_evidence: originalPaymentEvidence,
+    refund_allocation: refundAllocation,
+    refund_components: refundAllocation.original_tenders.map((tender) => ({
+      payment_method: tender.payment_method === "card" ? "card" : "cash",
+      amount_cents: tender.applied_amount_cents,
+      expected_status_after_commit:
+        tender.payment_method === "card" ? "pending_external_confirmation" : "completed",
+    })),
   };
 }
 
@@ -1445,6 +1617,10 @@ export async function commitRetailPosSaleCancellation(input: {
   const commandId = normalizeRequiredString(input.commandId, "command_id");
   const operatorId = normalizeRequiredString(input.operatorId, "operator_id");
   const orderId = normalizeRequiredString(input.request.order_id, "order_id");
+  const paymentTransactionId = normalizeRequiredString(
+    input.request.payment_transaction_id,
+    "payment_transaction_id",
+  );
   const cashShiftId = normalizeRequiredString(input.request.cash_shift_id, "cash_shift_id");
   const expectedOrderRevision = normalizeInteger(
     input.request.expected_order_revision,
@@ -1453,16 +1629,54 @@ export async function commitRetailPosSaleCancellation(input: {
   const reasonCode = normalizeReasonCode(input.request.reason_code);
   const comment = normalizeOptionalString(input.request.comment);
   const refundMethod = normalizeRefundMethod(input.request.refund_method);
+  if (typeof input.request.acknowledge_cash_refund !== "boolean") {
+    throw new RetailPosRuntimeError(400, "acknowledge_cash_refund is required.");
+  }
+
+  await loadPaymentByTransaction({
+    tenantId: actor.tenantId,
+    orderId,
+    paymentTransactionId,
+    trace: input.trace,
+  });
+
+  const [orderForCommit, linesForCommit] = await Promise.all([
+    loadOrder({ tenantId: actor.tenantId, orderId, trace: input.trace }),
+    loadOrderLines({ tenantId: actor.tenantId, orderId, trace: input.trace }),
+  ]);
+  const commitEvidence = await loadPaymentEvidenceByOrder({
+    tenantId: actor.tenantId,
+    order: orderForCommit,
+    lines: linesForCommit,
+    trace: input.trace,
+  });
+  const commitAllocation = buildRetailPosPostSaleRefundAllocation(commitEvidence);
+  if (commitAllocation.original_payment_transaction_id !== paymentTransactionId) {
+    throw new RetailPosRuntimeError(
+      409,
+      "POST_SALE_PAYMENT_EVIDENCE_INCONSISTENT",
+      "POST_SALE_PAYMENT_EVIDENCE_INCONSISTENT",
+    );
+  }
+  if (commitAllocation.cash_refund_cents > 0 && input.request.acknowledge_cash_refund !== true) {
+    throw new RetailPosRuntimeError(
+      400,
+      "CASH_REFUND_ACKNOWLEDGEMENT_REQUIRED",
+      "CASH_REFUND_ACKNOWLEDGEMENT_REQUIRED",
+    );
+  }
 
   const rpcPayload = {
     command_id: commandId,
     operator_id: operatorId,
     order_id: orderId,
+    payment_transaction_id: paymentTransactionId,
     cash_shift_id: cashShiftId,
     expected_order_revision: expectedOrderRevision,
     reason_code: reasonCode,
     comment,
     refund_method: refundMethod,
+    acknowledge_cash_refund: input.request.acknowledge_cash_refund,
   };
 
   const supabase = getSupabaseAdminClient({ trace: input.trace });
@@ -1513,6 +1727,9 @@ export async function commitRetailPosSaleCancellation(input: {
     gross_amount_cents: result.gross_amount_cents,
     discount_amount_cents: result.discount_amount_cents,
     net_amount_cents: result.net_amount_cents,
+    original_payment_evidence: detail.original_payment_evidence!,
+    refund_allocation: detail.refund_allocation!,
+    refund_components: detail.refund_components ?? [],
   };
 }
 
@@ -1708,6 +1925,9 @@ export async function confirmRetailPosCardRefund(input: {
         trace: input.trace,
       })),
     replayed: rpcResponse.idempotent_replay || result.replayed,
+    original_payment_evidence: detail.original_payment_evidence!,
+    refund_allocation: detail.refund_allocation!,
+    refund_components: detail.refund_components ?? [],
   };
 }
 

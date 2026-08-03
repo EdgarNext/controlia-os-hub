@@ -142,11 +142,11 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
                 tone: hasPostSale ? "warning" : "default",
               },
               {
-                label: "Anulaciones y devoluciones",
+                label: "Cancelaciones y devoluciones",
                 value: formatCurrency(revertedAmountCents),
-                detail: `${formatNumber(report.summary.cancelledSalesCount)} anulaciones · ${formatNumber(report.summary.fullReturnsCount)} devoluciones totales · ${formatNumber(report.summary.partialReturnsCount)} devoluciones parciales`,
+                detail: `${formatNumber(report.summary.cancelledSalesCount)} cancelaciones · ${formatNumber(report.summary.fullReturnsCount)} devoluciones totales · ${formatNumber(report.summary.partialReturnsCount)} devoluciones parciales`,
                 explanation:
-                  "Monto comercial revertido mediante anulaciones de venta pagada y devoluciones registradas durante el periodo.",
+                  "Monto comercial revertido mediante cancelaciones de venta pagada y devoluciones registradas durante el periodo.",
                 href: postSaleBaseHref,
                 linkLabel: "Ir a postventa",
                 tone: revertedAmountCents > 0 ? "warning" : "default",
@@ -246,7 +246,7 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-muted">No se registraron anulaciones o devoluciones en este periodo.</p>
+                <p className="text-sm text-muted">No se registraron cancelaciones o devoluciones en este periodo.</p>
               )}
             </RetailSectionCard>
           </div>
@@ -256,7 +256,7 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
             description="Relación compacta entre la venta cobrada, la postventa registrada y el resultado comercial del periodo."
           >
             <p className="text-sm text-foreground">
-              {getRetailReportingLabel("collected_sales")} - anulaciones - devoluciones ={" "}
+              {getRetailReportingLabel("collected_sales")} - cancelaciones - devoluciones ={" "}
               {getRetailReportingLabel("commercial_result")}
             </p>
           </RetailSectionCard>

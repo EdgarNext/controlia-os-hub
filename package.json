@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --experimental-strip-types --experimental-loader ./scripts/alias-loader.mjs --test",
+    "typecheck": "tsc --noEmit --pretty false",
     "guardrails:check": "node ./scripts/check-guardrails.mjs"
   },
   "dependencies": {

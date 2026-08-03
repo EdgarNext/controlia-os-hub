@@ -36,7 +36,7 @@ export function RetailSalesAdjustmentsChart({ granularity, points }: RetailSales
   return (
     <RetailChartCard
       title="Descuentos y postventa por periodo"
-      description="Los descuentos reducen el importe al momento del cobro. Las anulaciones y devoluciones se registran después de la venta. Se muestran juntas para comparar su impacto por periodo, pero son operaciones diferentes."
+      description="Los descuentos reducen el importe al momento del cobro. Las cancelaciones y devoluciones se registran después de la venta. Se muestran juntas para comparar su impacto por periodo, pero son operaciones diferentes."
       footer={
         points.length > 0 ? (
           <details className="text-xs text-muted">
@@ -47,7 +47,7 @@ export function RetailSalesAdjustmentsChart({ granularity, points }: RetailSales
                   <tr className="border-b border-border text-muted">
                     <th className="px-2 py-1">Periodo</th>
                     <th className="px-2 py-1">Descuento concedido</th>
-                    <th className="px-2 py-1">Anulaciones</th>
+                    <th className="px-2 py-1">Ventas canceladas</th>
                     <th className="px-2 py-1">Devoluciones</th>
                   </tr>
                 </thead>
@@ -88,7 +88,7 @@ export function RetailSalesAdjustmentsChart({ granularity, points }: RetailSales
       {granularity === "none" ? (
         <RetailEmptyChartState message="Selecciona un rango de al menos dos días para consultar la evolución de ventas." />
       ) : !hasAnyAdjustments ? (
-        <RetailEmptyChartState message="No se registraron descuentos, anulaciones o devoluciones en este periodo." />
+        <RetailEmptyChartState message="No se registraron descuentos, cancelaciones o devoluciones en este periodo." />
       ) : (
         <RetailChartViewport heightClassName="h-[320px]">
           <ResponsiveContainer width="100%" height="100%">
@@ -118,7 +118,7 @@ export function RetailSalesAdjustmentsChart({ granularity, points }: RetailSales
                           value: formatRetailReportingCurrency(point.discountsCents),
                         },
                         {
-                          label: "Anulaciones",
+                          label: "Ventas canceladas",
                           value: formatRetailReportingCurrency(point.saleCancellationsCents),
                         },
                         {
@@ -140,7 +140,7 @@ export function RetailSalesAdjustmentsChart({ granularity, points }: RetailSales
               />
               <Bar
                 dataKey="saleCancellationsCents"
-                name="Anulaciones de venta pagada"
+                name="Cancelaciones de venta pagada"
                 fill="var(--danger)"
                 radius={[6, 6, 0, 0]}
                 isAnimationActive={false}

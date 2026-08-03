@@ -21,6 +21,11 @@ import {
   redactRetailPosDiscountCalculationSummary as redactSharedRetailPosDiscountCalculationSummary,
   sortRetailPosDiscountIntentDrafts,
 } from "./discount-calculation";
+import {
+  normalizeRetailPosPaymentTenders,
+  type RetailPosPaymentTenderDraft,
+} from "@/shared/retail-pos/mixed-payments";
+import { buildRetailPosPaymentEvidence } from "./payment-evidence";
 
 type RetailPosDiscountScope = "line" | "order";
 type RetailPosDiscountCaptureType = "percentage" | "fixed_amount";
@@ -110,17 +115,23 @@ type RetailPosBelowCostAcknowledgement = {
 };
 type RetailPosDiscountCheckoutCommandPayload = {
   order_id: string;
-  payment_method: RetailPosPaymentMethod;
-  payment_amount_cents: number;
-  cash_received_cents: number | null;
+  payment_method?: RetailPosPaymentMethod;
+  payment_amount_cents?: number;
+  cash_received_cents?: number | null;
   expected_revision: number;
   discount_intents: RetailPosDiscountIntentDraft[];
   below_cost_acknowledgement: RetailPosBelowCostAcknowledgement | null;
   external_payment_reference: string | null;
+  tenders?: RetailPosPaymentTenderDraft[];
 };
 type RetailPosDiscountCheckoutResponse = {
   order: RetailPosOrder;
-  payment: RetailPosPayment;
+  payment: RetailPosPayment | null;
+  payments?: RetailPosPayment[];
+  payment_transaction?: Record<string, unknown> | null;
+  application?: Record<string, unknown> | null;
+  payment_summary?: Record<string, unknown>;
+  payment_evidence?: Record<string, unknown> | null;
   previous_revision: number;
   final_revision: number;
   subtotal_cents: number;
@@ -200,7 +211,7 @@ const ORDER_SELECT =
   "id, tenant_id, folio, origin_client_order_id, origin_local_folio, status, origin_device_id, created_by_pos_user_id, cashier_pos_user_id, paid_by_device_id, subtotal_cents, discount_cents, total_cents, revision, direct_discount_cents, order_discount_cents, paid_at, cancelled_at, cancelled_by_pos_user_id, cancel_reason, created_at, updated_at, created_by, updated_by";
 
 const ORDER_LINE_SELECT =
-  "id, tenant_id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, barcode, sales_unit_code, sales_unit_label, allow_decimal_quantity, quantity, unit_price_cents, line_subtotal_cents, discount_cents, line_total_cents, direct_discount_cents, order_discount_allocation_cents, total_discount_cents, unit_cost_snapshot_cents, cost_evaluation, below_cost_after_discount, created_at, updated_at, created_by, updated_by";
+  "id, tenant_id, order_id, line_number, product_id, product_variant_id, product_name, variant_name, sku, barcode, sales_unit_code, sales_unit_label, allow_decimal_quantity, quantity, unit_price_cents, public_unit_price_snapshot_cents, wholesale_unit_price_snapshot_cents, requested_price_tier, requested_unit_price_cents, approved_price_tier, approved_unit_price_cents, line_subtotal_cents, discount_cents, line_total_cents, direct_discount_cents, order_discount_allocation_cents, total_discount_cents, unit_cost_snapshot_cents, cost_evaluation, below_cost_after_discount, created_at, updated_at, created_by, updated_by";
 
 const SAFE_CONFLICT_MESSAGES = new Set([
   "DISCOUNT_REQUIRED",
@@ -528,7 +539,10 @@ export async function checkoutRetailPosOrderWithDiscountsCommand(input: {
     trace: input.trace,
   });
 
-  if (cashShift.device_id !== actor.deviceRecordId || cashShift.status !== "open") {
+  // Let the normalized RPC resolve an already-completed command before
+  // enforcing the shift state. New commands remain rejected by the RPC when
+  // the shift is closed; this keeps exact replay available after recovery.
+  if (cashShift.device_id !== actor.deviceRecordId) {
     throw new RetailPosRuntimeError(409, "CASH_SHIFT_NOT_OPEN");
   }
 
@@ -539,11 +553,11 @@ export async function checkoutRetailPosOrderWithDiscountsCommand(input: {
     trace: input.trace,
   });
 
-  if (order.status === "paid") {
-    throw new RetailPosRuntimeError(409, "ORDER_ALREADY_PAID");
-  }
-
-  if (order.status !== "pending_payment") {
+  // Keep paid orders eligible for the normalized RPC path. The RPC resolves
+  // an already-completed command before checking the order state, which is
+  // required for an exact idempotent replay. A new command on a paid order
+  // is still rejected by the RPC with ORDER_ALREADY_PAID.
+  if (order.status !== "pending_payment" && order.status !== "paid") {
     throw new RetailPosRuntimeError(409, "ORDER_NOT_PENDING");
   }
 
@@ -551,7 +565,7 @@ export async function checkoutRetailPosOrderWithDiscountsCommand(input: {
     payload.expected_revision,
     "payload.expected_revision",
   );
-  if ((order.revision ?? 0) !== expectedRevision) {
+  if (order.status !== "paid" && (order.revision ?? 0) !== expectedRevision) {
     throw new RetailPosRuntimeError(409, "ORDER_REVISION_CONFLICT", "ORDER_REVISION_CONFLICT", {
       current_revision: order.revision ?? 0,
       expected_revision: expectedRevision,
@@ -609,28 +623,29 @@ export async function checkoutRetailPosOrderWithDiscountsCommand(input: {
     intents: payload.discount_intents,
   });
 
-  const paymentAmountCents = ensureNonNegativeInteger(
-    payload.payment_amount_cents,
-    "payload.payment_amount_cents",
-  );
+  const hasTenders = payload.tenders !== undefined;
+  const hasLegacy = payload.payment_method !== undefined;
+  if (hasTenders === hasLegacy) {
+    throw new RetailPosRuntimeError(400, "PAYMENT_INPUT_AMBIGUOUS");
+  }
+  const tenders = hasTenders
+    ? payload.tenders as RetailPosPaymentTenderDraft[]
+    : [{
+        sequence: 1,
+        method: payload.payment_method as RetailPosPaymentMethod,
+        amount_cents: ensureNonNegativeInteger(payload.payment_amount_cents, "payload.payment_amount_cents"),
+        received_amount_cents: payload.cash_received_cents ?? null,
+        reference: payload.external_payment_reference,
+      }];
+  const normalizedTenders = normalizeRetailPosPaymentTenders(tenders);
+  if (!normalizedTenders.ok) {
+    throw new RetailPosRuntimeError(400, normalizedTenders.errors[0]?.code ?? "PAYMENT_INVALID");
+  }
+  const paymentAmountCents = normalizedTenders.tenders.reduce((sum, tender) => sum + tender.amount_cents, 0);
   if (paymentAmountCents !== summary.total_cents) {
     throw new RetailPosRuntimeError(409, "PAYMENT_AMOUNT_MISMATCH");
   }
-
-  let cashReceivedCents: number | null = payload.cash_received_cents;
-  if (payload.payment_method === "cash") {
-    cashReceivedCents = ensureNonNegativeInteger(
-      payload.cash_received_cents,
-      "payload.cash_received_cents",
-    );
-    if (cashReceivedCents < paymentAmountCents) {
-      throw new RetailPosRuntimeError(409, "INSUFFICIENT_CASH_RECEIVED");
-    }
-  } else if (payload.payment_method === "card") {
-    cashReceivedCents = null;
-  } else {
-    throw new RetailPosRuntimeError(400, "payment_method must be cash or card.");
-  }
+  const firstTender = normalizedTenders.tenders[0];
 
   const belowCostLineIds = summary.lines
     .filter((line) => line.below_cost_after_discount)
@@ -688,10 +703,11 @@ export async function checkoutRetailPosOrderWithDiscountsCommand(input: {
     cash_shift_id: cashShiftId,
     operator_id: operatorId,
     expected_revision: expectedRevision,
-    payment_method: payload.payment_method,
+    payment_method: firstTender.method,
     payment_amount_cents: paymentAmountCents,
-    cash_received_cents: cashReceivedCents,
-    external_payment_reference: payload.external_payment_reference ?? null,
+    cash_received_cents: firstTender.received_amount_cents,
+    external_payment_reference: firstTender.reference,
+    tenders: normalizedTenders.tenders,
     discount_intents: sortRetailPosDiscountIntentDrafts(payload.discount_intents),
     summary,
     response_summary: sanitizedSummary,
@@ -702,7 +718,7 @@ export async function checkoutRetailPosOrderWithDiscountsCommand(input: {
 
   const supabase = getSupabaseAdminClient({ trace: input.trace });
   const { data, error } = await supabase.rpc(
-    "retail_pos_checkout_order_with_discounts_v1",
+    "retail_pos_checkout_order_with_discounts_v2",
     {
       p_tenant_id: actor.tenantId,
       p_device_id: actor.deviceRecordId,
@@ -718,5 +734,21 @@ export async function checkoutRetailPosOrderWithDiscountsCommand(input: {
     throw new RetailPosRuntimeError(500, "CHECKOUT_TRANSACTION_FAILED");
   }
 
-  return data as DiscountCheckoutRpcResult;
+  const result = data as DiscountCheckoutRpcResult;
+  if (!Array.isArray(result.result?.payments) || result.result.payments.length < 1 || result.result.payments.length > 2) {
+    throw new RetailPosRuntimeError(500, "PAYMENT_RESPONSE_INVALID");
+  }
+  result.result.payment = result.result.payments.length === 1 ? result.result.payments[0] ?? null : null;
+  result.result.payment_evidence = buildRetailPosPaymentEvidence({
+    order: result.result.order,
+    lines,
+    paymentTransaction: result.result.payment_transaction as never,
+    application: result.result.application as never,
+    payments: result.result.payments.map((payment) => ({
+      ...payment,
+      payment_transaction_id: payment.payment_transaction_id ?? null,
+      payment_sequence: payment.payment_sequence ?? null,
+    })) as never,
+  });
+  return result;
 }

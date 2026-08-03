@@ -14,6 +14,8 @@ import { getRetailReportingLabel } from "@/lib/retail-pos/reporting-semantics";
 import { getRetailPriceTierLabel } from "@/lib/retail-pos/reporting-presentation";
 import { formatRetailReportAuditNote } from "@/lib/retail-pos/reporting-ui";
 import { cn } from "@/lib/utils";
+import { getRetailCashFinancialReconciliationMessages } from "@/lib/retail-pos/cash-financial-summary";
+import { formatReportDocumentName, formatReportOperatorName, formatReportStationName } from "@/lib/retail-pos/report-presentation";
 import styles from "./retail-report-skeleton.module.css";
 import type {
   RetailCashShiftReportRow,
@@ -223,7 +225,7 @@ export function formatPostSaleReason(reasonCode: string | null | undefined) {
 }
 
 export function formatPostSaleRefundMethod(
-  method: "cash" | "card_external" | "store_credit_future" | null,
+  method: "cash" | "card_external" | "store_credit_future" | "mixed" | null,
 ) {
   if (!method) {
     return "No aplica";
@@ -234,6 +236,8 @@ export function formatPostSaleRefundMethod(
       return getRetailReportingLabel("cash_reimbursements");
     case "card_external":
       return getRetailReportingLabel("card_reimbursements");
+    case "mixed":
+      return "Mixto";
     case "store_credit_future":
       return "Crédito futuro";
     default:
@@ -264,6 +268,17 @@ export function formatPostSaleRefundStatus(
   }
 }
 
+export function formatPostSaleOperationalStatus(row: {
+  refundStatus?: "not_required" | "pending" | "completed" | "failed" | "cancelled" | null;
+  refundMethod?: "cash" | "card_external" | "store_credit_future" | "mixed" | null;
+}) {
+  if (row.refundStatus === "pending" && row.refundMethod === "card_external") return "Reembolso de tarjeta pendiente";
+  if (row.refundStatus === "completed" && row.refundMethod === "cash") return "Devolución de efectivo completada";
+  if (row.refundStatus === "completed" && row.refundMethod === "card_external") return "Reembolso de tarjeta confirmado";
+  if (row.refundStatus === "completed" && row.refundMethod === "mixed") return "Cancelación completada";
+  return formatPostSaleRefundStatus(row.refundStatus ?? null);
+}
+
 export function formatShiftStatus(status: "open" | "closed" | "canceled") {
   switch (status) {
     case "closed":
@@ -276,7 +291,7 @@ export function formatShiftStatus(status: "open" | "closed" | "canceled") {
   }
 }
 
-export function formatPaymentMethodLabel(method: "cash" | "card" | null) {
+export function formatPaymentMethodLabel(method: "cash" | "card" | "mixed" | null) {
   if (method === "cash") {
     return getRetailReportingLabel("cash_collections");
   }
@@ -285,16 +300,24 @@ export function formatPaymentMethodLabel(method: "cash" | "card" | null) {
     return getRetailReportingLabel("card_collections");
   }
 
+  if (method === "mixed") {
+    return "Pago mixto";
+  }
+
   return "—";
 }
 
-export function formatCompactPaymentMethodLabel(method: "cash" | "card" | null) {
+export function formatCompactPaymentMethodLabel(method: "cash" | "card" | "mixed" | null) {
   if (method === "cash") {
     return "Efectivo";
   }
 
   if (method === "card") {
     return "Tarjeta";
+  }
+
+  if (method === "mixed") {
+    return "Pago mixto";
   }
 
   return "—";
@@ -545,6 +568,122 @@ export function RetailMetricGrid({
   );
 }
 
+type RetailFinancialSummary = RetailReportsOverview["financialSummary"];
+
+export function RetailFinancialSummaryPanel({
+  summary,
+  title = "Resumen financiero",
+  compact = false,
+}: {
+  summary: RetailFinancialSummary;
+  title?: string;
+  compact?: boolean;
+}) {
+  const reconciliationMessages = getRetailCashFinancialReconciliationMessages(summary);
+
+  if (summary.sales_count === 0 && summary.tenders_count === 0) {
+    return (
+      <RetailSectionCard title={title} description="No hay ventas ni componentes de cobro en el periodo seleccionado.">
+        <p className="text-sm text-muted">Sin datos financieros para mostrar.</p>
+      </RetailSectionCard>
+    );
+  }
+
+  return (
+    <RetailSectionCard
+      title={title}
+      description="Ventas se cuentan una vez por transacción; efectivo y tarjeta se distribuyen por sus componentes de cobro."
+    >
+      <div className={cn("grid gap-3", compact ? "sm:grid-cols-3 xl:grid-cols-6" : "sm:grid-cols-2 xl:grid-cols-4")}>
+        <div>
+          <p className="text-xs text-muted">Ventas cobradas</p>
+          <p className="text-lg font-semibold text-foreground">{formatNumber(summary.sales_count)}</p>
+          <p className="text-xs text-muted">{formatNumber(summary.payment_transactions_count)} transacciones liquidadas</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Solo efectivo</p>
+          <p className="text-lg font-semibold text-foreground">{formatNumber(summary.cash_only_sales_count)}</p>
+          <p className="text-xs text-muted">{formatCurrency(summary.cash_sales_cents)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Solo tarjeta</p>
+          <p className="text-lg font-semibold text-foreground">{formatNumber(summary.card_only_sales_count)}</p>
+          <p className="text-xs text-muted">{formatCurrency(summary.card_sales_cents)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Pago mixto</p>
+          <p className="text-lg font-semibold text-foreground">{formatNumber(summary.mixed_sales_count)}</p>
+          <p className="text-xs text-muted">{formatNumber(summary.tenders_count)} componentes de cobro</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Ventas brutas</p>
+          <p className="text-lg font-semibold text-foreground">{formatCurrency(summary.gross_sales_cents)}</p>
+          <p className="text-xs text-muted">Una sola vez por transacción</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Efectivo esperado al cierre</p>
+          <p className="text-lg font-semibold text-foreground">{formatCurrency(summary.expected_cash_cents)}</p>
+          <p className="text-xs text-muted">Fondo + efectivo aplicado − devoluciones</p>
+          <p className="text-xs text-muted">Variación neta: {formatCurrency(summary.expected_cash_variation_cents ?? summary.expected_cash_cents)}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 border-t border-border pt-3 sm:grid-cols-3">
+        <div>
+          <p className="text-xs text-muted">Efectivo recibido</p>
+          <p className="text-sm font-medium text-foreground">{formatCurrency(summary.cash_received_cents)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Cambio entregado</p>
+          <p className="text-sm font-medium text-foreground">{formatCurrency(summary.cash_change_cents)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Efectivo aplicado a ventas</p>
+          <p className="text-sm font-medium text-foreground">{formatCurrency(summary.cash_sales_cents)}</p>
+          <p className="text-xs text-muted">Recibido − cambio = aplicado</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Entradas / salidas de caja</p>
+          <p className="text-sm font-medium text-foreground">
+            {formatCurrency(summary.other_cash_in_cents)} / {formatCurrency(summary.other_cash_out_cents)}
+          </p>
+          <p className="text-xs text-muted">Otros movimientos físicos</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Ventas netas liquidadas</p>
+          <p className="text-sm font-medium text-foreground">{formatCurrency(summary.settled_net_sales_cents)}</p>
+          <p className="text-xs text-muted">Bruto − reembolsos completados</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 border-t border-border pt-3 sm:grid-cols-3">
+        <div>
+          <p className="text-xs text-muted">Devoluciones de efectivo</p>
+          <p className="text-sm font-medium text-foreground">{formatCurrency(summary.completed_cash_refunds_cents)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Reembolsos de tarjeta completados</p>
+          <p className="text-sm font-medium text-foreground">{formatCurrency(summary.completed_card_refunds_cents)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted">Reembolsos de tarjeta pendientes</p>
+          <p className="text-sm font-medium text-foreground">{formatCurrency(summary.pending_card_refunds_cents)}</p>
+        </div>
+      </div>
+
+      <div className={cn("mt-4 rounded-[var(--radius-base)] border px-3 py-2 text-sm", reconciliationMessages.length > 0 ? "border-warning/50 bg-warning/10" : "border-emerald-500/30 bg-emerald-500/10")}>
+        {reconciliationMessages.length > 0 ? (
+          <ul className="space-y-1 text-foreground">
+            {reconciliationMessages.map((message) => <li key={message}>{message}</li>)}
+          </ul>
+        ) : (
+          <span className="font-medium text-foreground">Conciliación correcta</span>
+        )}
+      </div>
+    </RetailSectionCard>
+  );
+}
+
 export function RetailMetricGridSkeleton({
   count = 4,
   columnsClassName = "xl:grid-cols-4",
@@ -720,7 +859,7 @@ export function RetailOverviewMetrics({ overview }: { overview: RetailReportsOve
           detail: `${formatNumber(overview.summary.fullReturnsCount)} devoluciones totales · ${formatNumber(overview.summary.partialReturnsCount)} parciales`,
         },
         {
-          label: "Monto anulado",
+          label: "Monto de cancelaciones",
           value: formatCurrency(overview.summary.cancelledSalesCents),
           detail: `${getRetailReportingLabel("returned_amount")} ${formatCurrency(overview.summary.returnedCents)}`,
         },
@@ -826,7 +965,7 @@ export function RetailPaymentMethodsTable({
         <thead>
           <tr className="border-b border-border text-left text-muted">
             <th className="px-2 py-2">Tipo de cobro</th>
-            <th className="px-2 py-2">Pagos</th>
+            <th className="px-2 py-2">Componentes de cobro</th>
             <th className="px-2 py-2">Total</th>
           </tr>
         </thead>
@@ -905,7 +1044,7 @@ export function RetailOrdersTable({
             <th className="px-2 py-2">Estado</th>
             <th className="px-2 py-2">Postventa</th>
             <th className="px-2 py-2">Total</th>
-            <th className="px-2 py-2">Monto anulado</th>
+            <th className="px-2 py-2">Monto de cancelaciones</th>
             <th className="px-2 py-2">{getRetailReportingLabel("returned_amount")}</th>
             <th className="px-2 py-2">Tipo de cobro</th>
             <th className="px-2 py-2">Origen</th>
@@ -913,7 +1052,7 @@ export function RetailOrdersTable({
             <th className="px-2 py-2">Creado</th>
             <th className="px-2 py-2">Fecha de cobro</th>
             <th className="px-2 py-2">Última postventa registrada</th>
-            <th className="px-2 py-2">Fecha de anulación del pedido</th>
+            <th className="px-2 py-2">Fecha de cancelación de la venta</th>
           </tr>
         </thead>
         <tbody>
@@ -1282,12 +1421,13 @@ export function RetailCashShiftTable({
           {rows.map((row) => (
             <tr key={row.cashShiftId} className="border-b border-border/60 align-top text-foreground">
               <td className="px-2 py-2">
-                <div className="font-medium">{row.deviceName ?? "Sin terminal"}</div>
+                <div className="font-medium">{formatReportStationName({ stationName: row.kioskLabel, deviceName: row.deviceName })}</div>
                 {row.kioskLabel ? <div className="text-xs text-muted">{row.kioskLabel}</div> : null}
                 <div className="text-xs text-muted">Abre {formatDateTime(row.openedAt)}</div>
                 <div className="text-xs text-muted">Cierra {formatDateTime(row.closedAt)}</div>
                 <div className="mt-1 text-xs text-muted">
-                  {row.openedByName ?? "Sin responsable de apertura"} · {row.closedByName ?? "Sin responsable de cierre"}
+                  Operador: {formatReportOperatorName(row.openedByName)}
+                  {row.closedByName && row.closedByName !== row.openedByName ? ` · Cierra ${row.closedByName}` : ""}
                 </div>
               </td>
               <td className="px-2 py-2">
@@ -1299,6 +1439,7 @@ export function RetailCashShiftTable({
               <td className="px-2 py-2">
                 <div className="font-medium">{formatCurrency(row.cashSalesCents)}</div>
                 <div className="text-xs text-muted">Tarjeta {formatCurrency(row.cardSalesCents)}</div>
+                <div className="text-xs text-muted">Pago mixto {formatNumber(row.financialSummary.mixed_sales_count)} ventas</div>
                 <div className="text-xs text-muted">Total {formatCurrency(row.totalSalesCents)}</div>
               </td>
               <td className="px-2 py-2">
@@ -1324,7 +1465,7 @@ export function RetailCashShiftTable({
               </td>
               <td className="px-2 py-2">
                 <div>{formatNumber(row.ordersCount)} ordenes</div>
-                <div className="text-xs text-muted">{formatNumber(row.paymentsCount)} pagos</div>
+                <div className="text-xs text-muted">{formatNumber(row.financialSummary.payment_transactions_count)} transacciones liquidadas · {formatNumber(row.financialSummary.tenders_count)} componentes de cobro</div>
                 <div className="text-xs text-muted">
                   {formatNumber(row.cancellationsCount)} ventas canceladas · {formatNumber(row.returnsCount)} devoluciones
                 </div>
@@ -1371,9 +1512,9 @@ export function RetailOpenShiftList({ rows }: { rows: RetailCashShiftReportRow[]
         <Card key={row.cashShiftId} className="space-y-3 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
-              <p className="text-sm font-semibold text-foreground">{row.deviceName ?? "Sin terminal"}</p>
+              <p className="text-sm font-semibold text-foreground">{formatReportStationName({ stationName: row.kioskLabel, deviceName: row.deviceName })}</p>
               <p className="text-xs text-muted">Abierto {formatDateTime(row.openedAt)}</p>
-              <p className="text-xs text-muted">Responsable {row.openedByName ?? "Sin usuario"}</p>
+              <p className="text-xs text-muted">Responsable {formatReportOperatorName(row.openedByName)}</p>
             </div>
             <span className={cn("inline-flex rounded-full px-2 py-1 text-xs font-medium", getStatusTone(row.status))}>
               {formatShiftStatus(row.status)}
@@ -1394,7 +1535,7 @@ export function RetailOpenShiftList({ rows }: { rows: RetailCashShiftReportRow[]
               <p className="text-sm font-medium text-foreground">{formatCurrency(row.cashRefundsCents)}</p>
             </div>
             <div>
-              <p className="text-xs text-muted">Efectivo esperado por ventas y reembolsos</p>
+              <p className="text-xs text-muted">Fondo + cobros − reembolsos de efectivo</p>
               <p className="text-sm font-medium text-foreground">{formatCurrency(row.expectedCashCents ?? 0)}</p>
             </div>
           </div>
@@ -1479,7 +1620,7 @@ export function RetailPostSaleSummaryTables({ report }: { report: RetailPostSale
             <thead>
               <tr className="border-b border-border text-left text-muted">
                 <th className="px-2 py-2">Usuario</th>
-                <th className="px-2 py-2">Anulaciones</th>
+                <th className="px-2 py-2">Ventas canceladas</th>
                 <th className="px-2 py-2">Devoluciones</th>
                 <th className="px-2 py-2">Operaciones</th>
                 <th className="px-2 py-2">Monto</th>
@@ -1518,9 +1659,11 @@ export function RetailPostSaleTable({
             <th className="px-2 py-2">{getRetailReportingLabel("post_sale_recorded_date")}</th>
             <th className="px-2 py-2">Tipo de operación</th>
             <th className="px-2 py-2">Folio de venta original</th>
-            <th className="px-2 py-2">Monto comercial</th>
+            <th className="px-2 py-2">Monto cancelado</th>
+            <th className="px-2 py-2">Pago original</th>
             <th className="px-2 py-2">Método de reembolso</th>
             <th className="px-2 py-2">Estado del reembolso</th>
+            <th className="px-2 py-2">Efectivo / tarjeta</th>
             <th className="px-2 py-2">Motivo</th>
             <th className="px-2 py-2">Usuario responsable</th>
             <th className="px-2 py-2">Acceso útil</th>
@@ -1543,11 +1686,26 @@ export function RetailPostSaleTable({
                 <div className="text-xs text-muted">
                   {formatNumber(row.lineCount)} líneas · {formatNumber(row.quantityReturned)} uds.
                 </div>
+                <div className="text-xs text-muted">{row.coverageLabel ?? "Registro histórico"} · {formatNumber(row.componentCount ?? 0)} componentes</div>
+                <details className="mt-1 text-xs">
+                  <summary className="cursor-pointer text-primary">Ver detalle</summary>
+                  <div className="mt-1 space-y-1 text-muted">
+                    <div>Documento: {formatReportDocumentName(row.originalFolio, row.documentId)}</div>
+                    <div>Orden original: {row.originalOrderId}</div>
+                    {row.externalReference ? <div>Referencia: {row.externalReference}</div> : null}
+                  </div>
+                </details>
               </td>
               <td className="px-2 py-2">{row.originalFolio}</td>
-              <td className="px-2 py-2">{formatCurrency(row.commercialAmountCents)}</td>
+              <td className="px-2 py-2">{formatCurrency(row.refundAmountCents ?? 0)}</td>
+              <td className="px-2 py-2 capitalize">{!row.originalPaymentMethod || row.originalPaymentMethod === "unknown" ? "Sin evidencia" : row.originalPaymentMethod}</td>
               <td className="px-2 py-2">{formatPostSaleRefundMethod(row.refundMethod)}</td>
-              <td className="px-2 py-2">{formatPostSaleRefundStatus(row.refundStatus)}</td>
+              <td className="px-2 py-2">{formatPostSaleOperationalStatus(row)}</td>
+              <td className="px-2 py-2">
+                <div>Efectivo: {formatCurrency(row.cashReturnedCents ?? 0)}</div>
+                <div>Tarjeta confirmada: {formatCurrency(row.cardCompletedCents ?? 0)}</div>
+                {(row.cardPendingCents ?? 0) > 0 ? <div className="text-amber-300">Tarjeta pendiente: {formatCurrency(row.cardPendingCents ?? 0)}</div> : null}
+              </td>
               <td className="px-2 py-2">
                 <div>{formatPostSaleReason(row.reasonCode)}</div>
                 {row.comment ? <div className="text-xs text-muted">{row.comment}</div> : null}

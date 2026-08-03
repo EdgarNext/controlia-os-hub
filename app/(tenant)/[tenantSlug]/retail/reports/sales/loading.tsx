@@ -25,7 +25,7 @@ export default function RetailReportsSalesLoading() {
 
         <RetailSectionCardSkeleton
           title="Postventa registrada"
-          description="Anulaciones y devoluciones registradas durante el periodo."
+          description="Cancelaciones y devoluciones registradas durante el periodo."
         >
           <RetailTableSkeleton columns={2} rows={5} />
         </RetailSectionCardSkeleton>
@@ -48,7 +48,7 @@ export default function RetailReportsSalesLoading() {
 
         <RetailSectionCardSkeleton
           title="Descuentos y postventa por periodo"
-          description="Comparación de descuentos, anulaciones y devoluciones."
+          description="Comparación de descuentos, cancelaciones y devoluciones."
         >
           <div className="h-[320px] rounded-[var(--radius-base)] bg-surface-2/80" />
         </RetailSectionCardSkeleton>

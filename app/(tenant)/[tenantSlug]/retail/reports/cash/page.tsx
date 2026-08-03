@@ -1,6 +1,7 @@
 import { StatePanel } from "@/components/ui/state-panel";
 import { resolveRetailPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getRetailCashShiftReport } from "@/lib/retail-pos/reports";
+import { formatReportStationName } from "@/lib/retail-pos/report-presentation";
 import type { RetailAttentionItem } from "@/lib/retail-pos/reporting-ui";
 import { RetailAttentionBlock } from "../_components/RetailAttentionBlock";
 import { RETAIL_REPORTING_PERIOD_NOTES, getRetailReportingLabel } from "@/lib/retail-pos/reporting-semantics";
@@ -11,6 +12,7 @@ import { RetailCashPaymentMixChart } from "../_components/charts/RetailCashPayme
 import {
   RetailCashRefundBreakdown,
   RetailCashShiftTable,
+  RetailFinancialSummaryPanel,
   RetailMetricGrid,
   RetailOpenShiftList,
   RetailReportsFiltersCard,
@@ -36,8 +38,8 @@ export default async function RetailCashPage({ params, searchParams }: RetailCas
     .filter((row) => typeof row.expectedCashCents === "number" && typeof row.declaredCashCents === "number")
     .map((row) => ({
       shiftId: row.cashShiftId,
-      shiftLabel: row.deviceName ?? "Sin terminal",
-      deviceLabel: row.deviceName ?? "Sin terminal",
+      shiftLabel: formatReportStationName({ stationName: row.kioskLabel, deviceName: row.deviceName }),
+      deviceLabel: formatReportStationName({ stationName: row.kioskLabel, deviceName: row.deviceName }),
       openedAt: row.openedAt,
       closedAt: row.closedAt,
       expectedCashCents: row.expectedCashCents ?? 0,
@@ -49,8 +51,8 @@ export default async function RetailCashPage({ params, searchParams }: RetailCas
     .filter((row) => typeof row.differenceCents === "number" && typeof row.declaredCashCents === "number")
     .map((row) => ({
       shiftId: row.cashShiftId,
-      shiftLabel: row.deviceName ?? "Sin terminal",
-      deviceLabel: row.deviceName ?? "Sin terminal",
+      shiftLabel: formatReportStationName({ stationName: row.kioskLabel, deviceName: row.deviceName }),
+      deviceLabel: formatReportStationName({ stationName: row.kioskLabel, deviceName: row.deviceName }),
       differenceCents: row.differenceCents ?? 0,
       expectedCashCents: row.expectedCashCents ?? 0,
       declaredCashCents: row.declaredCashCents ?? 0,
@@ -58,8 +60,8 @@ export default async function RetailCashPage({ params, searchParams }: RetailCas
     }));
   const paymentMixPoints = report.rows.map((row) => ({
     shiftId: row.cashShiftId,
-    shiftLabel: row.deviceName ?? "Sin terminal",
-    deviceLabel: row.deviceName ?? "Sin terminal",
+    shiftLabel: formatReportStationName({ stationName: row.kioskLabel, deviceName: row.deviceName }),
+    deviceLabel: formatReportStationName({ stationName: row.kioskLabel, deviceName: row.deviceName }),
     cashSalesCents: row.cashSalesCents,
     cardSalesCents: row.cardSalesCents,
     totalSalesCents: row.totalSalesCents,
@@ -137,20 +139,27 @@ export default async function RetailCashPage({ params, searchParams }: RetailCas
         note={RETAIL_REPORTING_PERIOD_NOTES.cash.note}
       />
 
+      <RetailFinancialSummaryPanel summary={report.financialSummary} title="Resumen financiero de caja" />
+
       <RetailMetricGrid
         items={[
           {
-            label: getRetailReportingLabel("cash_collections"),
-            value: formatCurrency(report.totals.totalCashSalesCents),
-            detail: `${formatNumber(report.totals.shiftsCount)} turnos incluidos`,
-            explanation: "Pagos recibidos en efectivo durante los turnos incluidos.",
+            label: "Ventas brutas",
+            value: formatCurrency(report.financialSummary.gross_sales_cents),
+            detail: `${formatNumber(report.financialSummary.sales_count)} ventas · ${formatNumber(report.financialSummary.payment_transactions_count)} transacciones`,
+            explanation: "Cada venta se cuenta una sola vez por transacción de pago.",
+          },
+          {
+            label: "Efectivo aplicado",
+            value: formatCurrency(report.financialSummary.cash_sales_cents),
+            detail: `Efectivo · Tarjeta ${formatCurrency(report.financialSummary.card_sales_cents)} · Mixtas ${formatNumber(report.financialSummary.mixed_sales_count)}`,
+            explanation: "Efectivo y tarjeta se muestran por componente sin duplicar ventas.",
           },
           {
             label: getRetailReportingLabel("expected_cash_from_sales_and_reimbursements"),
-            value: formatCurrency(report.totals.closedExpectedCashCents),
+            value: formatCurrency(report.financialSummary.expected_cash_cents),
             detail: `${formatNumber(report.totals.closedShiftsCount)} turnos cerrados`,
-            explanation:
-              "Fondo inicial más cobros en efectivo menos reembolsos en efectivo completados, conforme a la fórmula operativa actual.",
+            explanation: "Fondo inicial más efectivo aplicado menos devoluciones de efectivo completadas.",
           },
           {
             label: getRetailReportingLabel("declared_cash"),

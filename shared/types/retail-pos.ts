@@ -167,6 +167,14 @@ export type RetailPosPostSaleRefundStatus =
   (typeof RETAIL_POS_POST_SALE_REFUND_STATUSES)[number];
 export type RetailPosPostSaleRefundMethod =
   (typeof RETAIL_POS_POST_SALE_REFUND_METHODS)[number];
+export type RetailPosPostSaleDocumentRefundMethod = RetailPosPostSaleRefundMethod | "mixed";
+export type RetailPosSaleRefundMethodWithMixed = RetailPosPostSaleRefundMethod | "mixed";
+export type RetailPosPostSaleRefundComponentMethod = "cash" | "card";
+export type RetailPosPostSaleRefundComponentStatus =
+  | "completed"
+  | "pending_external_confirmation"
+  | "failed"
+  | "cancelled";
 export type RetailPosPostSaleReasonCode =
   (typeof RETAIL_POS_POST_SALE_REASON_CODES)[number];
 export type RetailPosPostSaleCashMovementType =
@@ -320,6 +328,80 @@ export type RetailPosPayment = {
   paid_at: string;
   created_at: string;
   created_by: string | null;
+  payment_transaction_id?: string | null;
+  payment_sequence?: number | null;
+};
+
+export type RetailPosPaymentEvidenceLine = {
+  id: string;
+  line_number: number;
+  product_name: string;
+  variant_name: string | null;
+  sku: string | null;
+  quantity: RetailPosQuantityString;
+  sales_unit_label: string;
+  approved_price_tier: "public" | "wholesale" | "unknown";
+  approved_unit_price_cents: number;
+  unit_price_cents: number;
+  direct_discount_cents: number;
+  order_discount_allocation_cents: number;
+  total_discount_cents: number;
+  line_total_cents: number;
+};
+
+export type RetailPosPaidOrderEvidence = {
+  id: string;
+  tenant_id: string;
+  folio: string;
+  origin_local_folio: string | null;
+  status: RetailPosOrderStatus;
+  revision: number;
+  subtotal_cents: number;
+  discount_cents: number;
+  total_cents: number;
+  created_at: string;
+  paid_at: string | null;
+  cashier_pos_user_id: string | null;
+  paid_by_device_id: string | null;
+  lines: RetailPosPaymentEvidenceLine[];
+};
+
+export type RetailPosPaymentEvidence = {
+  order: RetailPosPaidOrderEvidence;
+  payment_transaction: RetailPosPaymentTransaction;
+  application: RetailPosOrderPaymentApplication;
+  payments: Array<RetailPosPayment & {
+    payment_transaction_id: string;
+    payment_sequence: number;
+  }>;
+  payment_summary: "cash" | "card" | "mixed";
+  /** Compatibility only. Null for mixed payments. */
+  payment: (RetailPosPayment & {
+    payment_transaction_id: string;
+    payment_sequence: number;
+  }) | null;
+};
+
+export type RetailPosPostSaleRefundTender = {
+  payment_id: string;
+  payment_sequence: number;
+  payment_method: RetailPosPaymentMethod;
+  applied_amount_cents: number;
+  received_amount_cents: number | null;
+  change_cents: number;
+  card_reference: string | null;
+};
+
+export type RetailPosPostSaleRefundAllocation = {
+  original_order_id: string;
+  original_payment_transaction_id: string;
+  total_refund_cents: number;
+  cash_refund_cents: number;
+  card_refund_cents: number;
+  requires_cash_refund: boolean;
+  requires_external_card_refund: boolean;
+  original_tenders: RetailPosPostSaleRefundTender[];
+  refund_summary: "cash" | "card" | "mixed";
 };
 
 export type RetailPosCashShift = {
@@ -668,6 +750,7 @@ export type CreateRetailPosOrderLineInput = {
   approved_price_tier_source?: "default_public" | "counter_request" | "cashier_direct" | null;
   approved_by_pos_user_id?: string | null;
   approved_at?: string | null;
+  unit_cost_snapshot_cents?: number | null;
   discount_cents: number;
   product_name?: string | null;
   variant_name?: string | null;
@@ -713,6 +796,7 @@ export type GetRetailPosOrderResponse = {
   order: RetailPosOrder;
   lines: RetailPosOrderLine[];
   payment: RetailPosPayment | null;
+  payment_evidence?: RetailPosPaymentEvidence | null;
   discounts?: RetailPosPersistedOrderDiscount[];
   discount_overview?: RetailPosOrderDiscountOverview | null;
 };
@@ -720,6 +804,7 @@ export type GetRetailPosOrderResponse = {
 export type PayRetailPosOrderRequest = {
   tenant_id: string;
   order_id: string;
+  expected_order_revision: number;
   cash_shift_id?: string | null;
   device_id?: string | null;
   pos_user_id: string;
@@ -727,19 +812,89 @@ export type PayRetailPosOrderRequest = {
   amount_cents: number;
   received_amount_cents: number | null;
   card_reference: string | null;
+  tenders?: never;
+} | {
+  tenant_id: string;
+  order_id: string;
+  expected_order_revision: number;
+  cash_shift_id?: string | null;
+  device_id?: string | null;
+  pos_user_id: string;
+  tenders: Array<{
+    sequence: number;
+    method: RetailPosPaymentMethod;
+    amount_cents: number;
+    received_amount_cents: number | null;
+    reference: string | null;
+  }>;
+  payment_method?: never;
+  amount_cents?: never;
+  received_amount_cents?: never;
+  card_reference?: never;
+};
+
+export type RetailPosPaymentTransaction = {
+  id: string;
+  tenant_id: string;
+  command_id: string;
+  fingerprint: string;
+  total_applied_cents: number;
+  expected_order_revision: number;
+  cash_shift_id: string;
+  device_id: string;
+  pos_user_id: string;
+  confirmed_at: string;
+  created_at: string;
+  created_by: string | null;
+};
+
+export type RetailPosOrderPaymentApplication = {
+  id: string;
+  tenant_id: string;
+  payment_transaction_id: string;
+  order_id: string;
+  application_sequence: number;
+  amount_cents: number;
+  created_at: string;
 };
 
 export type PayRetailPosOrderResponse = {
   order: RetailPosOrder;
-  payment: RetailPosPayment;
+  payment: RetailPosPayment | null;
+  payments: RetailPosPayment[];
+  payment_transaction?: RetailPosPaymentTransaction | null;
+  application?: RetailPosOrderPaymentApplication | null;
+  payment_summary?: {
+    method: RetailPosPaymentMethod | "mixed";
+    cash_amount_cents: number;
+    card_amount_cents: number;
+    tender_count: number;
+  };
+  payment_evidence?: RetailPosPaymentEvidence | null;
 };
 
 export type RetailPosPayCommandPayload = {
   order_id: string;
+  expected_order_revision: number;
   payment_method: RetailPosPaymentMethod;
   amount_cents: number;
   received_amount_cents: number | null;
   card_reference: string | null;
+  tenders?: never;
+} | {
+  order_id: string;
+  expected_order_revision: number;
+  tenders: Array<{
+    sequence: number;
+    method: RetailPosPaymentMethod;
+    amount_cents: number;
+    received_amount_cents: number | null;
+    reference: string | null;
+  }>;
+  payment_method?: never;
+  amount_cents?: never;
+  received_amount_cents?: never;
+  card_reference?: never;
 };
 
 export type OpenRetailPosCashShiftRequest = {
@@ -951,7 +1106,7 @@ export type RetailPosPostSaleDocument = {
   document_type: RetailPosPostSaleDocumentType;
   status: RetailPosPostSaleDocumentStatus;
   refund_status: RetailPosPostSaleRefundStatus;
-  refund_method: RetailPosPostSaleRefundMethod;
+  refund_method: RetailPosPostSaleDocumentRefundMethod;
   currency_code: string;
   gross_amount_cents: number;
   discount_amount_cents: number;
@@ -996,7 +1151,7 @@ export type RetailPosPostSaleRefund = {
   id: string;
   tenant_id: string;
   post_sale_document_id: string;
-  refund_method: RetailPosPostSaleRefundMethod;
+  refund_method: RetailPosSaleRefundMethodWithMixed;
   status: RetailPosPostSaleRefundStatus;
   amount_cents: number;
   currency_code: string;
@@ -1008,6 +1163,22 @@ export type RetailPosPostSaleRefund = {
   origin_command_id: string;
   created_at: string;
   updated_at: string;
+};
+
+export type RetailPosPostSaleRefundComponent = {
+  id: string;
+  tenant_id: string;
+  post_sale_document_id: string;
+  original_payment_transaction_id: string;
+  original_payment_id: string;
+  original_payment_sequence: number;
+  refund_method: RetailPosPostSaleRefundComponentMethod;
+  amount_cents: number;
+  status: RetailPosPostSaleRefundComponentStatus;
+  external_reference: string | null;
+  confirmed_by_pos_user_id: string | null;
+  confirmed_at: string | null;
+  created_at: string;
 };
 
 export type RetailPosCashMovement = {
@@ -1116,6 +1287,7 @@ export type RetailPosPostSaleReturnAccumulatedLine = {
 
 export type RetailPosPostSaleCancellationPreviewRequest = {
   order_id: string;
+  payment_transaction_id: string;
   reason_code: RetailPosPostSaleReasonCode;
   comment: string | null;
 };
@@ -1143,6 +1315,13 @@ export type RetailPosPostSaleCancellationPreviewResponse = {
   >[];
   existing_post_sale: RetailPosPostSaleExistingState;
   warnings: RetailPosPostSaleWarning[];
+  original_payment_evidence: RetailPosPaymentEvidence;
+  refund_allocation: RetailPosPostSaleRefundAllocation;
+  refund_components: Array<{
+    payment_method: RetailPosPostSaleRefundComponentMethod;
+    amount_cents: number;
+    expected_status_after_commit: RetailPosPostSaleRefundComponentStatus;
+  }>;
 };
 
 export type RetailPosPostSaleReturnPreviewResponse = {
@@ -1166,12 +1345,15 @@ export type RetailPosPostSaleReturnPreviewResponse = {
 };
 
 export type RetailPosPostSaleCancellationCommitRequest = {
+  command_id?: string;
   order_id: string;
+  payment_transaction_id: string;
   cash_shift_id: string;
   expected_order_revision: number;
   reason_code: RetailPosPostSaleReasonCode;
   comment: string | null;
   refund_method: Extract<RetailPosPostSaleRefundMethod, "cash" | "card_external">;
+  acknowledge_cash_refund: boolean;
 };
 
 export type RetailPosPostSaleReturnCommitRequest = {
@@ -1194,6 +1376,9 @@ export type RetailPosPostSaleCancellationCommitResponse = {
   gross_amount_cents: number;
   discount_amount_cents: number;
   net_amount_cents: number;
+  original_payment_evidence: RetailPosPaymentEvidence;
+  refund_allocation: RetailPosPostSaleRefundAllocation;
+  refund_components: RetailPosPostSaleRefundComponent[];
 };
 
 export type RetailPosPostSaleReturnCommitResponse = {
@@ -1208,6 +1393,7 @@ export type RetailPosPostSaleReturnCommitResponse = {
 };
 
 export type RetailPosPostSaleCardRefundConfirmRequest = {
+  command_id?: string;
   post_sale_document_id: string;
   refund_id: string;
   external_reference: string;
@@ -1217,6 +1403,9 @@ export type RetailPosPostSaleCardRefundConfirmResponse = {
   document: RetailPosPostSaleDocument;
   refund: RetailPosPostSaleRefund;
   replayed: boolean;
+  original_payment_evidence: RetailPosPaymentEvidence;
+  refund_allocation: RetailPosPostSaleRefundAllocation;
+  refund_components: RetailPosPostSaleRefundComponent[];
 };
 
 export type RetailPosPostSaleDetailResponse = {
@@ -1228,6 +1417,64 @@ export type RetailPosPostSaleDetailResponse = {
   original_order_lines: RetailPosOrderLine[];
   accumulated_lines?: RetailPosPostSaleReturnAccumulatedLine[];
   return_state?: RetailPosPostSaleReturnState;
+  original_payment_evidence?: RetailPosPaymentEvidence;
+  refund_allocation?: RetailPosPostSaleRefundAllocation;
+  refund_components?: RetailPosPostSaleRefundComponent[];
+};
+
+export type RetailPosPostSaleReceiptModel = {
+  receipt_identity: {
+    post_sale_document_id: string;
+    original_order_id: string;
+    original_payment_transaction_id: string;
+    original_sale_folio: string;
+    post_sale_folio: string | null;
+  };
+  document: {
+    operation: "sale_cancellation";
+    title: "Cancelación de venta pagada";
+    business_name: string | null;
+    status: "pending_confirmation" | "completed";
+    reason: string;
+    comment: string | null;
+    created_at: string;
+    completed_at: string | null;
+    operator_name: string | null;
+    device_name: string | null;
+  };
+  original_sale: {
+    paid_at: string;
+    total_cents: number;
+    payment_summary: "cash" | "card" | "mixed";
+    lines: Array<{
+      description: string;
+      quantity: RetailPosQuantityString;
+      unit_price_cents: number;
+      line_total_cents: number;
+      discount_cents: number;
+    }>;
+  };
+  original_payment: {
+    cash_applied_cents: number;
+    card_applied_cents: number;
+    cash_received_cents: number;
+    cash_change_cents: number;
+    card_reference: string | null;
+  };
+  refunds: {
+    cash_refund_cents: number;
+    cash_status: "not_required" | "completed";
+    card_refund_cents: number;
+    card_status: "not_required" | "pending_external_confirmation" | "completed";
+    card_external_reference: string | null;
+    completed_refund_cents: number;
+    pending_refund_cents: number;
+  };
+  summary: {
+    total_cancelled_cents: number;
+    refund_summary: "cash" | "card" | "mixed";
+    is_fully_completed: boolean;
+  };
 };
 
 export type RetailPosDiscountIntentDraft = {
@@ -1416,6 +1663,23 @@ export type RetailPosDiscountCheckoutCommandPayload = {
   payment_method: RetailPosPaymentMethod;
   payment_amount_cents: number;
   cash_received_cents: number | null;
+  expected_revision: number;
+  discount_intents: RetailPosDiscountIntentDraft[];
+  below_cost_acknowledgement: RetailPosBelowCostAcknowledgement | null;
+  external_payment_reference: string | null;
+  tenders?: never;
+} | {
+  order_id: string;
+  tenders: Array<{
+    sequence: number;
+    method: RetailPosPaymentMethod;
+    amount_cents: number;
+    received_amount_cents: number | null;
+    reference: string | null;
+  }>;
+  payment_method?: never;
+  payment_amount_cents?: never;
+  cash_received_cents?: never;
   expected_revision: number;
   discount_intents: RetailPosDiscountIntentDraft[];
   below_cost_acknowledgement: RetailPosBelowCostAcknowledgement | null;
@@ -1698,6 +1962,38 @@ export type RetailPosZReportWarning = {
   message: string;
 };
 
+export type RetailPosCashFinancialSummary = {
+  sales_count: number;
+  payment_transactions_count: number;
+  tenders_count: number;
+  cash_only_sales_count: number;
+  card_only_sales_count: number;
+  mixed_sales_count: number;
+  cash_tenders_count: number;
+  card_tenders_count: number;
+  gross_sales_cents: number;
+  cash_sales_cents: number;
+  card_sales_cents: number;
+  cash_received_cents: number;
+  cash_change_cents: number;
+  completed_cash_refunds_cents: number;
+  completed_card_refunds_cents: number;
+  pending_card_refunds_cents: number;
+  completed_refunds_cents: number;
+  pending_refunds_cents: number;
+  settled_net_sales_cents: number;
+  opening_float_cents: number;
+  other_cash_in_cents: number;
+  other_cash_out_cents: number;
+  expected_cash_cents: number;
+  reconciliation: {
+    tender_total_matches_sales: boolean;
+    received_less_change_matches_cash_sales: boolean;
+    cash_components_match_cash_movements: boolean;
+  };
+  warnings: string[];
+};
+
 export type RetailPosZReportV1 = {
   tenantId: string;
   tenantName: string | null;
@@ -1761,12 +2057,13 @@ export type RetailPosZReportV1 = {
     folio: string;
     paidAt: string | null;
     totalCents: number;
-    paymentMethod: "cash" | "card" | null;
+    paymentMethod: "cash" | "card" | "mixed" | null;
   }>;
   linesSummary: {
     soldLinesCount: number;
     soldUnits: number;
   };
+  financialSummary: RetailPosCashFinancialSummary;
   warnings: RetailPosZReportWarning[];
 };
 

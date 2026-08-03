@@ -171,23 +171,33 @@ async function hasSuccessfulTicketEvidence(input: {
   tenantId: string;
   orderId: string;
   ticketType: RetailPosTicketType;
+  postSaleDocumentId?: string;
 }) {
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from("retail_pos_ticket_events")
-    .select("id")
+    .select("id, payload")
     .eq("tenant_id", input.tenantId)
     .eq("order_id", input.orderId)
     .eq("ticket_type", input.ticketType)
     .in("event_type", ["printed", "reprinted"])
-    .limit(1)
-    .maybeSingle<ExistingSuccessfulTicketEventRow>();
+    .returns<Array<ExistingSuccessfulTicketEventRow & { payload: Record<string, unknown> }>>();
 
   if (error) {
     throw new RetailPosRuntimeError(500, `Unable to resolve prior retail_pos ticket evidence: ${error.message}`);
   }
 
-  return Boolean(data?.id);
+  if (!input.postSaleDocumentId) return Boolean(data?.[0]?.id);
+  return (data ?? []).some((event) => {
+    const metadata = event.payload?.metadata;
+    if (!metadata || typeof metadata !== "object") return false;
+    const record = metadata as Record<string, unknown>;
+    const legacyPayload = record.payload;
+    const legacyDocumentId = legacyPayload && typeof legacyPayload === "object"
+      ? (legacyPayload as Record<string, unknown>).post_sale_document_id
+      : undefined;
+    return record.post_sale_document_id === input.postSaleDocumentId || legacyDocumentId === input.postSaleDocumentId;
+  });
 }
 
 export async function recordRetailPosTicketEvent(input: {
@@ -258,6 +268,10 @@ export async function recordRetailPosTicketEvent(input: {
       tenantId: actor.tenantId,
       orderId: order.id,
       ticketType,
+      postSaleDocumentId:
+        ticketType === "post_sale" && typeof metadata.post_sale_document_id === "string"
+          ? metadata.post_sale_document_id
+          : undefined,
     });
     storedEventType = alreadyPrinted ? "reprinted" : "printed";
   }

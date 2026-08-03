@@ -5,8 +5,23 @@ import { createRuntimePerfTrace } from "@/lib/retail-pos/runtime-perf";
 
 type RouteParams = { tenantSlug: string };
 
-function jsonError(status: number, message: string) {
-  return NextResponse.json({ ok: false, error: message }, { status });
+function jsonError(input: {
+  status: number;
+  message: string;
+  code?: string | null;
+  details?: Record<string, unknown> | null;
+  requestId: string;
+}) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: input.message,
+      code: input.code ?? null,
+      details: input.details ?? null,
+      request_id: input.requestId,
+    },
+    { status: input.status },
+  );
 }
 
 function asTrimmedString(value: unknown) {
@@ -42,7 +57,7 @@ export async function POST(
     );
 
     if (!body || typeof body !== "object") {
-      const response = jsonError(400, "Invalid request body.");
+      const response = jsonError({ status: 400, message: "Invalid request body.", requestId: trace.requestId });
       Object.entries(trace.headers()).forEach(([key, value]) =>
         response.headers.set(key, value),
       );
@@ -69,7 +84,13 @@ export async function POST(
     return response;
   } catch (error) {
     if (error instanceof RetailPosRuntimeError) {
-      const response = jsonError(error.status, error.message);
+      const response = jsonError({
+        status: error.status,
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        requestId: trace.requestId,
+      });
       Object.entries(trace.headers()).forEach(([key, value]) =>
         response.headers.set(key, value),
       );
@@ -81,7 +102,7 @@ export async function POST(
       error instanceof Error
         ? error.message
         : "Unexpected retail_pos payment command error.";
-    const response = jsonError(500, message);
+    const response = jsonError({ status: 500, message, requestId: trace.requestId });
     Object.entries(trace.headers()).forEach(([key, value]) =>
       response.headers.set(key, value),
     );

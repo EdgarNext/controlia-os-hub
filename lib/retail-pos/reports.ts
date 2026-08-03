@@ -32,6 +32,14 @@ import {
   type PriceTier,
   type PriceTierClassification,
 } from "./price-tier-economics";
+import {
+  buildRetailPosCashFinancialSummary,
+  getCanonicalCashTransactionIds,
+  type CashFinancialCashMovement,
+  type CashFinancialRefundComponent,
+  type CashFinancialTransaction,
+} from "./cash-financial-summary";
+import { buildPostSaleReportSummary } from "./post-sale-report-summary";
 
 type RetailReportsFiltersInput = {
   dateFrom?: string | null;
@@ -53,7 +61,7 @@ type RetailPostSaleReportFiltersInput = {
     | "failed"
     | "cancelled"
     | null;
-  refundMethod?: "all" | "cash" | "card_external" | "store_credit_future" | null;
+  refundMethod?: "all" | "cash" | "card_external" | "store_credit_future" | "mixed" | null;
   reasonCode?: string | null;
   responsibleUserId?: string | null;
 };
@@ -71,7 +79,7 @@ export type RetailPostSaleReportFilters = {
   dateTo: string;
   operationType: "all" | "sale_cancellation" | "return_full" | "return_partial";
   refundStatus: "all" | RetailPosPostSaleRefundStatus;
-  refundMethod: "all" | RetailPosPostSaleRefundMethod;
+  refundMethod: "all" | RetailPosPostSaleRefundMethod | "mixed";
   reasonCode: string | null;
   responsibleUserId: string | null;
 };
@@ -161,6 +169,31 @@ type RetailPaymentRow = {
   received_amount_cents: number | null;
   change_cents: number;
   paid_at: string;
+  payment_transaction_id: string | null;
+  payment_sequence: number | null;
+};
+
+type RetailPaymentTransactionRow = CashFinancialTransaction & {
+  tenant_id: string;
+  expected_order_revision: number;
+};
+
+type RetailPaymentApplicationRow = {
+  id: string;
+  payment_transaction_id: string;
+  order_id: string;
+  amount_cents: number;
+};
+
+type RetailCashMovementRow = CashFinancialCashMovement & {
+  tenant_id: string;
+  post_sale_document_id: string | null;
+  post_sale_refund_id: string | null;
+  occurred_at: string;
+};
+
+type RetailRefundComponentRow = CashFinancialRefundComponent & {
+  tenant_id: string;
 };
 
 type RetailCashShiftRow = {
@@ -203,6 +236,7 @@ type RetailPostSaleDocumentRow = {
   created_by_pos_user_id: string | null;
   created_at: string;
   confirmed_at: string | null;
+  original_payment_transaction_id?: string | null;
 };
 
 type RetailPostSaleRefundRow = {
@@ -307,6 +341,8 @@ export type RetailReportsOverview = {
     soldLinesCount: number;
     soldUnits: number;
     openShiftsCount: number;
+    paidOutsideShiftCount: number;
+    paidOutsideShiftCents: number;
     wholesaleSalesCount: number;
     wholesaleBaseCents: number;
     wholesaleDifferenceCents: number;
@@ -343,6 +379,7 @@ export type RetailReportsOverview = {
     decisionCounts: Array<{ key: "requested_approved" | "requested_rejected" | "cashier_direct"; count: number }>;
     anomalies: Array<{ type: string; orderId: string; folio: string }>;
   };
+  financialSummary: ReturnType<typeof buildRetailPosCashFinancialSummary>;
   discountBreakdown: {
     byReason: Array<{
       reasonCode: string;
@@ -395,7 +432,7 @@ export type RetailReportsOverview = {
     lastPostSaleAt: string | null;
     totalCents: number;
     grossSalesCents: number;
-    paymentMethod: "cash" | "card" | null;
+    paymentMethod: "cash" | "card" | "mixed" | null;
     originDeviceName: string | null;
     originKioskLabel: string | null;
     paidDeviceName: string | null;
@@ -453,6 +490,7 @@ export type RetailCashShiftReportRow = {
   totalSalesCents: number;
   paymentsCount: number;
   ordersCount: number;
+  financialSummary: ReturnType<typeof buildRetailPosCashFinancialSummary>;
   closingNote: string | null;
 };
 
@@ -462,6 +500,7 @@ export type RetailCashShiftReport = {
   rows: RetailCashShiftReportRow[];
   openRows: RetailCashShiftReportRow[];
   closedRows: RetailCashShiftReportRow[];
+  financialSummary: ReturnType<typeof buildRetailPosCashFinancialSummary>;
   refundBreakdown: Array<{
     key: "cash_completed" | "card_completed" | "card_pending";
     label: string;
@@ -532,12 +571,33 @@ export type RetailPostSaleReport = {
     pendingRefundCents: number;
     failedRefundsCount: number;
     failedRefundCents: number;
+    cancellation_documents_count?: number;
+    completed_documents_count?: number;
+    pending_documents_count?: number;
+    cash_only_cancellations_count?: number;
+    card_only_cancellations_count?: number;
+    mixed_cancellations_count?: number;
+    total_cancelled_cents?: number;
+    completed_cash_refunds_cents?: number;
+    completed_card_refunds_cents?: number;
+    pending_card_refunds_cents?: number;
+    completed_refunds_cents?: number;
+    pending_refunds_cents?: number;
+    refund_components_count?: number;
+    cash_components_count?: number;
+    card_components_count?: number;
+    reconciliation?: {
+      component_totals_match_documents: boolean;
+      completed_cash_matches_cash_movements: boolean;
+      completed_documents_have_no_pending_components: boolean;
+    };
+    warnings?: string[];
   };
   refundBreakdown: Array<{
     key: "cash_completed" | "card_completed" | "card_pending" | "failed";
     label: string;
     refundStatus: RetailPosPostSaleRefundStatus;
-    refundMethod: RetailPosPostSaleRefundMethod | null;
+    refundMethod: RetailPosPostSaleRefundMethod | "mixed" | null;
     refundsCount: number;
     amountCents: number;
   }>;
@@ -575,18 +635,25 @@ export type RetailPostSaleReport = {
     operationLabel: string;
     originalOrderId: string;
     originalFolio: string;
+    originalPaymentMethod?: "cash" | "card" | "mixed" | "unknown";
     responsibleUserName: string | null;
     responsibleUserId: string | null;
     reasonCode: string;
     comment: string | null;
     commercialAmountCents: number;
     refundAmountCents: number | null;
-    refundMethod: RetailPosPostSaleRefundMethod | null;
+    refundMethod: RetailPosPostSaleRefundMethod | "mixed" | null;
     refundStatus: RetailPosPostSaleRefundStatus | null;
     externalReference: string | null;
     cashShiftId: string | null;
     lineCount: number;
     quantityReturned: number;
+    componentCount?: number;
+    cashReturnedCents?: number;
+    cardCompletedCents?: number;
+    cardPendingCents?: number;
+    hasModernComponents?: boolean;
+    coverageLabel?: "Componentes modernos" | "Registro histórico";
   }>;
 };
 
@@ -714,8 +781,8 @@ function normalizePostSaleRefundStatus(
 
 function normalizePostSaleRefundMethod(
   value: string | null | undefined,
-): "all" | RetailPosPostSaleRefundMethod {
-  if (value === "cash" || value === "card_external" || value === "store_credit_future") {
+): "all" | RetailPosPostSaleRefundMethod | "mixed" {
+  if (value === "cash" || value === "card_external" || value === "store_credit_future" || value === "mixed") {
     return value;
   }
 
@@ -974,6 +1041,11 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
     ticketEventsResult,
     postSaleDocumentsResult,
     postSaleRefundsResult,
+    paymentTransactionsResult,
+    paymentApplicationsResult,
+    refundComponentsResult,
+    cashMovementsResult,
+    postSaleLinesResult,
   ] =
     await Promise.all([
       supabase
@@ -1021,7 +1093,7 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
       supabase
         .from("retail_pos_payments")
         .select(
-          "id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, paid_at",
+          "id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, paid_at, payment_transaction_id, payment_sequence",
         )
         .eq("tenant_id", tenantId)
         .gte("paid_at", startIso)
@@ -1062,6 +1134,33 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
         .gte("created_at", startIso)
         .lt("created_at", endIso)
         .returns<RetailPostSaleRefundRow[]>(),
+      supabase
+        .from("retail_pos_payment_transactions")
+        .select("id, tenant_id, total_applied_cents, cash_shift_id, expected_order_revision")
+        .eq("tenant_id", tenantId)
+        .returns<RetailPaymentTransactionRow[]>(),
+      supabase
+        .from("retail_pos_order_payment_applications")
+        .select("id, payment_transaction_id, order_id, amount_cents")
+        .eq("tenant_id", tenantId)
+        .returns<RetailPaymentApplicationRow[]>(),
+      supabase
+        .from("retail_pos_post_sale_refund_components")
+        .select("id, tenant_id, post_sale_document_id, refund_method, amount_cents, status")
+        .eq("tenant_id", tenantId)
+        .returns<RetailRefundComponentRow[]>(),
+      supabase
+        .from("retail_pos_cash_movements")
+        .select("id, tenant_id, cash_shift_id, post_sale_document_id, post_sale_refund_id, movement_type, amount_cents, occurred_at")
+        .eq("tenant_id", tenantId)
+        .returns<RetailCashMovementRow[]>(),
+      supabase
+        .from("retail_pos_post_sale_lines")
+        .select("id, post_sale_document_id, original_order_line_id, line_number, quantity_returned_now, returned_gross_amount_cents, returned_total_discount_cents, returned_net_amount_cents")
+        .eq("tenant_id", tenantId)
+        .gte("created_at", startIso)
+        .lt("created_at", endIso)
+        .returns<RetailPostSaleLineRow[]>(),
     ]);
 
   if (devicesResult.error) {
@@ -1098,6 +1197,21 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
   }
   if (postSaleRefundsResult.error) {
     throw new Error(`Unable to load retail post sale refunds report: ${postSaleRefundsResult.error.message}`);
+  }
+  if (paymentTransactionsResult.error) {
+    throw new Error(`Unable to load retail payment transactions report: ${paymentTransactionsResult.error.message}`);
+  }
+  if (paymentApplicationsResult.error) {
+    throw new Error(`Unable to load retail payment applications report: ${paymentApplicationsResult.error.message}`);
+  }
+  if (refundComponentsResult.error) {
+    throw new Error(`Unable to load retail refund components report: ${refundComponentsResult.error.message}`);
+  }
+  if (cashMovementsResult.error) {
+    throw new Error(`Unable to load retail cash movements report: ${cashMovementsResult.error.message}`);
+  }
+  if (postSaleLinesResult.error) {
+    throw new Error(`Unable to load retail post sale lines report: ${postSaleLinesResult.error.message}`);
   }
 
   const deviceById = new Map((devicesResult.data ?? []).map((row) => [row.id, row]));
@@ -1328,6 +1442,11 @@ async function loadBaseRetailReportData(tenantId: string, filtersInput?: RetailR
     postSaleRefunds,
     postSaleDocumentByOrderId,
     postSaleRefundByDocumentId,
+    paymentTransactions: paymentTransactionsResult.data ?? [],
+    paymentApplications: paymentApplicationsResult.data ?? [],
+    refundComponents: refundComponentsResult.data ?? [],
+    cashMovements: cashMovementsResult.data ?? [],
+    postSaleLines: postSaleLinesResult.data ?? [],
     lines: (linesResult.data ?? []).filter((line) => orders.some((order) => order.id === line.order_id)),
     discounts: discountsResult.data ?? [],
     startIso,
@@ -1412,7 +1531,12 @@ async function buildRetailReportsOverviewFromLoadedData(
 ): Promise<RetailReportsOverview> {
   const pendingOrders = data.orders.filter((order) => order.status === "pending_payment");
   const voidedOrders = data.orders.filter((order) => isVoidedOrder(order));
-  const paidOrders = data.orders.filter((order) => order.status === "paid");
+  const canonicalTransactionIds = getCanonicalCashTransactionIds(data.paymentTransactions, data.paymentApplications);
+  const canonicalPayments = data.payments.filter(
+    (payment) => !payment.payment_transaction_id || canonicalTransactionIds.has(payment.payment_transaction_id),
+  );
+  const canonicalPaidOrderIds = new Set(canonicalPayments.map((payment) => payment.order_id));
+  const paidOrders = data.orders.filter((order) => order.status === "paid" && canonicalPaidOrderIds.has(order.id));
   const orderRowsPostSaleData = await loadPostSaleDataForOrderIds(
     tenantId,
     data.orders.map((order) => order.id),
@@ -1473,7 +1597,64 @@ async function buildRetailReportsOverviewFromLoadedData(
     return issues.map((type) => ({ type, orderId: order.id, folio: order.folio }));
   });
   const soldUnits = soldLines.reduce((sum, line) => sum + parseQuantity(line.quantity), 0);
-  const paymentMethods = buildPaymentMethodSummary(data.payments);
+  const paymentMethods = buildPaymentMethodSummary(canonicalPayments);
+  const overviewTransactionIds = new Set(
+    canonicalPayments.map((payment) => payment.payment_transaction_id).filter((id): id is string => Boolean(id)),
+  );
+  const overviewShiftIds = new Set(canonicalPayments.map((payment) => payment.cash_shift_id));
+  const knownShiftIds = new Set(data.shifts.map((shift) => shift.id));
+  const paidOutsideShiftOrderIds = new Set(
+    canonicalPayments
+      .filter((payment) => !knownShiftIds.has(payment.cash_shift_id))
+      .map((payment) => payment.order_id),
+  );
+  const overviewLegacyTransactions: CashFinancialTransaction[] = canonicalPayments
+    .filter((payment) => !payment.payment_transaction_id)
+    .map((payment) => ({
+      id: `legacy:${payment.id}`,
+      total_applied_cents: payment.amount_cents,
+      cash_shift_id: payment.cash_shift_id,
+    }));
+  const overviewRefundComponents: CashFinancialRefundComponent[] = data.postSaleDocuments.flatMap((document) => {
+    const components = data.refundComponents.filter((component) => component.post_sale_document_id === document.id);
+    if (components.length > 0) {
+      return components as CashFinancialRefundComponent[];
+    }
+
+    return data.postSaleRefunds
+      .filter((refund) => refund.post_sale_document_id === document.id)
+      .flatMap((refund) => {
+        const status = refund.status === "pending" ? "pending_external_confirmation" : refund.status;
+        if (status !== "completed" && status !== "pending_external_confirmation" && status !== "failed" && status !== "cancelled") {
+          return [];
+        }
+
+        return [{
+          id: `legacy:${refund.id}`,
+          post_sale_document_id: document.id,
+          cash_shift_id: refund.cash_shift_id,
+          refund_method: (refund.refund_method === "card_external" ? "card" : "cash") as "cash" | "card",
+          amount_cents: refund.amount_cents,
+          status,
+        }];
+      });
+  });
+  const overviewFinancialSummary = buildRetailPosCashFinancialSummary({
+    opening_float_cents: data.shifts
+      .filter((shift) => overviewShiftIds.has(shift.id))
+      .reduce((sum, shift) => sum + shift.opening_float_cents, 0),
+    transactions: [
+      ...data.paymentTransactions.filter((transaction) => overviewTransactionIds.has(transaction.id)),
+      ...overviewLegacyTransactions,
+    ],
+    applications: data.paymentApplications.filter((application) => overviewTransactionIds.has(application.payment_transaction_id)),
+    tenders: canonicalPayments.map((payment) => ({
+      ...payment,
+      payment_transaction_id: payment.payment_transaction_id ?? `legacy:${payment.id}`,
+    })),
+    refund_components: overviewRefundComponents,
+    cash_movements: data.cashMovements.filter((movement) => overviewShiftIds.has(movement.cash_shift_id)),
+  });
   const lineDiscountsCents = paidOrders.reduce((sum, order) => sum + (order.direct_discount_cents ?? 0), 0);
   const orderDiscountsCents = paidOrders.reduce((sum, order) => sum + (order.order_discount_cents ?? 0), 0);
   const cashRefundsCompletedCents = data.postSaleRefunds
@@ -1663,6 +1844,10 @@ async function buildRetailReportsOverviewFromLoadedData(
       soldLinesCount: soldLines.length,
       soldUnits,
       openShiftsCount: data.shifts.filter((shift) => shift.status === "open").length,
+      paidOutsideShiftCount: paidOutsideShiftOrderIds.size,
+      paidOutsideShiftCents: paidOrders
+        .filter((order) => paidOutsideShiftOrderIds.has(order.id))
+        .reduce((sum, order) => sum + order.total_cents, 0),
       wholesaleSalesCount: paidOrders.filter((order) => classifyPriceTier(linesByOrderIdForBuild(data.lines, order.id)) === "wholesale" || classifyPriceTier(linesByOrderIdForBuild(data.lines, order.id)) === "mixed").length,
       wholesaleBaseCents: wholesaleEconomics.reduce((sum, row) => sum + (row.economics.approvedBaseCents ?? 0), 0),
       wholesaleDifferenceCents: wholesaleEconomics.reduce((sum, row) => sum + (row.economics.priceTierDifferenceCents ?? 0), 0),
@@ -1699,6 +1884,7 @@ async function buildRetailReportsOverviewFromLoadedData(
       decisionCounts,
       anomalies,
     },
+    financialSummary: overviewFinancialSummary,
     discountBreakdown: {
       byReason: [...discountByReasonMap.values()].sort(
         (left, right) => right.totalDiscountCents - left.totalDiscountCents,
@@ -1717,7 +1903,10 @@ async function buildRetailReportsOverviewFromLoadedData(
     attention,
     audit: buildAudit(data.ticketEvents),
     recentOrders: visibleOrders.map((order) => {
-      const firstPayment = (data.paymentsByOrderId.get(order.id) ?? [])[0] ?? null;
+      const orderPayments = data.paymentsByOrderId.get(order.id) ?? [];
+      const paymentMethod: "cash" | "card" | "mixed" | null = orderPayments.some((payment) => payment.payment_method === "card")
+        ? orderPayments.some((payment) => payment.payment_method === "cash") ? "mixed" : "card"
+        : orderPayments.some((payment) => payment.payment_method === "cash") ? "cash" : null;
       const postSaleDocuments = orderRowsPostSaleData.documents.filter(
         (document) => document.original_order_id === order.id && document.status === "completed",
       );
@@ -1780,7 +1969,7 @@ async function buildRetailReportsOverviewFromLoadedData(
         lastPostSaleAt,
         totalCents: order.total_cents,
         grossSalesCents: order.subtotal_cents,
-        paymentMethod: firstPayment?.payment_method ?? null,
+        paymentMethod,
         originDeviceName: data.deviceById.get(order.origin_device_id)?.name ?? null,
         originKioskLabel: formatKioskLabel(data.deviceById.get(order.origin_device_id)),
         paidDeviceName: order.paid_by_device_id ? data.deviceById.get(order.paid_by_device_id)?.name ?? null : null,
@@ -1818,20 +2007,18 @@ export async function getRetailCashShiftReport(
   filtersInput?: RetailReportsFiltersInput,
 ): Promise<RetailCashShiftReport> {
   const data = await loadBaseRetailReportData(tenantId, filtersInput);
+  const canonicalTransactionIds = getCanonicalCashTransactionIds(data.paymentTransactions, data.paymentApplications);
   const rows = data.shifts.map((shift) => {
-    const payments = data.paymentsByShiftId.get(shift.id) ?? [];
+    const payments = (data.paymentsByShiftId.get(shift.id) ?? []).filter(
+      (payment) => !payment.payment_transaction_id || canonicalTransactionIds.has(payment.payment_transaction_id),
+    );
+    const shiftTransactions = data.paymentTransactions.filter(
+      (transaction) => transaction.cash_shift_id === shift.id && canonicalTransactionIds.has(transaction.id),
+    );
     const shiftOrderIds = [...new Set(payments.map((payment) => payment.order_id))];
     const shiftOrders = shiftOrderIds
       .map((orderId) => data.orders.find((order) => order.id === orderId))
       .filter((order): order is RetailOrderRow => Boolean(order));
-    const cashSalesCents = payments
-      .filter((payment) => payment.payment_method === "cash")
-      .reduce((sum, payment) => sum + payment.amount_cents, 0);
-    const cardSalesCents = payments
-      .filter((payment) => payment.payment_method === "card")
-      .reduce((sum, payment) => sum + payment.amount_cents, 0);
-    const ordersCount = new Set(payments.map((payment) => payment.order_id)).size;
-    const grossSalesCents = shiftOrders.reduce((sum, order) => sum + order.subtotal_cents, 0);
     const discountsCents = shiftOrders.reduce((sum, order) => sum + order.discount_cents, 0);
     const shiftPostSaleDocuments = data.postSaleDocuments.filter(
       (document) =>
@@ -1855,44 +2042,77 @@ export async function getRetailCashShiftReport(
     const shiftPostSaleRefunds = data.postSaleRefunds.filter(
       (refund) => refund.cash_shift_id === shift.id && shiftDocumentById.has(refund.post_sale_document_id),
     );
-    const cashCancellationRefundsCents = shiftPostSaleRefunds
-      .filter((refund) => {
-        if (refund.status !== "completed" || refund.refund_method !== "cash") {
-          return false;
-        }
-        const document = shiftDocumentById.get(refund.post_sale_document_id);
-        return document ? isSaleCancellationDocument(document) : false;
+    const shiftDocumentIds = new Set(shiftPostSaleDocuments.map((document) => document.id));
+    const componentDocumentIds = new Set(
+      data.refundComponents
+        .filter((component) => shiftDocumentIds.has(component.post_sale_document_id))
+        .map((component) => component.post_sale_document_id),
+    );
+    const legacyRefundComponents: CashFinancialRefundComponent[] = shiftPostSaleRefunds.flatMap((refund) => {
+      if (componentDocumentIds.has(refund.post_sale_document_id)) return [];
+      const status = refund.status === "pending" ? "pending_external_confirmation" : refund.status;
+      if (status !== "completed" && status !== "pending_external_confirmation" && status !== "failed" && status !== "cancelled") return [];
+      return [{
+        id: `legacy:${refund.id}`,
+        post_sale_document_id: refund.post_sale_document_id,
+        cash_shift_id: shift.id,
+        refund_method: (refund.refund_method === "card_external" ? "card" : "cash") as "cash" | "card",
+        amount_cents: refund.amount_cents,
+        status,
+      }];
+    });
+    const shiftRefundComponents: CashFinancialRefundComponent[] = [
+      ...data.refundComponents.filter((component) => shiftDocumentIds.has(component.post_sale_document_id)),
+      ...legacyRefundComponents,
+    ];
+    const financialSummary = buildRetailPosCashFinancialSummary({
+      opening_float_cents: shift.opening_float_cents,
+      transactions: [
+        ...shiftTransactions,
+        ...payments
+          .filter((payment) => !payment.payment_transaction_id)
+          .map((payment) => ({ id: `legacy:${payment.id}`, total_applied_cents: payment.amount_cents, cash_shift_id: shift.id })),
+      ],
+      applications: data.paymentApplications.filter((application) => canonicalTransactionIds.has(application.payment_transaction_id)),
+      tenders: payments.map((payment) => ({
+        ...payment,
+        payment_transaction_id: payment.payment_transaction_id ?? `legacy:${payment.id}`,
+      })),
+      refund_components: [
+        ...shiftRefundComponents,
+      ],
+      cash_movements: data.cashMovements.filter((movement) => movement.cash_shift_id === shift.id),
+    });
+    const canonicalOrdersCount = financialSummary.sales_count;
+    const canonicalGrossSalesCents = financialSummary.gross_sales_cents;
+    const cashSalesCents = financialSummary.cash_sales_cents;
+    const cardSalesCents = financialSummary.card_sales_cents;
+    const completedCashComponents = shiftRefundComponents.filter(
+      (component) => component.refund_method === "cash" && component.status === "completed",
+    );
+    const completedCardComponents = shiftRefundComponents.filter(
+      (component) => component.refund_method === "card" && component.status === "completed",
+    );
+    const pendingCardComponents = shiftRefundComponents.filter(
+      (component) => component.refund_method === "card" && component.status === "pending_external_confirmation",
+    );
+    const cashCancellationRefundsCents = completedCashComponents
+      .filter((component) => isSaleCancellationDocument(shiftDocumentById.get(component.post_sale_document_id)!))
+      .reduce((sum, component) => sum + component.amount_cents, 0);
+    const cashReturnRefundsCents = completedCashComponents
+      .filter((component) => {
+        const document = shiftDocumentById.get(component.post_sale_document_id);
+        return document?.document_type === "return_full" || document?.document_type === "return_partial";
       })
-      .reduce((sum, refund) => sum + refund.amount_cents, 0);
-    const cashReturnRefundsCents = shiftPostSaleRefunds
-      .filter((refund) => {
-        if (refund.status !== "completed" || refund.refund_method !== "cash") {
-          return false;
-        }
-        const document = shiftDocumentById.get(refund.post_sale_document_id);
-        return document
-          ? document.document_type === "return_full" || document.document_type === "return_partial"
-          : false;
-      })
-      .reduce((sum, refund) => sum + refund.amount_cents, 0);
-    const cashRefundsCents = cashCancellationRefundsCents + cashReturnRefundsCents;
-    const cashRefundsCount = shiftPostSaleRefunds.filter(
-      (refund) => refund.status === "completed" && refund.refund_method === "cash",
-    ).length;
-    const cardRefundsCompletedCount = shiftPostSaleRefunds.filter(
-      (refund) => refund.status === "completed" && refund.refund_method === "card_external",
-    ).length;
-    const cardRefundsCompletedCents = shiftPostSaleRefunds
-      .filter((refund) => refund.status === "completed" && refund.refund_method === "card_external")
-      .reduce((sum, refund) => sum + refund.amount_cents, 0);
-    const cardRefundsPendingCount = shiftPostSaleRefunds.filter(
-      (refund) => refund.status === "pending" && refund.refund_method === "card_external",
-    ).length;
-    const cardRefundsPendingCents = shiftPostSaleRefunds
-      .filter((refund) => refund.status === "pending" && refund.refund_method === "card_external")
-      .reduce((sum, refund) => sum + refund.amount_cents, 0);
+      .reduce((sum, component) => sum + component.amount_cents, 0);
+    const cashRefundsCents = financialSummary.completed_cash_refunds_cents;
+    const cashRefundsCount = completedCashComponents.length;
+    const cardRefundsCompletedCount = completedCardComponents.length;
+    const cardRefundsCompletedCents = financialSummary.completed_card_refunds_cents;
+    const cardRefundsPendingCount = pendingCardComponents.length;
+    const cardRefundsPendingCents = financialSummary.pending_card_refunds_cents;
     const cardRefundsCents = cardRefundsCompletedCents;
-    const expectedCashCents = shift.opening_float_cents + cashSalesCents - cashRefundsCents;
+    const expectedCashCents = financialSummary.expected_cash_cents;
     const differenceCents =
       typeof shift.difference_cents === "number"
         ? shift.difference_cents
@@ -1910,7 +2130,7 @@ export async function getRetailCashShiftReport(
       closedAt: shift.closed_at,
       status: shift.status,
       openingFloatCents: shift.opening_float_cents,
-      grossSalesCents,
+      grossSalesCents: canonicalGrossSalesCents,
       discountsCents,
       cancellationsCount: shiftSaleVoidDocuments.length,
       cancellationAmountCents: shiftSaleVoidDocuments.reduce(
@@ -1935,9 +2155,10 @@ export async function getRetailCashShiftReport(
       cardRefundsPendingCount,
       cardRefundsPendingCents,
       cardRefundsCents,
-      totalSalesCents: cashSalesCents + cardSalesCents,
+      totalSalesCents: financialSummary.gross_sales_cents,
       paymentsCount: payments.length,
-      ordersCount,
+      ordersCount: canonicalOrdersCount,
+      financialSummary,
       closingNote: shift.closing_note,
     };
   });
@@ -1973,6 +2194,74 @@ export async function getRetailCashShiftReport(
       tone: "warning",
     },
   ];
+  const financialSummary = rows.reduce<ReturnType<typeof buildRetailPosCashFinancialSummary>>(
+    (total, row) => ({
+      sales_count: total.sales_count + row.financialSummary.sales_count,
+      payment_transactions_count: total.payment_transactions_count + row.financialSummary.payment_transactions_count,
+      tenders_count: total.tenders_count + row.financialSummary.tenders_count,
+      cash_only_sales_count: total.cash_only_sales_count + row.financialSummary.cash_only_sales_count,
+      card_only_sales_count: total.card_only_sales_count + row.financialSummary.card_only_sales_count,
+      mixed_sales_count: total.mixed_sales_count + row.financialSummary.mixed_sales_count,
+      cash_tenders_count: total.cash_tenders_count + row.financialSummary.cash_tenders_count,
+      card_tenders_count: total.card_tenders_count + row.financialSummary.card_tenders_count,
+      gross_sales_cents: total.gross_sales_cents + row.financialSummary.gross_sales_cents,
+      cash_sales_cents: total.cash_sales_cents + row.financialSummary.cash_sales_cents,
+      card_sales_cents: total.card_sales_cents + row.financialSummary.card_sales_cents,
+      cash_received_cents: total.cash_received_cents + row.financialSummary.cash_received_cents,
+      cash_change_cents: total.cash_change_cents + row.financialSummary.cash_change_cents,
+      completed_cash_refunds_cents: total.completed_cash_refunds_cents + row.financialSummary.completed_cash_refunds_cents,
+      completed_card_refunds_cents: total.completed_card_refunds_cents + row.financialSummary.completed_card_refunds_cents,
+      pending_card_refunds_cents: total.pending_card_refunds_cents + row.financialSummary.pending_card_refunds_cents,
+      completed_refunds_cents: total.completed_refunds_cents + row.financialSummary.completed_refunds_cents,
+      pending_refunds_cents: total.pending_refunds_cents + row.financialSummary.pending_refunds_cents,
+      settled_net_sales_cents: total.settled_net_sales_cents + row.financialSummary.settled_net_sales_cents,
+      opening_float_cents: total.opening_float_cents + row.financialSummary.opening_float_cents,
+      other_cash_in_cents: total.other_cash_in_cents + row.financialSummary.other_cash_in_cents,
+      other_cash_out_cents: total.other_cash_out_cents + row.financialSummary.other_cash_out_cents,
+      expected_cash_cents: total.expected_cash_cents + row.financialSummary.expected_cash_cents,
+      expected_cash_variation_cents: (total.expected_cash_variation_cents ?? 0) + (row.financialSummary.expected_cash_variation_cents ?? 0),
+      reconciliation: {
+        tender_total_matches_sales: total.reconciliation.tender_total_matches_sales && row.financialSummary.reconciliation.tender_total_matches_sales,
+        application_total_matches_sales: (total.reconciliation.application_total_matches_sales ?? true) && (row.financialSummary.reconciliation.application_total_matches_sales ?? true),
+        received_less_change_matches_cash_sales: total.reconciliation.received_less_change_matches_cash_sales && row.financialSummary.reconciliation.received_less_change_matches_cash_sales,
+        cash_components_match_cash_movements: total.reconciliation.cash_components_match_cash_movements && row.financialSummary.reconciliation.cash_components_match_cash_movements,
+      },
+      warnings: [...total.warnings, ...row.financialSummary.warnings],
+    }),
+    {
+      sales_count: 0,
+      payment_transactions_count: 0,
+      tenders_count: 0,
+      cash_only_sales_count: 0,
+      card_only_sales_count: 0,
+      mixed_sales_count: 0,
+      cash_tenders_count: 0,
+      card_tenders_count: 0,
+      gross_sales_cents: 0,
+      cash_sales_cents: 0,
+      card_sales_cents: 0,
+      cash_received_cents: 0,
+      cash_change_cents: 0,
+      completed_cash_refunds_cents: 0,
+      completed_card_refunds_cents: 0,
+      pending_card_refunds_cents: 0,
+      completed_refunds_cents: 0,
+      pending_refunds_cents: 0,
+      settled_net_sales_cents: 0,
+      opening_float_cents: 0,
+      other_cash_in_cents: 0,
+      other_cash_out_cents: 0,
+      expected_cash_cents: 0,
+      expected_cash_variation_cents: 0,
+      reconciliation: {
+        tender_total_matches_sales: true,
+        application_total_matches_sales: true,
+        received_less_change_matches_cash_sales: true,
+        cash_components_match_cash_movements: true,
+      },
+      warnings: [],
+    },
+  );
 
   return {
     filters: data.filters,
@@ -1980,6 +2269,7 @@ export async function getRetailCashShiftReport(
     rows,
     openRows,
     closedRows,
+    financialSummary,
     refundBreakdown,
     totals: {
       shiftsCount: rows.length,
@@ -2013,7 +2303,7 @@ export async function getRetailCashShiftReport(
   };
 }
 
-export async function getRetailPostSaleReport(
+export async function getLegacyRetailPostSaleReport(
   tenantId: string,
   filtersInput?: RetailPostSaleReportFiltersInput,
 ): Promise<RetailPostSaleReport> {
@@ -2383,6 +2673,123 @@ export async function getRetailPostSaleReport(
   };
 }
 
+export async function getRetailPostSaleReport(
+  tenantId: string,
+  filtersInput?: RetailPostSaleReportFiltersInput,
+): Promise<RetailPostSaleReport> {
+  const filters = buildPostSaleFilters(filtersInput);
+  const data = await loadBaseRetailReportData(tenantId, {
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+  });
+  const originalOrderById = new Map(data.orders.map((order) => [order.id, order]));
+  const summary = buildPostSaleReportSummary({
+    documents: data.postSaleDocuments.map((document) => ({
+      ...document,
+      original_folio: originalOrderById.get(document.original_order_id)?.folio ?? "Sin folio",
+      cash_shift_id: document.cash_shift_id,
+      responsible_user_name: document.created_by_pos_user_id
+        ? data.userById.get(document.created_by_pos_user_id)?.name ?? null
+        : null,
+    })),
+    legacyRefunds: data.postSaleRefunds,
+    components: data.refundComponents,
+    payments: data.payments.map((payment) => ({ order_id: payment.order_id, payment_method: payment.payment_method })),
+    cashMovements: data.cashMovements.filter((movement) => isWithinRange(movement.occurred_at, data.startIso, data.endIso)).map((movement) => ({
+      post_sale_document_id: movement.post_sale_document_id,
+      amount_cents: movement.amount_cents,
+    })),
+    lines: data.postSaleLines,
+    filters: {
+      operationType: filters.operationType,
+      refundStatus: filters.refundStatus,
+      refundMethod: filters.refundMethod,
+      reasonCode: filters.reasonCode,
+      responsibleUserId: filters.responsibleUserId,
+    },
+  });
+  const byReason = [...new Map(summary.rows.map((row) => [row.reasonCode, row])).values()].map((row) => ({
+    reasonCode: row.reasonCode,
+    operationsCount: summary.rows.filter((candidate) => candidate.reasonCode === row.reasonCode).length,
+    totalAmountCents: summary.rows.filter((candidate) => candidate.reasonCode === row.reasonCode)
+      .reduce((total, candidate) => total + candidate.commercialAmountCents, 0),
+  })).sort((left, right) => right.totalAmountCents - left.totalAmountCents);
+  const byResponsibleUser = [...new Map(summary.rows.map((row) => [row.responsibleUserId ?? "unknown", row])).values()].map((row) => ({
+    posUserId: row.responsibleUserId,
+    posUserName: row.responsibleUserName,
+    cancelledSalesCount: summary.rows.filter((candidate) => candidate.responsibleUserId === row.responsibleUserId && candidate.operationType === "sale_cancellation").length,
+    returnsCount: summary.rows.filter((candidate) => candidate.responsibleUserId === row.responsibleUserId && candidate.operationType !== "sale_cancellation").length,
+    operationsCount: summary.rows.filter((candidate) => candidate.responsibleUserId === row.responsibleUserId).length,
+    totalAmountCents: summary.rows.filter((candidate) => candidate.responsibleUserId === row.responsibleUserId).reduce((total, candidate) => total + candidate.commercialAmountCents, 0),
+  })).sort((left, right) => right.totalAmountCents - left.totalAmountCents);
+  const trend = buildRetailPostSaleTrend({
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+    completedPostSaleDocuments: summary.rows.map((row) => ({
+      createdAt: row.registeredAt,
+      documentType: row.operationType,
+      netAmountCents: row.commercialAmountCents,
+    })),
+  });
+  return {
+    filters,
+    reasonOptions: byReason,
+    responsibleUsers: byResponsibleUser.filter((row) => Boolean(row.posUserId && row.posUserName)).map((row) => ({ posUserId: row.posUserId!, posUserName: row.posUserName! })),
+    summary: {
+      cancelledSalesCount: summary.rows.filter((row) => row.operationType === "sale_cancellation").length,
+      cancelledSalesCents: summary.rows.filter((row) => row.operationType === "sale_cancellation").reduce((total, row) => total + row.commercialAmountCents, 0),
+      fullReturnsCount: summary.rows.filter((row) => row.operationType === "return_full").length,
+      fullReturnsCents: summary.rows.filter((row) => row.operationType === "return_full").reduce((total, row) => total + row.commercialAmountCents, 0),
+      partialReturnsCount: summary.rows.filter((row) => row.operationType === "return_partial").length,
+      partialReturnsCents: summary.rows.filter((row) => row.operationType === "return_partial").reduce((total, row) => total + row.commercialAmountCents, 0),
+      returnsCount: summary.rows.filter((row) => row.operationType !== "sale_cancellation").length,
+      returnedCents: summary.rows.filter((row) => row.operationType !== "sale_cancellation").reduce((total, row) => total + row.commercialAmountCents, 0),
+      revertedAmountCents: summary.rows.reduce((total, row) => total + row.commercialAmountCents, 0),
+      completedCashRefundsCount: summary.rows.filter((row) => row.cashReturnedCents > 0).length,
+      cashRefundsCompletedCents: summary.summary.completed_cash_refunds_cents,
+      completedCardRefundsCount: summary.rows.filter((row) => row.cardCompletedCents > 0).length,
+      cardRefundsCompletedCents: summary.summary.completed_card_refunds_cents,
+      completedRefundsCount: summary.summary.completed_documents_count,
+      completedRefundsCents: summary.summary.completed_refunds_cents,
+      pendingRefundsCount: summary.summary.pending_documents_count,
+      cardRefundsPendingCents: summary.summary.pending_card_refunds_cents,
+      pendingRefundCents: summary.summary.pending_refunds_cents,
+      failedRefundsCount: summary.rows.filter((row) => row.refundStatus === "failed").length,
+      failedRefundCents: 0,
+      cancellation_documents_count: summary.summary.cancellation_documents_count,
+      completed_documents_count: summary.summary.completed_documents_count,
+      pending_documents_count: summary.summary.pending_documents_count,
+      cash_only_cancellations_count: summary.summary.cash_only_cancellations_count,
+      card_only_cancellations_count: summary.summary.card_only_cancellations_count,
+      mixed_cancellations_count: summary.summary.mixed_cancellations_count,
+      total_cancelled_cents: summary.summary.total_cancelled_cents,
+      completed_cash_refunds_cents: summary.summary.completed_cash_refunds_cents,
+      completed_card_refunds_cents: summary.summary.completed_card_refunds_cents,
+      pending_card_refunds_cents: summary.summary.pending_card_refunds_cents,
+      completed_refunds_cents: summary.summary.completed_refunds_cents,
+      pending_refunds_cents: summary.summary.pending_refunds_cents,
+      refund_components_count: summary.summary.refund_components_count,
+      cash_components_count: summary.summary.cash_components_count,
+      card_components_count: summary.summary.card_components_count,
+      reconciliation: summary.summary.reconciliation,
+      warnings: summary.summary.warnings,
+    },
+    refundBreakdown: [
+      { key: "cash_completed" as const, label: "Devoluciones de efectivo completadas", refundStatus: "completed" as const, refundMethod: "cash" as const, refundsCount: summary.rows.filter((row) => row.cashReturnedCents > 0).length, amountCents: summary.summary.completed_cash_refunds_cents },
+      { key: "card_completed" as const, label: "Reembolsos de tarjeta confirmados", refundStatus: "completed" as const, refundMethod: "card_external" as const, refundsCount: summary.rows.filter((row) => row.cardCompletedCents > 0).length, amountCents: summary.summary.completed_card_refunds_cents },
+      { key: "card_pending" as const, label: "Reembolsos de tarjeta pendientes", refundStatus: "pending" as const, refundMethod: "card_external" as const, refundsCount: summary.rows.filter((row) => row.cardPendingCents > 0).length, amountCents: summary.summary.pending_card_refunds_cents },
+    ].filter((row) => row.refundsCount > 0 || row.amountCents > 0),
+    refundStatusBreakdown: ["completed", "pending", "failed"].map((status) => {
+      const matching = summary.rows.filter((row) => row.refundStatus === status);
+      return { key: status as "completed" | "pending" | "failed", label: status === "completed" ? "Completados" : status === "pending" ? "Pendientes" : "Fallidos", refundStatus: status as "completed" | "pending" | "failed", refundsCount: matching.length, amountCents: matching.reduce((total, row) => total + row.refundAmountCents, 0), share: summary.rows.length > 0 ? matching.length / summary.rows.length : null };
+    }).filter((row) => row.refundsCount > 0 || row.amountCents > 0),
+    trend: { granularity: trend.granularity, points: trend.points },
+    byReason,
+    byResponsibleUser,
+    rows: summary.rows,
+  };
+}
+
 export async function getRetailSalesReport(
   tenantId: string,
   filtersInput?: RetailReportsFiltersInput,
@@ -2561,7 +2968,7 @@ export async function getRetailPosZReportByCashShift(params: {
     });
   }
 
-  const [deviceResult, settingsResult, usersResult, paymentsResult, postSaleDocumentsResult, postSaleRefundsResult, ticketEventsResult] = await Promise.all([
+  const [deviceResult, settingsResult, usersResult, paymentsResult, postSaleDocumentsResult, postSaleRefundsResult, ticketEventsResult, paymentTransactionsResult, paymentApplicationsResult, refundComponentsResult, cashMovementsResult] = await Promise.all([
     supabase.from("pos_devices").select("id, name").eq("tenant_id", params.tenantId).eq("id", shift.device_id).limit(1).maybeSingle<DeviceRow>(),
     supabase
       .from("retail_pos_device_settings")
@@ -2572,9 +2979,9 @@ export async function getRetailPosZReportByCashShift(params: {
       .limit(1)
       .maybeSingle<DeviceSettingsRow>(),
     supabase.from("pos_users").select("id, name").eq("tenant_id", params.tenantId).returns<PosUserRow[]>(),
-    supabase
-      .from("retail_pos_payments")
-      .select("id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, paid_at")
+      supabase
+        .from("retail_pos_payments")
+        .select("id, order_id, cash_shift_id, device_id, pos_user_id, payment_method, amount_cents, received_amount_cents, change_cents, paid_at, payment_transaction_id, payment_sequence")
       .eq("tenant_id", params.tenantId)
       .eq("cash_shift_id", shift.id)
       .order("paid_at", { ascending: true })
@@ -2596,13 +3003,35 @@ export async function getRetailPosZReportByCashShift(params: {
       .eq("tenant_id", params.tenantId)
       .eq("cash_shift_id", shift.id)
       .returns<RetailPostSaleRefundRow[]>(),
-    supabase
-      .from("retail_pos_ticket_events")
+      supabase
+        .from("retail_pos_ticket_events")
       .select("order_id, ticket_type, event_type, created_at")
       .eq("tenant_id", params.tenantId)
       .gte("created_at", shift.opened_at)
-      .lt("created_at", shift.closed_at ?? new Date().toISOString())
-      .returns<RetailTicketEventRow[]>(),
+        .lt("created_at", shift.closed_at ?? new Date().toISOString())
+        .returns<RetailTicketEventRow[]>(),
+      supabase
+        .from("retail_pos_payment_transactions")
+        .select("id, tenant_id, total_applied_cents, cash_shift_id, expected_order_revision")
+        .eq("tenant_id", params.tenantId)
+        .eq("cash_shift_id", shift.id)
+        .returns<RetailPaymentTransactionRow[]>(),
+      supabase
+        .from("retail_pos_order_payment_applications")
+        .select("id, payment_transaction_id, order_id, amount_cents")
+        .eq("tenant_id", params.tenantId)
+        .returns<RetailPaymentApplicationRow[]>(),
+      supabase
+        .from("retail_pos_post_sale_refund_components")
+        .select("id, tenant_id, post_sale_document_id, refund_method, amount_cents, status")
+        .eq("tenant_id", params.tenantId)
+        .returns<RetailRefundComponentRow[]>(),
+      supabase
+        .from("retail_pos_cash_movements")
+        .select("id, tenant_id, cash_shift_id, post_sale_document_id, post_sale_refund_id, movement_type, amount_cents, occurred_at")
+        .eq("tenant_id", params.tenantId)
+        .eq("cash_shift_id", shift.id)
+        .returns<RetailCashMovementRow[]>(),
   ]);
 
   if (deviceResult.error) {
@@ -2626,9 +3055,18 @@ export async function getRetailPosZReportByCashShift(params: {
   if (ticketEventsResult.error) {
     throw new Error(`Unable to load retail ticket events for Z report: ${ticketEventsResult.error.message}`);
   }
+  if (paymentTransactionsResult.error || paymentApplicationsResult.error || refundComponentsResult.error || cashMovementsResult.error) {
+    throw new Error("Unable to load retail financial evidence for Z report.");
+  }
 
   const userById = new Map((usersResult.data ?? []).map((row) => [row.id, row]));
-  const payments = paymentsResult.data ?? [];
+  const canonicalTransactionIds = getCanonicalCashTransactionIds(
+    paymentTransactionsResult.data ?? [],
+    paymentApplicationsResult.data ?? [],
+  );
+  const payments = (paymentsResult.data ?? []).filter(
+    (payment) => !payment.payment_transaction_id || canonicalTransactionIds.has(payment.payment_transaction_id),
+  );
   const orderIds = Array.from(new Set(payments.map((payment) => payment.order_id)));
 
   const ordersResult = orderIds.length
@@ -2684,38 +3122,66 @@ export async function getRetailPosZReportByCashShift(params: {
   const partialReturnDocuments = returnDocuments.filter((document) => document.document_type === "return_partial");
   const postSaleRefunds = postSaleRefundsResult.data ?? [];
   const ticketEvents = ticketEventsResult.data ?? [];
+  const zDocumentIds = new Set(postSaleDocuments.map((document) => document.id));
+  const zComponentDocumentIds = new Set(
+    (refundComponentsResult.data ?? [])
+      .filter((component) => zDocumentIds.has(component.post_sale_document_id))
+      .map((component) => component.post_sale_document_id),
+  );
+  const zLegacyRefundComponents: CashFinancialRefundComponent[] = postSaleRefunds.flatMap((refund) => {
+    if (zComponentDocumentIds.has(refund.post_sale_document_id)) return [];
+    const status = refund.status === "pending" ? "pending_external_confirmation" : refund.status;
+    if (status !== "completed" && status !== "pending_external_confirmation" && status !== "failed" && status !== "cancelled") return [];
+    return [{
+      id: `legacy:${refund.id}`,
+      post_sale_document_id: refund.post_sale_document_id,
+      cash_shift_id: shift.id,
+      refund_method: (refund.refund_method === "card_external" ? "card" : "cash") as "cash" | "card",
+      amount_cents: refund.amount_cents,
+      status,
+    }];
+  });
+  const zFinancialSummary = buildRetailPosCashFinancialSummary({
+    opening_float_cents: shift.opening_float_cents,
+    transactions: [
+      ...(paymentTransactionsResult.data ?? []).filter((transaction) => canonicalTransactionIds.has(transaction.id)),
+      ...payments
+        .filter((payment) => !payment.payment_transaction_id)
+        .map((payment) => ({ id: `legacy:${payment.id}`, total_applied_cents: payment.amount_cents, cash_shift_id: shift.id })),
+    ],
+    applications: (paymentApplicationsResult.data ?? []).filter((application) => canonicalTransactionIds.has(application.payment_transaction_id)),
+    tenders: payments.map((payment) => ({
+      ...payment,
+      payment_transaction_id: payment.payment_transaction_id ?? `legacy:${payment.id}`,
+    })),
+    refund_components: [
+      ...(refundComponentsResult.data ?? []).filter((component) => zDocumentIds.has(component.post_sale_document_id)),
+      ...zLegacyRefundComponents,
+    ],
+    cash_movements: cashMovementsResult.data ?? [],
+  });
+  const zRefundComponents: CashFinancialRefundComponent[] = [
+    ...(refundComponentsResult.data ?? []).filter((component) => zDocumentIds.has(component.post_sale_document_id)),
+    ...zLegacyRefundComponents,
+  ];
   const cashPayments = payments.filter((payment) => payment.payment_method === "cash");
   const cardPayments = payments.filter((payment) => payment.payment_method === "card");
-  const cashSalesCents = cashPayments.reduce((sum, payment) => sum + payment.amount_cents, 0);
-  const cardSalesCents = cardPayments.reduce((sum, payment) => sum + payment.amount_cents, 0);
+  const cashSalesCents = zFinancialSummary.cash_sales_cents;
+  const cardSalesCents = zFinancialSummary.card_sales_cents;
   const documentById = new Map(postSaleDocuments.map((document) => [document.id, document]));
-  const cashCancellationRefundsCents = postSaleRefunds
-    .filter((refund) => {
-      if (refund.status !== "completed" || refund.refund_method !== "cash") {
-        return false;
-      }
-      const document = documentById.get(refund.post_sale_document_id);
-      return document ? isSaleCancellationDocument(document) : false;
+  const cashCancellationRefundsCents = zRefundComponents
+    .filter((component) => component.refund_method === "cash" && component.status === "completed")
+    .filter((component) => isSaleCancellationDocument(documentById.get(component.post_sale_document_id)!))
+    .reduce((sum, component) => sum + component.amount_cents, 0);
+  const cashReturnRefundsCents = zRefundComponents
+    .filter((component) => component.refund_method === "cash" && component.status === "completed")
+    .filter((component) => {
+      const document = documentById.get(component.post_sale_document_id);
+      return document?.document_type === "return_full" || document?.document_type === "return_partial";
     })
-    .reduce((sum, refund) => sum + refund.amount_cents, 0);
-  const cashReturnRefundsCents = postSaleRefunds
-    .filter((refund) => {
-      if (refund.status !== "completed" || refund.refund_method !== "cash") {
-        return false;
-      }
-      const document = documentById.get(refund.post_sale_document_id);
-      return document
-        ? document.document_type === "return_full" || document.document_type === "return_partial"
-        : false;
-    })
-    .reduce((sum, refund) => sum + refund.amount_cents, 0);
-  const cashRefundsCents = cashCancellationRefundsCents + cashReturnRefundsCents;
-  const cardRefundsCompletedCents = postSaleRefunds
-    .filter((refund) => refund.status === "completed" && refund.refund_method === "card_external")
-    .reduce((sum, refund) => sum + refund.amount_cents, 0);
-  const cardRefundsPendingCents = postSaleRefunds
-    .filter((refund) => refund.status === "pending" && refund.refund_method === "card_external")
-    .reduce((sum, refund) => sum + refund.amount_cents, 0);
+    .reduce((sum, component) => sum + component.amount_cents, 0);
+  const cardRefundsCompletedCents = zFinancialSummary.completed_card_refunds_cents;
+  const cardRefundsPendingCents = zFinancialSummary.pending_card_refunds_cents;
   const totalSalesCents = cashSalesCents + cardSalesCents;
   const paidOrders = validOrderIds
     .map((orderId) => orderById.get(orderId))
@@ -2727,7 +3193,7 @@ export async function getRetailPosZReportByCashShift(params: {
       : 0;
 
   const persistedExpectedCashCents = shift.expected_cash_cents;
-  const expectedCashCents = shift.opening_float_cents + cashSalesCents - cashRefundsCents;
+  const expectedCashCents = zFinancialSummary.expected_cash_cents;
   if (persistedExpectedCashCents === null) {
     warnings.push({
       code: "expected_cash_recalculated",
@@ -2860,13 +3326,16 @@ export async function getRetailPosZReportByCashShift(params: {
     ],
     orders: paidOrders
       .map((order) => {
-        const firstPayment = payments.find((payment) => payment.order_id === order.id) ?? null;
+        const orderPayments = payments.filter((payment) => payment.order_id === order.id);
+        const paymentMethod: "cash" | "card" | "mixed" | null = orderPayments.some((payment) => payment.payment_method === "card")
+          ? orderPayments.some((payment) => payment.payment_method === "cash") ? "mixed" : "card"
+          : orderPayments.some((payment) => payment.payment_method === "cash") ? "cash" : null;
         return {
           orderId: order.id,
           folio: order.folio,
           paidAt: order.paid_at,
           totalCents: order.total_cents,
-          paymentMethod: firstPayment?.payment_method ?? null,
+          paymentMethod,
         };
       })
       .sort((left, right) => (right.paidAt ?? "").localeCompare(left.paidAt ?? "")),
@@ -2874,6 +3343,7 @@ export async function getRetailPosZReportByCashShift(params: {
       soldLinesCount: lines.length,
       soldUnits: lines.reduce((sum, line) => sum + parseQuantity(line.quantity), 0),
     },
+    financialSummary: zFinancialSummary,
     warnings,
   };
 }

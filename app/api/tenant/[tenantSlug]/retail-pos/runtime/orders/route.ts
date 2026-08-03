@@ -2,30 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { createRetailPosOrder } from "@/lib/retail-pos/orders";
 import { RetailPosRuntimeError } from "@/lib/retail-pos/errors";
 import { createRuntimePerfTrace } from "@/lib/retail-pos/runtime-perf";
+import type { CreateRetailPosOrderRequest } from "@/shared/types/retail-pos";
 
 type RouteParams = { tenantSlug: string };
 
-type CreateOrderBody = {
-  tenant_id: string;
-  origin_client_order_id: string;
-  origin_local_folio?: string | null;
-  origin_device_id: string;
-  created_by_pos_user_id: string;
-  copied_from_order_id?: string | null;
-  lines: Array<{
-    line_number: number;
-    product_id: string;
-    product_variant_id: string | null;
-    quantity: string;
-    unit_price_cents: number;
-    discount_cents: number;
-  }>;
+type CreateOrderBody = CreateRetailPosOrderRequest & {
   deviceId?: unknown;
   deviceSecret?: unknown;
 };
 
-function jsonError(status: number, message: string) {
-  return NextResponse.json({ ok: false, error: message }, { status });
+function jsonError(input: { status: number; message: string; code?: string | null; details?: Record<string, unknown> | null; requestId?: string | null }) {
+  return NextResponse.json({
+    ok: false,
+    error: input.message,
+    code: input.code ?? null,
+    details: input.details ?? null,
+    request_id: input.requestId ?? null,
+  }, { status: input.status });
 }
 
 function asTrimmedString(value: unknown) {
@@ -52,7 +45,7 @@ export async function POST(request: NextRequest, context: { params: Promise<Rout
     );
 
     if (!body || typeof body !== "object") {
-      const response = jsonError(400, "Invalid request body.");
+      const response = jsonError({ status: 400, message: "Invalid request body.", requestId: trace.requestId });
       Object.entries(trace.headers()).forEach(([key, value]) => response.headers.set(key, value));
       trace.log({ step: "route_total", ok: false, status: 400 });
       return response;
@@ -73,14 +66,20 @@ export async function POST(request: NextRequest, context: { params: Promise<Rout
     return response;
   } catch (error) {
     if (error instanceof RetailPosRuntimeError) {
-      const response = jsonError(error.status, error.message);
+      const response = jsonError({
+        status: error.status,
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        requestId: trace.requestId,
+      });
       Object.entries(trace.headers()).forEach(([key, value]) => response.headers.set(key, value));
       trace.log({ step: "route_total", ok: false, status: error.status, error });
       return response;
     }
 
     const message = error instanceof Error ? error.message : "Unexpected retail_pos order creation error.";
-    const response = jsonError(500, message);
+    const response = jsonError({ status: 500, message, requestId: trace.requestId });
     Object.entries(trace.headers()).forEach(([key, value]) => response.headers.set(key, value));
     trace.log({ step: "route_total", ok: false, status: 500, error });
     return response;

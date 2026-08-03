@@ -1,7 +1,7 @@
 import { StatePanel } from "@/components/ui/state-panel";
 import { resolveRetailPosTypePageContext } from "@/lib/auth/tenant-pos-access";
 import { getRetailPostSaleReport } from "@/lib/retail-pos/reports";
-import { RETAIL_REPORTING_PERIOD_NOTES, getRetailReportingLabel } from "@/lib/retail-pos/reporting-semantics";
+import { RETAIL_REPORTING_PERIOD_NOTES } from "@/lib/retail-pos/reporting-semantics";
 import { RetailReportPeriodContext } from "../_components/RetailReportPeriodContext";
 import { RetailPostSaleReasonsChart } from "../_components/charts/RetailPostSaleReasonsChart";
 import { RetailPostSaleTrendChart } from "../_components/charts/RetailPostSaleTrendChart";
@@ -52,6 +52,7 @@ export default async function RetailPostSalePage({ params, searchParams }: Retai
       | "cash"
       | "card_external"
       | "store_credit_future"
+      | "mixed"
       | undefined) ?? undefined,
     reasonCode: getSingleSearchParam(resolvedSearchParams.reasonCode) ?? undefined,
     responsibleUserId: getSingleSearchParam(resolvedSearchParams.responsibleUserId) ?? undefined,
@@ -113,7 +114,7 @@ export default async function RetailPostSalePage({ params, searchParams }: Retai
     <div className="space-y-4">
       <RetailReportsHeader
         title="Postventa"
-        description="Reporte específico para anulaciones de venta pagada, devoluciones y reembolsos registrados dentro del rango seleccionado."
+        description="Reporte específico para ventas canceladas, devoluciones y reembolsos registrados dentro del rango seleccionado."
         metadata={`${tenant.tenantName} · ${report.filters.dateFrom} a ${report.filters.dateTo}`}
       />
 
@@ -148,7 +149,7 @@ export default async function RetailPostSalePage({ params, searchParams }: Retai
               className="w-full rounded-[var(--radius-base)] border border-border bg-background px-3 py-2 text-sm text-foreground"
             >
               <option value="all">Todas</option>
-              <option value="sale_cancellation">Venta cancelada</option>
+              <option value="sale_cancellation">Cancelación de venta pagada</option>
               <option value="return_full">Devolución total</option>
               <option value="return_partial">Devolución parcial</option>
             </select>
@@ -178,6 +179,7 @@ export default async function RetailPostSalePage({ params, searchParams }: Retai
               <option value="all">Todos</option>
               <option value="cash">Efectivo</option>
               <option value="card_external">Tarjeta</option>
+              <option value="mixed">Mixto</option>
               <option value="store_credit_future">Crédito futuro</option>
             </select>
           </label>
@@ -233,43 +235,59 @@ export default async function RetailPostSalePage({ params, searchParams }: Retai
       {report.rows.length === 0 ? (
         <StatePanel
           kind="empty"
-          title="Sin operaciones de postventa"
-          message="No se registraron operaciones de postventa en este periodo."
+          title="Sin cancelaciones en el periodo"
+          message="No hay cancelaciones en el periodo o con los filtros seleccionados."
         />
       ) : (
         <>
           <RetailMetricGrid
             items={[
               {
-                label: "Anulaciones de venta pagada",
-                value: formatNumber(report.summary.cancelledSalesCount),
-                detail: `Monto anulado ${formatCurrency(report.summary.cancelledSalesCents)}`,
-                explanation: getRetailReportingLabel("paid_sale_cancellation"),
+                label: "Documentos de cancelación",
+                value: formatNumber(report.summary.cancellation_documents_count ?? report.summary.cancelledSalesCount),
+                detail: `${formatNumber(report.summary.completed_documents_count ?? 0)} completados · ${formatNumber(report.summary.pending_documents_count ?? 0)} pendientes`,
+                explanation: "Una fila y un conteo por documento de postventa; los componentes no se cuentan como documentos.",
               },
               {
-                label: "Devoluciones",
-                value: formatNumber(report.summary.returnsCount),
-                detail: `${formatNumber(report.summary.fullReturnsCount)} totales · ${formatNumber(report.summary.partialReturnsCount)} parciales · ${formatCurrency(report.summary.returnedCents)}`,
-                explanation: "Incluye devoluciones totales y parciales registradas durante el periodo.",
+                label: "Monto de cancelaciones",
+                value: formatCurrency(report.summary.total_cancelled_cents ?? report.summary.revertedAmountCents),
+                detail: `${formatNumber(report.summary.cash_only_cancellations_count ?? 0)} efectivo · ${formatNumber(report.summary.card_only_cancellations_count ?? 0)} tarjeta · ${formatNumber(report.summary.mixed_cancellations_count ?? 0)} mixtos`,
+                explanation: "Importe comercial de los documentos en el periodo, independiente del método de devolución.",
               },
               {
-                label: "Monto comercial revertido",
-                value: formatCurrency(report.summary.revertedAmountCents),
-                detail: `${formatCurrency(report.summary.cancelledSalesCents)} anulaciones · ${formatCurrency(report.summary.returnedCents)} devoluciones`,
-                explanation:
-                  "Monto de ventas cobradas que fue revertido mediante anulaciones o devoluciones registradas durante el periodo.",
+                label: "Efectivo devuelto",
+                value: formatCurrency(report.summary.completed_cash_refunds_cents ?? report.summary.cashRefundsCompletedCents),
+                detail: `Tarjeta confirmada ${formatCurrency(report.summary.completed_card_refunds_cents ?? report.summary.cardRefundsCompletedCents)}`,
+                explanation: "Solo efectivo completado afecta la conciliación física de caja.",
               },
               {
-                label: "Reembolsos pendientes",
-                value: formatCurrency(report.summary.pendingRefundCents),
+                label: "Tarjeta pendiente",
+                value: formatCurrency(report.summary.pending_card_refunds_cents ?? report.summary.pendingRefundCents),
                 detail: hasPendingRefunds
-                  ? `${formatNumber(report.summary.pendingRefundsCount)} reembolsos pendientes`
-                  : "No hay reembolsos pendientes.",
-                explanation: "Los reembolsos pendientes requieren atención, pero no representan una salida ya completada.",
+                  ? `${formatNumber(report.summary.pending_documents_count ?? report.summary.pendingRefundsCount)} documentos pendientes`
+                  : "No hay reembolsos de tarjeta pendientes.",
+                explanation: "La tarjeta pendiente no se presenta como reembolso completado ni reduce el efectivo esperado.",
                 tone: hasPendingRefunds ? "warning" : "default",
               },
             ]}
           />
+
+          <RetailSectionCard
+            title="Conciliación de postventa"
+            description="La conciliación usa componentes modernos; el movimiento físico de caja se compara solo contra efectivo completado."
+          >
+            <div className="grid gap-3 md:grid-cols-3">
+              {(report.summary.warnings ?? []).map((warning) => (
+                <div key={warning} className="rounded-[var(--radius-base)] border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">{warning}</div>
+              ))}
+              {(report.summary.warnings ?? []).length === 0 ? (
+                <div className="rounded-[var(--radius-base)] border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-100 md:col-span-3">Conciliación correcta.</div>
+              ) : null}
+            </div>
+            <div className="mt-3 text-xs text-muted">
+              {formatNumber(report.summary.refund_components_count ?? 0)} componentes · {formatNumber(report.summary.cash_components_count ?? 0)} efectivo · {formatNumber(report.summary.card_components_count ?? 0)} tarjeta
+            </div>
+          </RetailSectionCard>
 
           <RetailSectionCard
             title="Desglose de reembolsos"
