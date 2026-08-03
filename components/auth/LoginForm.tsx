@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import Link from "next/link";
 import { signInAction, type SignInState } from "@/actions/auth/sign-in";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -42,6 +43,12 @@ export function LoginForm() {
             placeholder="********"
           />
         </Field>
+
+        <div className="text-right text-sm">
+          <Link href="/auth/reset-password" className="text-primary hover:underline">
+            ¿Olvidaste tu contraseña?
+          </Link>
+        </div>
 
         {state.error ? (
           <p id="login-form-error" className="rounded-[var(--radius-base)] border border-danger/30 bg-surface-2 px-3 py-2 text-sm text-danger">

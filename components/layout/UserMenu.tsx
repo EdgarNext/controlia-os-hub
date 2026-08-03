@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LogOut, Moon, Sun, User } from "lucide-react";
+import { KeyRound, LogOut, Moon, Sun, User } from "lucide-react";
 import { signOutAction } from "@/actions/auth/sign-out";
 import { setThemeAction } from "@/actions/preferences/set-theme";
 import { type AppTheme } from "@/lib/theme/constants";
@@ -90,6 +91,15 @@ export function UserMenu({ userEmail, initialTheme }: UserMenuProps) {
         <div className="mb-2 rounded-[calc(var(--radius-base)-4px)] bg-surface-2 px-3 py-2 text-xs text-muted">
           {userEmail ?? "Platform user"}
         </div>
+
+        <Link
+          href="/auth/update-password"
+          className="mb-1 flex min-h-10 w-full items-center gap-2 rounded-[calc(var(--radius-base)-4px)] px-3 py-2 text-sm transition-colors duration-200 hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          onClick={() => setOpen(false)}
+        >
+          <KeyRound className="h-4 w-4" aria-hidden="true" />
+          Cambiar contraseña
+        </Link>
 
         <button
           type="button"
