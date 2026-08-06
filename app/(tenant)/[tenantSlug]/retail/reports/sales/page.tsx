@@ -22,6 +22,8 @@ import {
   buildRetailReportHref,
   formatCurrency,
   formatNumber,
+  getSingleSearchParam,
+  RetailSalesDetailPagination,
   type RetailReportsSearchParams,
 } from "../_components/retail-reports-ui";
 
@@ -33,8 +35,15 @@ type RetailSalesPageProps = {
 export default async function RetailSalesPage({ params, searchParams }: RetailSalesPageProps) {
   const { tenantSlug } = await params;
   const tenant = await resolveRetailPosTypePageContext(tenantSlug, "catalog", "read");
-  const filters = buildRetailReportsFilters(await searchParams);
-  const report = await getRetailSalesReport(tenant.tenantId, filters);
+  const rawSearchParams = await searchParams;
+  const filters = buildRetailReportsFilters(rawSearchParams);
+  const rawPageSize = Number.parseInt(getSingleSearchParam(rawSearchParams.detailPageSize) ?? "25", 10);
+  const detailPageSize = rawPageSize === 50 || rawPageSize === 100 ? rawPageSize : 25;
+  const report = await getRetailSalesReport(tenant.tenantId, {
+    ...filters,
+    detailPageSize,
+    detailCursor: getSingleSearchParam(rawSearchParams.detailCursor),
+  });
   const salesBaseHref = buildRetailReportHref({
     tenantSlug,
     basePath: "/retail/reports/sales",
@@ -282,8 +291,8 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
           </RetailSectionCard>
 
           <RetailSectionCard
-            title="Ventas del rango"
-            description="Folio, fecha de cobro, total antes de descuento, descuento concedido, venta cobrada, método de cobro y estado de postventa."
+            title="Detalle de ventas"
+            description={`Mostrando ${report.orders.length} de ${report.detailMeta.totalCount} ventas del periodo. Las métricas superiores siempre consideran todo el filtro.`}
           >
             {report.orders.length > 0 ? (
               <RetailSalesOrdersTable tenantSlug={tenantSlug} filters={report.filters} orders={report.orders} />
@@ -294,6 +303,7 @@ export default async function RetailSalesPage({ params, searchParams }: RetailSa
                 message="No existen ventas cobradas para los filtros seleccionados."
               />
             )}
+            <RetailSalesDetailPagination tenantSlug={tenantSlug} filters={report.filters} meta={report.detailMeta} />
           </RetailSectionCard>
         </>
       )}

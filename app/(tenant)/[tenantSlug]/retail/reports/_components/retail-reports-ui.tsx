@@ -21,6 +21,7 @@ import type {
   RetailCashShiftReportRow,
   RetailCashShiftReport,
   RetailPostSaleReport,
+  RetailReportDetailMeta,
   RetailProductsReport,
   RetailReportsOverview,
   RetailReportsPageFilters,
@@ -1273,8 +1274,25 @@ export function RetailSalesOrdersTable({
                       </span>
                     </div>
                   ) : null}
+                  {order.lineDetails?.length ? (
+                    <details className="mt-2 text-xs">
+                      <summary className="cursor-pointer font-medium text-primary">Ver {order.lineDetails.length} línea(s)</summary>
+                      <div className="mt-2 space-y-2 rounded border border-border/70 bg-surface-2/40 p-2">
+                        {order.lineDetails.map((line) => (
+                          <div key={line.lineId} className="space-y-1 border-b border-border/60 pb-2 last:border-0 last:pb-0">
+                            <div className="font-medium">{line.productName}{line.sku ? ` · SKU ${line.sku}` : ""}</div>
+                            <div className="text-muted">{formatQuantity(Number(line.quantity))} {line.unitLabel} · Aplicado {line.appliedUnitPriceCents === null ? "No disponible" : formatCurrency(line.appliedUnitPriceCents)}</div>
+                            <div className="text-muted">Público {line.publicUnitPriceSnapshotCents === null ? "No disponible" : formatCurrency(line.publicUnitPriceSnapshotCents)} · Mayoreo {line.wholesaleUnitPriceSnapshotCents === null ? "No disponible" : formatCurrency(line.wholesaleUnitPriceSnapshotCents)}</div>
+                            <div className="text-muted">Nivel: {line.approvedPriceTier === "wholesale" ? "Mayoreo" : line.approvedPriceTier === "public" ? "Público" : "Sin nivel"} · Diferencia {line.priceTierDifferenceCents === null ? "No disponible" : formatCurrency(line.priceTierDifferenceCents)}</div>
+                            <div className="text-muted">Descuento adicional {formatCurrency(line.totalDiscountCents)} · Costo {line.historicalCostCents === null ? "No disponible" : formatCurrency(line.historicalCostCents)} · Margen {line.grossMarginCents === null ? "No disponible" : formatCurrency(line.grossMarginCents)}</div>
+                            <div className="text-muted">Solicitó: {line.requestedByName ?? "Sin dato"} · Autorizó: {line.approvedByName ?? "Sin dato"} · Origen: {line.approvedPriceTierSource ?? "Sin dato"}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
                 </td>
-                <td className="px-2 py-2">{order.priceTier === "wholesale" ? "Mayoreo" : order.priceTier === "mixed" ? "Mixto" : "Público"}</td>
+                <td className="px-2 py-2">{order.priceTier === "wholesale" ? "Mayoreo" : order.priceTier === "mixed" ? "Mixto" : order.priceTier === "unknown" ? "Sin nivel" : "Público"}</td>
                 <td className="px-2 py-2">{order.wholesaleDifferenceCents !== 0 ? formatCurrency(order.wholesaleDifferenceCents) : <span className="text-muted">—</span>}</td>
                 <td className="px-2 py-2">{formatDateTime(order.paidAt)}</td>
                 <td className="px-2 py-2">{order.historicalBaseCents === null ? <span className="text-muted">No disponible</span> : formatCurrency(order.historicalBaseCents)}</td>
@@ -1313,6 +1331,48 @@ export function RetailSalesOrdersTable({
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+export function RetailSalesDetailPagination({
+  tenantSlug,
+  filters,
+  meta,
+}: {
+  tenantSlug: string;
+  filters: RetailReportsPageFilters;
+  meta: RetailReportDetailMeta;
+}) {
+  const href = (cursor: string | null, pageSize: number) => buildRetailReportHref({
+    tenantSlug,
+    basePath: "/retail/reports/sales",
+    filters,
+    overrides: {
+      detailPageSize: String(pageSize),
+      detailCursor: cursor,
+    },
+  });
+
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 text-sm">
+      <div className="flex items-center gap-2 text-muted">
+        <span>Filas por página:</span>
+        {[25, 50, 100].map((pageSize) => (
+          <Link
+            key={pageSize}
+            href={href(null, pageSize)}
+            className={cn("rounded border px-2 py-1", pageSize === meta.pageSize ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted hover:bg-surface-2")}
+          >
+            {pageSize}
+          </Link>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        {meta.hasPreviousPage ? <Link href={href(meta.previousCursor, meta.pageSize)} className="rounded border border-border px-3 py-1 hover:bg-surface-2">Anterior</Link> : <span className="rounded border border-border/50 px-3 py-1 text-muted">Anterior</span>}
+        <span className="text-muted">{meta.totalCount} ventas</span>
+        {meta.hasNextPage ? <Link href={href(meta.nextCursor, meta.pageSize)} className="rounded border border-border px-3 py-1 hover:bg-surface-2">Siguiente</Link> : <span className="rounded border border-border/50 px-3 py-1 text-muted">Siguiente</span>}
+      </div>
     </div>
   );
 }

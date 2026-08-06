@@ -305,7 +305,7 @@ export default async function RetailReportsOverviewPage({
 
           <RetailSalesTrendChart granularity={overview.salesTrend.granularity} points={trendPoints} />
 
-          <RetailSectionCard
+            <RetailSectionCard
             title="Pedidos recientes"
             description="Folio, estado, fecha relevante, total, método de cobro y señales rápidas de descuento o postventa."
           >
@@ -313,7 +313,7 @@ export default async function RetailReportsOverviewPage({
               <RetailOverviewRecentOrdersTable
                 tenantSlug={tenantSlug}
                 filters={overview.filters}
-                orders={overview.recentOrders}
+                orders={overview.recentOrders.slice(0, 25)}
               />
             ) : (
               <StatePanel
