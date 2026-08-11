@@ -167,7 +167,7 @@ export async function listKitchenSubRecipeCandidates(tenantId: string, excludeRe
   const supabase = await getSupabaseServerClient();
   let query = supabase
     .from("kitchen_recipe_versions")
-    .select("id, tenant_id, recipe_id, version_number, status, yield_quantity, yield_unit_id, servings, instructions, notes, created_at, updated_at, activated_at, kitchen_inventory_units:kitchen_inventory_units!kitchen_recipe_versions_yield_unit_id_fkey(id, code, name)")
+    .select("id, tenant_id, recipe_id, version_number, status, yield_quantity, yield_unit_id, servings, instructions, notes, created_at, updated_at, activated_at, kitchen_inventory_units:kitchen_inventory_units!kitchen_recipe_versions_yield_unit_id_fkey(id, code, name), kitchen_recipe_recipes:kitchen_recipe_recipes!kitchen_recipe_versions_tenant_recipe_fkey(id, name)")
     .eq("tenant_id", tenantId)
     .eq("status", "active")
     .order("updated_at", { ascending: false });
@@ -181,6 +181,9 @@ export async function listKitchenSubRecipeCandidates(tenantId: string, excludeRe
     kitchen_inventory_units: Array.isArray(row.kitchen_inventory_units)
       ? ((row.kitchen_inventory_units[0] ?? null) as KitchenRecipeVersion["kitchen_inventory_units"])
       : ((row.kitchen_inventory_units ?? null) as KitchenRecipeVersion["kitchen_inventory_units"]),
+    kitchen_recipe_recipes: Array.isArray(row.kitchen_recipe_recipes)
+      ? ((row.kitchen_recipe_recipes[0] ?? null) as KitchenRecipeVersion["kitchen_recipe_recipes"])
+      : ((row.kitchen_recipe_recipes ?? null) as KitchenRecipeVersion["kitchen_recipe_recipes"]),
   }));
 }
 

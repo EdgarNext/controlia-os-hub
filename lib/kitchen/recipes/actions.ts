@@ -102,6 +102,12 @@ export async function addKitchenRecipeLineAction(
     if (!["inventory_item", "sub_recipe"].includes(lineType)) {
       return { ok: false, message: "Tipo de línea inválido." };
     }
+    if (lineType === "inventory_item" && !itemId) {
+      return { ok: false, message: "Selecciona un insumo." };
+    }
+    if (lineType === "sub_recipe" && !subRecipeVersionId) {
+      return { ok: false, message: "Selecciona una sub-receta activa." };
+    }
     if (!Number.isFinite(wastePercent) || wastePercent < 0 || wastePercent >= 100) {
       return { ok: false, message: "Merma inválida." };
     }

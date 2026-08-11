@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -114,6 +115,8 @@ export function AddKitchenRecipeLineForm({
   subRecipes: KitchenRecipeVersion[];
 }) {
   const [state, action, pending] = useActionState(addKitchenRecipeLineAction, initialState);
+  const [lineType, setLineType] = useState<"inventory_item" | "sub_recipe">("inventory_item");
+  const isInventoryItem = lineType === "inventory_item";
 
   return (
     <form action={action} className="space-y-3 rounded-[var(--radius-base)] border border-border bg-surface p-4">
@@ -128,6 +131,7 @@ export function AddKitchenRecipeLineForm({
             name="lineType"
             label="Tipo"
             defaultValue="inventory_item"
+            onChange={(event) => setLineType(event.target.value as "inventory_item" | "sub_recipe")}
             options={[
               { value: "inventory_item", label: "Insumo" },
               { value: "sub_recipe", label: "Sub-receta" },
@@ -137,21 +141,25 @@ export function AddKitchenRecipeLineForm({
         <div className="space-y-1">
           <SearchableSelect
             id="line-item"
+            key={`line-item-${lineType}`}
             name="itemId"
             label="Insumo"
             placeholder="Selecciona insumo"
+            disabled={!isInventoryItem}
             options={items.map((item) => ({ value: item.id, label: item.name }))}
           />
         </div>
         <div className="space-y-1">
           <SearchableSelect
             id="line-subrecipe"
+            key={`line-subrecipe-${lineType}`}
             name="subRecipeVersionId"
             label="Sub-receta activa"
             placeholder="Selecciona sub-receta"
+            disabled={isInventoryItem}
             options={subRecipes.map((version) => ({
               value: version.id,
-              label: `Receta ${version.recipe_id.slice(0, 8)} · v${version.version_number}`,
+              label: `${version.kitchen_recipe_recipes?.name ?? "Sub-receta sin nombre"} · v${version.version_number}`,
             }))}
           />
         </div>

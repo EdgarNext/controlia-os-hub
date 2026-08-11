@@ -21,6 +21,7 @@ export function CatalogItemDialog({ tenantSlug, categories, units, item, canChan
   const router = useRouter();
   const action = item ? updateKitchenCatalogItemAction : createKitchenCatalogItemAction;
   const [state, formAction, pending] = useActionState(action, initialState);
+  const consumptionUnits = units.filter((unit) => unit.is_active && ["kg", "l"].includes(unit.code.toLowerCase()));
   useEffect(() => { if (!state.message) return; if (state.ok) { toast.success(state.message); if (state.itemId) router.push(`/${tenantSlug}/kitchen/catalog/${state.itemId}`); else router.refresh(); } }, [router, state, tenantSlug]);
   return <>
     <Button type="button" onClick={() => setOpen(true)} variant={item ? "secondary" : "primary"}>{item ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}{item ? "Editar datos" : "Nuevo insumo"}</Button>
@@ -29,7 +30,7 @@ export function CatalogItemDialog({ tenantSlug, categories, units, item, canChan
         <input type="hidden" name="tenantSlug" value={tenantSlug} />
         {item ? <input type="hidden" name="itemId" value={item.id} /> : null}
         <div className="space-y-1"><Label htmlFor="catalog-name">Nombre</Label><Input autoFocus id="catalog-name" name="name" required defaultValue={item?.name} placeholder="Ej. Harina de trigo" /></div>
-        <SearchableSelect name="defaultUnitId" label="Unidad operativa" required options={units.filter((unit) => unit.is_active || unit.id === item?.default_unit_id).map((unit) => ({ value: unit.id, label: `${unit.code} · ${unit.name}` }))} defaultValue={item?.default_unit_id} disabled={Boolean(item && !canChangeUnit)} helpText={item && !canChangeUnit ? "No se puede cambiar porque el insumo ya tiene uso o historial." : "Unidad base para existencias y costeo."} />
+        <SearchableSelect name="defaultUnitId" label="Unidad de consumo en recetas" required options={consumptionUnits.map((unit) => ({ value: unit.id, label: `${unit.code} · ${unit.name}` }))} defaultValue={item?.default_unit_id} disabled={Boolean(item && !canChangeUnit)} helpText={item && !canChangeUnit ? "No se puede cambiar porque el insumo ya tiene uso o historial." : "Define la unidad base en la que se consumirá el insumo dentro de las recetas."} />
         {item && !canChangeUnit ? <input type="hidden" name="defaultUnitId" value={item.default_unit_id} /> : null}
         <SearchableSelect name="categoryId" label="Categoría" clearable options={categories.filter((category) => category.is_active || category.id === item?.category_id).map((category) => ({ value: category.id, label: category.name }))} defaultValue={item?.category_id ?? ""} />
         <div className="space-y-1"><Label htmlFor="catalog-description">Descripción</Label><textarea id="catalog-description" name="description" defaultValue={item?.description ?? ""} rows={3} className="w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary" /></div>
