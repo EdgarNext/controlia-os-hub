@@ -21,7 +21,7 @@ export function CatalogItemDialog({ tenantSlug, categories, units, item, canChan
   const router = useRouter();
   const action = item ? updateKitchenCatalogItemAction : createKitchenCatalogItemAction;
   const [state, formAction, pending] = useActionState(action, initialState);
-  const consumptionUnits = units.filter((unit) => unit.is_active && ["kg", "l"].includes(unit.code.toLowerCase()));
+  const consumptionUnits = units.filter((unit) => unit.is_active && ["kg", "l", "pza"].includes(unit.code.toLowerCase()));
   useEffect(() => { if (!state.message) return; if (state.ok) { toast.success(state.message); if (state.itemId) router.push(`/${tenantSlug}/kitchen/catalog/${state.itemId}`); else router.refresh(); } }, [router, state, tenantSlug]);
   return <>
     <Button type="button" onClick={() => setOpen(true)} variant={item ? "secondary" : "primary"}>{item ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}{item ? "Editar datos" : "Nuevo insumo"}</Button>
