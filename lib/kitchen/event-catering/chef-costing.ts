@@ -19,6 +19,12 @@ import {
   resolveKitchenRelativeDateLabel,
 } from "./business-date";
 import { listReadyRecipesForCatering } from "./queries";
+import { getChefCostingStatusPresentation } from "./costing-status";
+import {
+  eventMatchesOverviewQuery,
+  eventMatchesPeriod,
+  resolveStructuralChefCostingStatus,
+} from "./overview-performance";
 import type {
   CateringEventLite,
   EventCateringPlan,
@@ -26,16 +32,8 @@ import type {
   ReadyRecipeForCatering,
 } from "./types";
 
-export type ChefCostingStatus =
-  | "sin_servicios"
-  | "sin_recetas"
-  | "configuracion_incompleta"
-  | "pendiente_costeo"
-  | "costo_inicial_vigente"
-  | "hay_precios_nuevos"
-  | "costo_actualizado"
-  | "configuracion_modificada"
-  | "precios_necesitan_revision";
+export type { ChefCostingStatus } from "./costing-status";
+import type { ChefCostingStatus } from "./costing-status";
 
 export type ChefOperationalPriority = "action_required" | "attention" | "current";
 
@@ -94,6 +92,7 @@ export type ChefSnapshotLite = {
   serviceCount: number;
   recipeCount: number;
   itemLineCount: number;
+  pricingModelVersion: string | null;
   createdAt: string;
   configurationPayload: Record<string, unknown>;
   warnings: Array<Record<string, unknown>>;
@@ -483,25 +482,25 @@ function resolveChefCostingStatus(input: {
   priceUpdateStatus: ChefPriceUpdateStatus | null;
 }): { status: ChefCostingStatus; label: string; message: string | null } {
   if (input.servicesCount <= 0) {
-    return { status: "sin_servicios", label: "Sin servicios", message: null };
+    return { status: "sin_servicios", label: getChefCostingStatusPresentation("sin_servicios").label, message: null };
   }
   if (!input.hasAnyRecipes) {
-    return { status: "sin_recetas", label: "Sin recetas", message: null };
+    return { status: "sin_recetas", label: getChefCostingStatusPresentation("sin_recetas").label, message: null };
   }
   if (input.recipesCount < input.servicesCount) {
     return {
       status: "configuracion_incompleta",
-      label: "Configuración incompleta",
+      label: getChefCostingStatusPresentation("configuracion_incompleta").label,
       message: "Faltan recetas o configuración suficiente en uno o más servicios.",
     };
   }
   if (!input.currentInitialSnapshot) {
-    return { status: "pendiente_costeo", label: "Pendiente de costeo", message: null };
+    return { status: "pendiente_costeo", label: getChefCostingStatusPresentation("pendiente_costeo").label, message: null };
   }
   if (input.configurationChanged) {
     return {
       status: "configuracion_modificada",
-      label: "Configuración modificada",
+      label: getChefCostingStatusPresentation("configuracion_modificada").label,
       message:
         "Cambiaste servicios, recetas o cantidades después del último costeo. Genera un nuevo costo inicial para continuar.",
     };
@@ -509,27 +508,27 @@ function resolveChefCostingStatus(input: {
   if (input.priceUpdateStatus === "price_resolution_warning") {
     return {
       status: "precios_necesitan_revision",
-      label: "Precios por revisar",
+      label: getChefCostingStatusPresentation("precios_necesitan_revision").label,
       message: "Revisa los precios vigentes antes de actualizar el costo.",
     };
   }
   if (input.priceUpdateStatus === "price_changes_available") {
     return {
       status: "hay_precios_nuevos",
-      label: "Hay precios nuevos",
+      label: getChefCostingStatusPresentation("hay_precios_nuevos").label,
       message: "Puedes actualizar el costo con los precios vigentes.",
     };
   }
   if (input.latestUpdatedSnapshot && input.priceUpdateStatus === "updated_cost_current") {
     return {
       status: "costo_actualizado",
-      label: "Costo actualizado",
+      label: getChefCostingStatusPresentation("costo_actualizado").label,
       message: "El costo actualizado ya está al día con los precios vigentes.",
     };
   }
   return {
     status: "costo_inicial_vigente",
-    label: "Costo inicial vigente",
+    label: getChefCostingStatusPresentation("costo_inicial_vigente").label,
     message: "El costo inicial sigue alineado con los precios vigentes.",
   };
 }
@@ -537,13 +536,19 @@ function resolveChefCostingStatus(input: {
 async function listPlansAndRecipes(
   tenantId: string,
   eventIds?: string[],
+  options: { includePresentationDetails?: boolean } = {},
 ): Promise<{ plans: EventCateringPlan[]; planRecipes: EventCateringPlanRecipe[] }> {
   const supabase = await getSupabaseServerClient();
+  const includePresentationDetails = options.includePresentationDetails ?? true;
+  const planSelect: string = includePresentationDetails
+    ? "id, tenant_id, event_id, name, status, planned_guest_count, estimated_total_cost, notes, created_at, updated_at"
+    : "id, tenant_id, event_id, name, status, planned_guest_count, estimated_total_cost";
+  const recipeSelect: string = includePresentationDetails
+    ? "id, tenant_id, plan_id, recipe_id, recipe_version_id, snapshot_id, planned_servings, multiplier, estimated_cost, notes, sort_order, created_at, updated_at, kitchen_recipe_recipes:kitchen_recipe_recipes!event_catering_plan_recipes_tenant_recipe_fkey(id,name,category,status)"
+    : "id, tenant_id, plan_id, recipe_id, recipe_version_id, snapshot_id, planned_servings, multiplier, estimated_cost, sort_order, kitchen_recipe_recipes:kitchen_recipe_recipes!event_catering_plan_recipes_tenant_recipe_fkey(id,name)";
   let plansQuery = supabase
     .from("event_catering_plans")
-    .select(
-      "id, tenant_id, event_id, name, status, planned_guest_count, estimated_total_cost, notes, created_at, updated_at",
-    )
+    .select(planSelect)
     .eq("tenant_id", tenantId)
     .order("created_at", { ascending: true });
   if (eventIds && eventIds.length > 0) {
@@ -552,23 +557,21 @@ async function listPlansAndRecipes(
 
   const { data: planRows, error: planError } = await plansQuery;
   if (planError) throw new Error(`No fue posible cargar servicios de catering: ${planError.message}`);
-  const plans = (planRows ?? []) as EventCateringPlan[];
+  const plans = (planRows ?? []) as unknown as EventCateringPlan[];
 
   const planIds = plans.map((plan) => plan.id);
   if (planIds.length === 0) return { plans, planRecipes: [] };
 
   const { data: recipeRows, error: recipeError } = await supabase
     .from("event_catering_plan_recipes")
-    .select(
-      "id, tenant_id, plan_id, recipe_id, recipe_version_id, snapshot_id, planned_servings, multiplier, estimated_cost, notes, sort_order, created_at, updated_at, kitchen_recipe_recipes:kitchen_recipe_recipes!event_catering_plan_recipes_tenant_recipe_fkey(id,name,category,status)",
-    )
+    .select(recipeSelect)
     .eq("tenant_id", tenantId)
     .in("plan_id", planIds)
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true });
   if (recipeError) throw new Error(`No fue posible cargar recetas de servicios: ${recipeError.message}`);
 
-  const planRecipes = ((recipeRows ?? []) as Array<Record<string, unknown>>).map((row) => ({
+  const planRecipes = ((recipeRows ?? []) as unknown as Array<Record<string, unknown>>).map((row) => ({
     ...(row as unknown as EventCateringPlanRecipe),
     kitchen_recipe_recipes: Array.isArray(row.kitchen_recipe_recipes)
       ? ((row.kitchen_recipe_recipes[0] ?? null) as EventCateringPlanRecipe["kitchen_recipe_recipes"])
@@ -581,14 +584,16 @@ async function listPlansAndRecipes(
 async function listCompletedSnapshots(
   tenantId: string,
   eventIds: string[],
+  options: { includeWarnings?: boolean } = {},
 ): Promise<Map<string, ChefSnapshotLite[]>> {
   if (eventIds.length === 0) return new Map();
   const supabase = await getSupabaseServerClient();
+  const snapshotSelect: string = options.includeWarnings
+    ? "id,event_id,base_snapshot_id,snapshot_kind,total_cost,base_total_cost,price_variation_amount,price_variation_percent,service_count,recipe_count,item_line_count,pricing_model_version,created_at,configuration_payload,warnings"
+    : "id,event_id,base_snapshot_id,snapshot_kind,total_cost,base_total_cost,price_variation_amount,price_variation_percent,service_count,recipe_count,item_line_count,pricing_model_version,created_at,configuration_payload";
   const { data, error } = await supabase
     .from("event_catering_costing_snapshots")
-    .select(
-      "id,event_id,base_snapshot_id,snapshot_kind,total_cost,base_total_cost,price_variation_amount,price_variation_percent,service_count,recipe_count,item_line_count,created_at,configuration_payload,warnings",
-    )
+    .select(snapshotSelect)
     .eq("tenant_id", tenantId)
     .eq("snapshot_status", "completed")
     .in("event_id", eventIds)
@@ -596,7 +601,7 @@ async function listCompletedSnapshots(
   if (error) throw new Error(`No fue posible cargar snapshots de costeo: ${error.message}`);
 
   const byEventId = new Map<string, ChefSnapshotLite[]>();
-  for (const row of data ?? []) {
+  for (const row of (data ?? []) as unknown as Array<Record<string, unknown>>) {
     const snapshot: ChefSnapshotLite = {
       id: String(row.id),
       eventId: String(row.event_id),
@@ -610,6 +615,7 @@ async function listCompletedSnapshots(
       serviceCount: Number(row.service_count ?? 0),
       recipeCount: Number(row.recipe_count ?? 0),
       itemLineCount: Number(row.item_line_count ?? 0),
+      pricingModelVersion: row.pricing_model_version ? String(row.pricing_model_version) : null,
       createdAt: String(row.created_at),
       configurationPayload:
         ((row.configuration_payload as Record<string, unknown> | null) ?? {}) as Record<string, unknown>,
@@ -1110,14 +1116,13 @@ type ChefOverviewBaseRow = {
   configurationChanged: boolean;
 };
 
-function eventMatchesPeriod(event: CateringEventLite, period: ChefOverviewPeriod, todayKey: string): boolean {
-  if (period === "todos") return true;
-  const eventDateKey = event.starts_at ? getKitchenBusinessDateKey(event.starts_at) : null;
-  if (period === "proximos") {
-    return eventDateKey == null || compareKitchenBusinessDateKeys(eventDateKey, todayKey) >= 0;
-  }
-  return eventDateKey != null && compareKitchenBusinessDateKeys(eventDateKey, todayKey) < 0;
-}
+const STRUCTURAL_COSTING_STATUSES = new Set<ChefCostingStatus>([
+  "sin_servicios",
+  "sin_recetas",
+  "configuracion_incompleta",
+  "pendiente_costeo",
+  "configuracion_modificada",
+]);
 
 function compareOverviewRows(
   left: ChefEventOverviewRow,
@@ -1149,11 +1154,14 @@ async function buildChefEventOverviewRows(
   input?: ChefEventOverviewFilters,
 ): Promise<ChefEventsOverviewResult> {
   const filters = normalizeOverviewFilters(input);
-  const events = await getEvents(tenantId, { limit: 200 });
+  const allEvents = await getEvents(tenantId, { limit: 200 });
+  const events = allEvents.filter((event) => {
+    return eventMatchesOverviewQuery(event, filters.q) && eventMatchesPeriod(event, filters.period, filters.todayKey);
+  });
   const eventIds = events.map((event) => event.id);
   const [{ plans, planRecipes }, snapshotsByEvent] = await Promise.all([
-    listPlansAndRecipes(tenantId, eventIds),
-    listCompletedSnapshots(tenantId, eventIds),
+    listPlansAndRecipes(tenantId, eventIds, { includePresentationDetails: false }),
+    listCompletedSnapshots(tenantId, eventIds, { includeWarnings: false }),
   ]);
 
   const plansByEventId = new Map<string, EventCateringPlan[]>();
@@ -1194,10 +1202,18 @@ async function buildChefEventOverviewRows(
       };
     })
     .filter((row) => {
-      const matchesQuery =
-        filters.q.length === 0 ||
-        (row.event.name ?? "").toLowerCase().includes(filters.q);
-      return matchesQuery && eventMatchesPeriod(row.event, filters.period, filters.todayKey);
+      if (!filters.status || !STRUCTURAL_COSTING_STATUSES.has(filters.status as ChefCostingStatus)) {
+        return true;
+      }
+
+      const structuralStatus = resolveStructuralChefCostingStatus({
+        servicesCount: row.servicesCount,
+        recipesCount: row.recipesCount,
+        hasAnyRecipes: row.hasAnyRecipes,
+        hasInitialSnapshot: row.latestInitialSnapshot != null,
+        configurationChanged: row.configurationChanged,
+      });
+      return structuralStatus === filters.status;
     });
 
   const previewByEventId = new Map<string, EventCostingDraft | null>();

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { ChevronLeft } from "lucide-react";
 import { StatePanel } from "@/components/ui/state-panel";
 import { getCurrentTenantModulePageAccessMap, hasModulePageAccess } from "@/lib/auth/module-page-access";
@@ -17,6 +18,7 @@ import { resolveKitchenPage } from "../../../../_lib/page-access";
 import { ConfirmDestructiveAction } from "../_components/confirm-destructive-action";
 import { AddReadyRecipeToPlanForm } from "./_components/plan-forms";
 import { ServiceCostingSummary } from "./_components/service-costing-summary";
+import { FinancialReportSummary } from "./_components/financial-report-summary";
 
 type KitchenEventCateringPlanPageProps = {
   params: Promise<{ tenantSlug: string; eventId: string; planId: string }>;
@@ -29,12 +31,23 @@ function formatMoney(value: number | null): string {
 
 export default async function KitchenEventCateringPlanPage({ params }: KitchenEventCateringPlanPageProps) {
   const { tenantSlug, eventId, planId } = await params;
+  return (
+    <div className="space-y-4">
+      <KitchenPageHeader
+        eyebrow="Cocina · Eventos y costeo"
+        title="Servicio de catering"
+        description="Consulta la configuración, recetas y costeo financiero del servicio."
+      />
+      <Suspense fallback={<PlanContentSkeleton />}>
+        <PlanContent tenantSlug={tenantSlug} eventId={eventId} planId={planId} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function PlanContent({ tenantSlug, eventId, planId }: { tenantSlug: string; eventId: string; planId: string }) {
   const result = await resolveKitchenPage(tenantSlug, "event_catering", "plans");
-
-  if (!result.ok) {
-    return <StatePanel kind="permission" title="Sin permisos" message="No tienes acceso a servicios de catering." />;
-  }
-
+  if (!result.ok) return <StatePanel kind="permission" title="Sin permisos" message="No tienes acceso a servicios de catering." />;
   const [detail, accessMap] = await Promise.all([
     getChefServiceDetail(result.tenant.tenantSlug, eventId, planId),
     getCurrentTenantModulePageAccessMap(result.tenant.tenantId, "event_catering"),
@@ -47,11 +60,11 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
 
   return (
     <div className="space-y-4">
-      <KitchenPageHeader
-        eyebrow="Servicio"
-        title={detail.plan.name?.trim() || "Servicio sin nombre"}
-        description="Ajusta personas, agrega recetas y completa el costeo de este servicio dentro del flujo del evento."
-        metadata={
+      <div className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
+        <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Servicio</p>
+        <h2 className="mt-1 text-base font-semibold text-foreground">{detail.plan.name?.trim() || "Servicio sin nombre"}</h2>
+        <p className="mt-2 text-sm text-muted">Ajusta personas, agrega recetas y completa el costeo de este servicio dentro del flujo del evento.</p>
+        <div className="mt-2 text-xs text-muted">
           <>
             <span>
               Evento: {detail.event.name}
@@ -69,17 +82,9 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
             <span className="mx-2">·</span>
             <span>Estado del evento: {detail.costingLabel}</span>
           </>
-        }
-        actions={
-          <Link
-            href={`/${tenantSlug}/kitchen/events/${eventId}/catering`}
-            className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"
-          >
-            <ChevronLeft className="mr-2 h-4 w-4" aria-hidden="true" />
-            Volver al evento
-          </Link>
-        }
-      />
+        </div>
+        <Link href={`/${tenantSlug}/kitchen/events/${eventId}/catering`} className="mt-3 inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm"><ChevronLeft className="mr-2 h-4 w-4" aria-hidden="true" />Volver al evento</Link>
+      </div>
 
       {detail.nextStep ? (
         <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
@@ -94,7 +99,12 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
         </section>
       ) : null}
 
-      <ServiceCostingSummary detail={detail} />
+      <Suspense fallback={<ServiceCostingSummarySkeleton />}>
+        <ServiceCostingSummary detail={detail} tenantSlug={tenantSlug} canManage={canManage} />
+      </Suspense>
+      <Suspense fallback={<ServiceCostingSummarySkeleton />}>
+        <FinancialReportSummary tenantSlug={tenantSlug} planId={planId} />
+      </Suspense>
 
       {canManage ? (
         <details className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
@@ -220,7 +230,7 @@ export default async function KitchenEventCateringPlanPage({ params }: KitchenEv
                     value={formatMoney(recipe.initialCostTotal)}
                   />
                   <MetricMini
-                    label={detail.configurationChanged ? "Configuración anterior" : "Costo actualizado vigente"}
+                    label={detail.configurationChanged ? "Configuración anterior" : "Costo con precios vigentes"}
                     value={detail.configurationChanged ? "—" : formatMoney(recipe.updatedCostTotal)}
                   />
                   <MetricMini
@@ -299,6 +309,28 @@ function MetricMini({ label, value }: { label: string; value: string }) {
     <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
       <p className="text-xs text-muted">{label}</p>
       <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function ServiceCostingSummarySkeleton() {
+  return (
+    <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4" aria-live="polite" aria-busy="true">
+      <div className="h-5 w-48 animate-pulse rounded bg-surface-2" />
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-20 animate-pulse rounded-[var(--radius-base)] bg-surface-2" />)}
+      </div>
+      <div className="mt-4 h-28 animate-pulse rounded-[var(--radius-base)] bg-surface-2" />
+    </section>
+  );
+}
+
+function PlanContentSkeleton() {
+  return (
+    <div className="space-y-4" aria-live="polite" aria-busy="true">
+      <div className="h-28 animate-pulse rounded-[var(--radius-base)] bg-surface" />
+      <ServiceCostingSummarySkeleton />
+      <div className="h-64 animate-pulse rounded-[var(--radius-base)] bg-surface" />
     </div>
   );
 }

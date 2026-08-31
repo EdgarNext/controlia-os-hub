@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { calculateCateringServicePricing } from "./financial-model";
+import { ensureCateringPlanPricingForTenant } from "./pricing-actions";
+import { getCateringPlanPricingBatchForTenant } from "./pricing-queries";
+import type { CateringEffectivePlanPricing } from "./pricing-types";
 
 type ConversionMap = Map<string, number>;
 
@@ -98,6 +102,18 @@ type PriceResolution = {
   warning: string | null;
 };
 
+type ServicePricingSnapshotFields = {
+  extraStaffCount: number;
+  extraStaffUnitCost: number | null;
+  extraStaffTotalCost: number;
+  serviceCostBasis: number;
+  targetMarginPct: number;
+  suggestedProfit: number;
+  suggestedServicePrice: number;
+  pricingModelVersion: "service_margin_v1";
+  pricingPayload: Record<string, unknown>;
+};
+
 export type EventCostingDraft = {
   eventId: string;
   eventName: string | null;
@@ -116,7 +132,7 @@ export type EventCostingDraft = {
     priceVariationAmount: number;
     priceVariationPercent: number | null;
     recipeCount: number;
-  }>;
+  } & ServicePricingSnapshotFields>;
   recipeRows: Array<{
     planId: string;
     planRecipeId: string;
@@ -255,6 +271,69 @@ function stableStringify(value: unknown): string {
 
 function buildFingerprint(payload: unknown): string {
   return createHash("sha256").update(stableStringify(payload)).digest("hex");
+}
+
+type DirectServiceRow = {
+  planId: string;
+  serviceName: string | null;
+  plannedGuestCount: number | null;
+  sortOrder: number;
+  totalCost: number;
+  baseTotalCost: number;
+  priceVariationAmount: number;
+  priceVariationPercent: number | null;
+  recipeCount: number;
+};
+
+async function addFinancialPricingToServices(
+  tenantId: string,
+  serviceRows: DirectServiceRow[],
+): Promise<{ serviceRows: Array<DirectServiceRow & ServicePricingSnapshotFields>; pricingPayload: Array<Record<string, unknown>> }> {
+  const supabase = await getSupabaseServerClient();
+  const pricingByPlanId = await getCateringPlanPricingBatchForTenant(
+    supabase,
+    tenantId,
+    serviceRows.map((row) => row.planId),
+  );
+  const enriched = serviceRows.map((row) => {
+    const pricing = pricingByPlanId.get(row.planId) as CateringEffectivePlanPricing;
+    const result = calculateCateringServicePricing({
+      foodCost: row.totalCost,
+      extraStaffCount: pricing.extra_staff_count,
+      extraStaffUnitCost: pricing.extra_staff_unit_cost,
+      targetMarginPct: pricing.target_margin_pct,
+      plannedGuestCount: row.plannedGuestCount,
+      currency: pricing.currency,
+    });
+    if (result.status === "incomplete") {
+      throw new Error(`Falta configurar la tarifa de personal extra para completar el costeo del servicio ${row.serviceName ?? row.planId}.`);
+    }
+    const pricingPayload = {
+      model: "service_margin_v1",
+      extraStaffCount: pricing.extra_staff_count,
+      extraStaffUnitCost: pricing.extra_staff_unit_cost,
+      staffRateSource: pricing.staff_rate_source,
+      targetMarginPct: pricing.target_margin_pct,
+      marginSource: pricing.margin_source,
+      currency: pricing.currency,
+    };
+    return {
+      ...row,
+      extraStaffCount: pricing.extra_staff_count,
+      extraStaffUnitCost: pricing.extra_staff_unit_cost,
+      extraStaffTotalCost: result.extraLaborCost,
+      serviceCostBasis: result.serviceCostBasis,
+      targetMarginPct: pricing.target_margin_pct,
+      suggestedProfit: result.suggestedProfit!,
+      suggestedServicePrice: result.suggestedServicePrice!,
+      pricingModelVersion: "service_margin_v1" as const,
+      pricingPayload,
+    };
+  });
+  return {
+    serviceRows: enriched,
+    pricingPayload: enriched.map((row) => ({ plan_id: row.planId, ...row.pricingPayload })),
+  };
 }
 
 function isActivePlanLite(plan: Pick<PlanLite, "status">): boolean {
@@ -861,9 +940,9 @@ async function insertCompletedSnapshot(
       totalCost: number;
       baseTotalCost: number;
       priceVariationAmount: number;
-      priceVariationPercent: number | null;
-      recipeCount: number;
-    }>;
+    priceVariationPercent: number | null;
+    recipeCount: number;
+  } & ServicePricingSnapshotFields>;
     recipeRows: Array<{
       planId: string;
       planRecipeId: string;
@@ -918,6 +997,10 @@ async function insertCompletedSnapshot(
   const baseTotalCost = round4(input.itemRows.reduce((acc, row) => acc + row.baseLineTotalCost, 0));
   const priceVariationAmount = round4(totalCost - baseTotalCost);
   const priceVariationPercent = toPercentDelta(totalCost, baseTotalCost);
+  const totalExtraStaffCost = round4(input.serviceRows.reduce((acc, row) => acc + row.extraStaffTotalCost, 0));
+  const totalServiceCostBasis = round4(input.serviceRows.reduce((acc, row) => acc + row.serviceCostBasis, 0));
+  const totalSuggestedProfit = round4(input.serviceRows.reduce((acc, row) => acc + row.suggestedProfit, 0));
+  const totalSuggestedServicePrice = round4(input.serviceRows.reduce((acc, row) => acc + row.suggestedServicePrice, 0));
 
   const { data: snapshotRow, error: snapshotError } = await supabase
     .from("event_catering_costing_snapshots")
@@ -936,6 +1019,11 @@ async function insertCompletedSnapshot(
       base_total_cost: baseTotalCost,
       price_variation_amount: priceVariationAmount,
       price_variation_percent: priceVariationPercent,
+      total_extra_staff_cost: totalExtraStaffCost,
+      total_service_cost_basis: totalServiceCostBasis,
+      total_suggested_profit: totalSuggestedProfit,
+      total_suggested_service_price: totalSuggestedServicePrice,
+      pricing_model_version: "service_margin_v1",
       config_fingerprint: input.configFingerprint,
       configuration_payload: input.configurationPayload,
       warnings: input.warnings,
@@ -957,6 +1045,15 @@ async function insertCompletedSnapshot(
     base_total_cost: row.baseTotalCost,
     price_variation_amount: row.priceVariationAmount,
     price_variation_percent: row.priceVariationPercent,
+    extra_staff_count: row.extraStaffCount,
+    extra_staff_unit_cost: row.extraStaffUnitCost,
+    extra_staff_total_cost: row.extraStaffTotalCost,
+    service_cost_basis: row.serviceCostBasis,
+    target_margin_pct: row.targetMarginPct,
+    suggested_profit: row.suggestedProfit,
+    suggested_service_price: row.suggestedServicePrice,
+    pricing_model_version: row.pricingModelVersion,
+    pricing_payload: row.pricingPayload,
     created_by: input.userId,
   }));
   const { data: insertedServices, error: serviceError } = await supabase
@@ -1168,13 +1265,20 @@ export async function previewInitialEventCostingSnapshot(
     };
   });
 
+  const financialPricing = await addFinancialPricingToServices(tenantId, serviceRows);
+  const configurationPayload = {
+    ...requirements.configPayload,
+    pricing_model_version: "service_margin_v1",
+    pricing: financialPricing.pricingPayload,
+  };
+
   return {
     eventName: requirements.event.name ?? null,
     eventId,
-    configFingerprint: requirements.configFingerprint,
-    configurationPayload: requirements.configPayload,
+    configFingerprint: buildFingerprint(configurationPayload),
+    configurationPayload,
     warnings: requirements.warnings,
-    serviceRows,
+    serviceRows: financialPricing.serviceRows,
     recipeRows,
     itemRows,
   };
@@ -1185,8 +1289,16 @@ export async function createInitialEventCostingSnapshot(
   userId: string,
   eventId: string,
 ): Promise<EventCostingSnapshotResult> {
-  const preview = await previewInitialEventCostingSnapshot(tenantId, eventId);
   const supabase = await getSupabaseServerClient();
+  const { data: plans, error: plansError } = await supabase
+    .from("event_catering_plans")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("event_id", eventId)
+    .neq("status", "canceled");
+  if (plansError) throw new Error(`No se pudieron validar servicios para pricing histórico: ${plansError.message}`);
+  await Promise.all((plans ?? []).map((plan) => ensureCateringPlanPricingForTenant(tenantId, plan.id, userId)));
+  const preview = await previewInitialEventCostingSnapshot(tenantId, eventId);
   const { data: existingSnapshot, error: existingSnapshotError } = await supabase
     .from("event_catering_costing_snapshots")
     .select(
@@ -1248,6 +1360,15 @@ export async function createUpdatedEventCostingSnapshot(
   userId: string,
   baseSnapshotId: string,
 ): Promise<EventCostingSnapshotResult> {
+  const supabase = await getSupabaseServerClient();
+  const { data: lines, error: linesError } = await supabase
+    .from("event_catering_costing_item_lines")
+    .select("plan_id")
+    .eq("tenant_id", tenantId)
+    .eq("snapshot_id", baseSnapshotId);
+  if (linesError) throw new Error(`No se pudieron validar servicios para pricing histórico: ${linesError.message}`);
+  const planIds = [...new Set((lines ?? []).map((line) => String(line.plan_id)))];
+  await Promise.all(planIds.map((planId) => ensureCateringPlanPricingForTenant(tenantId, planId, userId)));
   const draft = await previewUpdatedEventCostingSnapshot(tenantId, baseSnapshotId);
 
   return insertCompletedSnapshot({
@@ -1407,6 +1528,13 @@ export async function previewUpdatedEventCostingSnapshot(
     };
   });
 
+  const financialPricing = await addFinancialPricingToServices(tenantId, serviceRows);
+  const configurationPayload = {
+    ...((baseSnapshot.configuration_payload as Record<string, unknown>) ?? {}),
+    pricing_model_version: "service_margin_v1",
+    pricing: financialPricing.pricingPayload,
+  };
+
   const recipeRows = Array.from(
     new Map(
       baseLines.map((row) => [
@@ -1458,10 +1586,10 @@ export async function previewUpdatedEventCostingSnapshot(
     eventName: (baseSnapshot.event_name_snapshot as string | null) ?? null,
     snapshotKind: "updated",
     baseSnapshotId,
-    configFingerprint: String(baseSnapshot.config_fingerprint),
-    configurationPayload: (baseSnapshot.configuration_payload as Record<string, unknown>) ?? {},
+    configFingerprint: buildFingerprint(configurationPayload),
+    configurationPayload,
     warnings,
-    serviceRows,
+    serviceRows: financialPricing.serviceRows,
     recipeRows,
     itemRows,
   };

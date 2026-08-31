@@ -11,7 +11,9 @@ import { resolveKitchenPage } from "../_lib/page-access";
 import { EventCostingFilters } from "./_components/event-costing-filters";
 import { EventCostingList } from "./_components/event-costing-list";
 import { EventCostingSummaryCards } from "./_components/event-costing-summary-cards";
+import { CostingStatusGuide } from "./_components/costing-status-guide";
 import { KitchenEventsContentSkeleton } from "../_components/kitchen-loading-skeletons";
+import { EventsNavigationShell, EventsResultsFrame } from "./_components/events-navigation-shell";
 
 type KitchenEventsPageProps = {
   params: Promise<{ tenantSlug: string }>;
@@ -84,67 +86,73 @@ async function KitchenEventsContent({
   }
 
   return (
-    <div className="space-y-4">
-      {canCreateEvent ? <CreateEventLink tenantSlug={tenantSlug} /> : null}
+    <EventsNavigationShell>
+      <div className="space-y-4">
+        {canCreateEvent ? <CreateEventLink tenantSlug={tenantSlug} /> : null}
 
-      <EventCostingSummaryCards
-        upcomingEvents={overview.metrics.upcomingEvents}
-        requiresAttention={overview.metrics.requiresAttention}
-        withNewPrices={overview.metrics.withNewPrices}
-        costed={overview.metrics.costed}
-      />
+        <EventCostingSummaryCards
+          upcomingEvents={overview.metrics.upcomingEvents}
+          requiresAttention={overview.metrics.requiresAttention}
+          withNewPrices={overview.metrics.withNewPrices}
+          costed={overview.metrics.costed}
+        />
 
-      <EventCostingFilters
-        initialQuery={overview.filters.q}
-        initialStatus={overview.filters.status}
-        initialPeriod={overview.filters.period}
-      />
+        <EventCostingFilters
+          initialQuery={overview.filters.q}
+          initialStatus={overview.filters.status}
+          initialPeriod={overview.filters.period}
+        />
 
-      {overview.rows.length === 0 ? (
-        <section className="rounded-[var(--radius-base)] border border-border bg-surface p-6">
-          <StatePanel
-            kind="empty"
-            title="No encontramos eventos con estos filtros."
-            message="Limpia o ajusta los filtros para ver más eventos."
-          />
-          <div className="mt-4 flex justify-center">
-            <Link
-              href={`/${tenantSlug}/kitchen/events`}
-              className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground"
-            >
-              Limpiar filtros
-            </Link>
-          </div>
-        </section>
-      ) : (
-        <>
-          <EventCostingList
-            tenantSlug={tenantSlug}
-            title="Próximos eventos que requieren acción"
-            description="Eventos futuros que todavía necesitan configuración, costeo o revisión de precios."
-            rows={overview.groupedRows.futureActionRequired}
-          />
-          <EventCostingList
-            tenantSlug={tenantSlug}
-            title="Próximos eventos con precios nuevos"
-            description="Eventos futuros que ya pueden actualizar su costo con precios vigentes."
-            rows={overview.groupedRows.futureAttention}
-          />
-          <EventCostingList
-            tenantSlug={tenantSlug}
-            title="Próximos eventos al día"
-            description="Eventos futuros con costo inicial vigente o costo actualizado."
-            rows={overview.groupedRows.futureCurrent}
-          />
-          <EventCostingList
-            tenantSlug={tenantSlug}
-            title="Eventos recientes"
-            description="Referencia rápida de eventos pasados para consultar su costeo más reciente."
-            rows={overview.groupedRows.recent}
-          />
-        </>
-      )}
-    </div>
+        <EventsResultsFrame>
+          <CostingStatusGuide />
+
+          {overview.rows.length === 0 ? (
+            <section className="rounded-[var(--radius-base)] border border-border bg-surface p-6">
+              <StatePanel
+                kind="empty"
+                title="No encontramos eventos con estos filtros."
+                message="Limpia o ajusta los filtros para ver más eventos."
+              />
+              <div className="mt-4 flex justify-center">
+                <Link
+                  href={`/${tenantSlug}/kitchen/events`}
+                  className="inline-flex rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground"
+                >
+                  Limpiar filtros
+                </Link>
+              </div>
+            </section>
+          ) : (
+            <>
+              <EventCostingList
+                tenantSlug={tenantSlug}
+                title="Próximos eventos que requieren acción"
+                description="Eventos futuros que todavía necesitan configuración, costeo o revisión de precios."
+                rows={overview.groupedRows.futureActionRequired}
+              />
+              <EventCostingList
+                tenantSlug={tenantSlug}
+                title="Próximos eventos con precios nuevos"
+                description="Eventos futuros que ya pueden actualizar su costo con precios vigentes."
+                rows={overview.groupedRows.futureAttention}
+              />
+              <EventCostingList
+                tenantSlug={tenantSlug}
+                title="Próximos eventos al día"
+                description="Eventos futuros con costo inicial vigente o costo actualizado."
+                rows={overview.groupedRows.futureCurrent}
+              />
+              <EventCostingList
+                tenantSlug={tenantSlug}
+                title="Eventos recientes"
+                description="Referencia rápida de eventos pasados para consultar su costeo más reciente."
+                rows={overview.groupedRows.recent}
+              />
+            </>
+          )}
+        </EventsResultsFrame>
+      </div>
+    </EventsNavigationShell>
   );
 }
 

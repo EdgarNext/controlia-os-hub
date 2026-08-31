@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useEventsNavigation } from "./events-navigation-shell";
 
 type EventCostingFiltersProps = {
   initialQuery: string;
@@ -33,10 +34,9 @@ export function EventCostingFilters({
   initialStatus,
   initialPeriod,
 }: EventCostingFiltersProps) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [isPending, startTransition] = useTransition();
+  const { isPending, navigate } = useEventsNavigation();
   const [query, setQuery] = useState(initialQuery);
   const currentQueryString = searchParams.toString();
 
@@ -60,13 +60,11 @@ export function EventCostingFilters({
         return;
       }
 
-      startTransition(() => {
-        router.replace(href);
-      });
+      navigate(href);
     }, 250);
 
     return () => window.clearTimeout(timeoutId);
-  }, [currentQueryString, pathname, query, router]);
+  }, [currentQueryString, navigate, pathname, query]);
 
   const updateParam = (key: "status" | "period", value: string) => {
     const nextParams = new URLSearchParams(currentQueryString);
@@ -82,9 +80,7 @@ export function EventCostingFilters({
       return;
     }
 
-    startTransition(() => {
-      router.replace(href);
-    });
+    navigate(href);
   };
 
   const clearFilters = () => {
@@ -92,9 +88,7 @@ export function EventCostingFilters({
       return;
     }
 
-    startTransition(() => {
-      router.replace(pathname);
-    });
+    navigate(pathname);
   };
 
   return (
@@ -138,7 +132,6 @@ export function EventCostingFilters({
         </button>
       </div>
 
-      {isPending ? <p className="mt-2 text-xs text-muted">Actualizando eventos y costeo...</p> : null}
     </section>
   );
 }

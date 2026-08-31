@@ -48,6 +48,7 @@ export function KitchenRecipesContentSkeleton() {
 export function KitchenEventsContentSkeleton() {
   return (
     <div className="space-y-4" aria-live="polite" aria-busy="true">
+      <p className="sr-only" role="status">Cargando eventos y costeo…</p>
       <KitchenCardGridSkeleton cards={4} />
       <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4" aria-hidden="true">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_240px_180px_auto]">

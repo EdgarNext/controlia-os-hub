@@ -38,12 +38,20 @@ import type {
   CateringFinancialDashboardRow,
   CateringFinancialDashboardStatus,
   CateringFinancialDashboardSummary,
+  CateringFinancialEventReadModel,
+  CateringFinancialServiceReadModel,
   CateringPlanFinancialStatus,
   CateringPlanFinancialSummary,
+  CateringPlanFinancialPricing,
   CateringPlanFinancialVarianceReason,
   ReadyRecipeForCatering,
   RequisitionLinePurchaseOptionAlternative,
 } from "./types";
+import { getCateringPlanPricingPreview, getCateringPlanPricingSnapshots } from "./pricing-queries";
+import { calculateCateringServicePricing } from "./financial-model";
+import { resolveSingleServiceCostingStatus, serviceRequiresManagerialAttention } from "./costing-status";
+import { aggregateFinancialPricing, calculateServiceCostPerPerson, resolveCateringPricingSource, resolveCurrentServiceFoodCost, selectPreferredV1Snapshot } from "./financial-reporting";
+import { calculateOperationalExecutionCosts, calculateOperationalQuantityMetrics } from "./operational-metrics";
 import {
   classifyConsumptionItemStockBehavior,
   isOperationalZeroCostWaterItemName,
@@ -61,6 +69,117 @@ function isPositive(value: number | null | undefined): boolean {
 
 function nearlyEqual(left: number, right: number): boolean {
   return Math.abs(left - right) <= 0.0001;
+}
+
+async function resolvePlanFinancialPricing(
+  tenantSlug: string,
+  plan: EventCateringPlan,
+): Promise<CateringPlanFinancialPricing> {
+  if (resolveCateringPricingSource(plan.status, false) === "current_preview") {
+    const [preview, snapshots] = await Promise.all([
+      getCateringPlanPricingPreview(tenantSlug, plan.id),
+      getCateringPlanPricingSnapshots(tenantSlug, plan.id),
+    ]);
+    const latestUpdated = snapshots
+      .filter((snapshot) => snapshot.snapshotKind === "updated")
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    const latestInitial = snapshots
+      .filter((snapshot) => snapshot.snapshotKind === "initial")
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    const currentFoodCost = resolveCurrentServiceFoodCost({
+      updatedCost: latestUpdated?.foodCost ?? null,
+      initialCost: latestInitial?.foodCost ?? null,
+      previewCost: preview.result.foodCost,
+      estimatedCost: Number(plan.estimated_total_cost ?? 0),
+    });
+    if (currentFoodCost.amount == null) {
+      return {
+        source: "current_preview",
+        status: "unavailable",
+        pricingModelVersion: null,
+        foodCost: null,
+        currentFoodCostSource: currentFoodCost.source,
+        extraStaffCount: preview.result.extraStaffCount,
+        extraStaffUnitCost: preview.result.extraStaffUnitCost,
+        extraLaborCost: null,
+        serviceCostBasis: null,
+        targetMarginPct: preview.result.targetMarginPct,
+        suggestedProfit: null,
+        suggestedServicePrice: null,
+        suggestedPricePerGuest: null,
+        currency: preview.result.currency,
+        warnings: preview.result.warnings,
+      };
+    }
+    const result = calculateCateringServicePricing({
+      foodCost: currentFoodCost.amount,
+      extraStaffCount: preview.result.extraStaffCount,
+      extraStaffUnitCost: preview.result.extraStaffUnitCost,
+      targetMarginPct: preview.result.targetMarginPct,
+      plannedGuestCount: preview.result.plannedGuestCount,
+      currency: preview.result.currency,
+    });
+    return {
+      source: "current_preview",
+      status: result.status,
+      pricingModelVersion: null,
+      foodCost: result.foodCost,
+      currentFoodCostSource: currentFoodCost.source,
+      extraStaffCount: result.extraStaffCount,
+      extraStaffUnitCost: result.extraStaffUnitCost,
+      extraLaborCost: result.extraLaborCost,
+      serviceCostBasis: result.serviceCostBasis,
+      targetMarginPct: result.targetMarginPct,
+      suggestedProfit: result.suggestedProfit,
+      suggestedServicePrice: result.suggestedServicePrice,
+      suggestedPricePerGuest: result.suggestedPricePerGuest,
+      currency: result.currency,
+      warnings: result.warnings,
+    };
+  }
+
+  const snapshots = await getCateringPlanPricingSnapshots(tenantSlug, plan.id);
+  const historical = selectPreferredV1Snapshot(snapshots);
+
+  if (historical) {
+    return {
+      source: "snapshot_v1",
+      status: historical.suggestedServicePrice == null ? "unavailable" : "ready",
+      pricingModelVersion: historical.pricingModelVersion,
+      foodCost: historical.foodCost,
+      currentFoodCostSource: historical.snapshotKind === "updated" ? "updated_snapshot" : "initial_snapshot",
+      extraStaffCount: historical.extraStaffCount,
+      extraStaffUnitCost: historical.extraStaffUnitCost,
+      extraLaborCost: historical.extraStaffCost,
+      serviceCostBasis: historical.serviceCostBasis,
+      targetMarginPct: historical.targetMarginPct,
+      suggestedProfit: historical.suggestedProfit,
+      suggestedServicePrice: historical.suggestedServicePrice,
+      suggestedPricePerGuest: historical.suggestedServicePrice != null && historical.plannedGuestCount != null && historical.plannedGuestCount > 0
+        ? historical.suggestedServicePrice / historical.plannedGuestCount
+        : null,
+      currency: "MXN",
+      warnings: [],
+    };
+  }
+
+  return {
+    source: "legacy_unavailable",
+    status: "unavailable",
+    pricingModelVersion: null,
+    foodCost: null,
+    currentFoodCostSource: "unavailable",
+    extraStaffCount: null,
+    extraStaffUnitCost: null,
+    extraLaborCost: null,
+    serviceCostBasis: null,
+    targetMarginPct: null,
+    suggestedProfit: null,
+    suggestedServicePrice: null,
+    suggestedPricePerGuest: null,
+    currency: "MXN",
+    warnings: [],
+  };
 }
 
 function isMaterialVariance(value: number, reference: number): boolean {
@@ -1903,21 +2022,17 @@ export function getConsumptionDraftReadiness(
   };
 }
 
-export async function getCateringPlanFinancialReport(
+async function buildCateringPlanFinancialReport(
   tenantSlug: string,
-  planId: string,
+  plan: EventCateringPlan,
 ): Promise<CateringPlanFinancialReport> {
-  const plan = await getCateringPlan(tenantSlug, planId);
-
-  if (!plan) {
-    throw new Error("No fue posible construir reporte financiero: plan no encontrado.");
-  }
-
-  const [event, requirements, requisitions, consumptionRecords] = await Promise.all([
+  const planId = plan.id;
+  const [event, requirements, requisitions, consumptionRecords, pricing] = await Promise.all([
     getEventForCatering(tenantSlug, plan.event_id),
     listCateringRequirements(tenantSlug, planId),
     listCateringRequisitions(tenantSlug),
     listConsumptionRecordsForPlan(tenantSlug, planId),
+    resolvePlanFinancialPricing(tenantSlug, plan),
   ]);
   const planRequisitions = requisitions.filter((requisition) => requisition.plan_id === planId);
 
@@ -2099,9 +2214,13 @@ export async function getCateringPlanFinancialReport(
 
   const estimatedInitialCost = round4(Number(plan.estimated_total_cost ?? 0));
   const requisitionedCost = round4(lines.reduce((acc, line) => acc + Number(line.requisitionedCost ?? 0), 0));
-  const receivedCost = round4(lines.reduce((acc, line) => acc + Number(line.receivedCost ?? 0), 0));
-  const consumedCost = round4(lines.reduce((acc, line) => acc + line.consumedCost, 0));
-  const wasteCost = round4(lines.reduce((acc, line) => acc + line.wasteCost, 0));
+  const executionCosts = calculateOperationalExecutionCosts({
+    receivedCosts: lines.map((line) => line.receivedCost),
+    consumptionCosts: lines.map((line) => ({ consumedCost: line.consumedCost, wasteCost: line.wasteCost })),
+  });
+  const receivedCost = round4(executionCosts.receivedCost);
+  const consumedCost = round4(executionCosts.consumedCost);
+  const wasteCost = round4(executionCosts.wasteCost);
   const remainingInventoryValue = round4(lines.reduce((acc, line) => acc + line.remainingValue, 0));
   const grossPurchaseVariance = round4(receivedCost - estimatedInitialCost);
   const netConsumptionVariance = round4(consumedCost + wasteCost - estimatedInitialCost);
@@ -2165,6 +2284,7 @@ export async function getCateringPlanFinancialReport(
     eventId: plan.event_id,
     eventName: event?.name ?? null,
     eventStartsAt: event?.starts_at ?? null,
+    expectedAttendance: event?.expected_attendance == null ? null : Number(event.expected_attendance),
     planId: plan.id,
     planName: plan.name ?? null,
     planStatus: plan.status,
@@ -2173,6 +2293,7 @@ export async function getCateringPlanFinancialReport(
     receiptIds: receipts.map((row) => row.id),
     consumptionIds: consumptionRecords.map((row) => row.id),
     summary,
+    pricing,
     lines: lines.sort((left, right) => {
       const difference = Number(right.remainingValue ?? 0) - Number(left.remainingValue ?? 0);
       if (Math.abs(difference) > 0.0001) return difference;
@@ -2182,6 +2303,41 @@ export async function getCateringPlanFinancialReport(
   };
 }
 
+export async function getCateringPlanFinancialReport(
+  tenantSlug: string,
+  planId: string,
+): Promise<CateringPlanFinancialReport> {
+  const plan = await getCateringPlan(tenantSlug, planId);
+
+  if (!plan) {
+    throw new Error("No fue posible construir reporte financiero: plan no encontrado.");
+  }
+
+  return buildCateringPlanFinancialReport(tenantSlug, plan);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function consume() {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(concurrency, 1), items.length) }, () => consume()),
+  );
+  return results;
+}
+
 export async function getCateringFinancialDashboard(
   tenantSlug: string,
 ): Promise<CateringFinancialDashboard> {
@@ -2189,6 +2345,8 @@ export async function getCateringFinancialDashboard(
   if (plans.length === 0) {
     return {
       rows: [],
+      historicalRows: [],
+      events: [],
       summary: {
         servicesAnalyzed: 0,
         estimatedInitialCostTotal: 0,
@@ -2200,16 +2358,38 @@ export async function getCateringFinancialDashboard(
         grossPurchaseVarianceTotal: 0,
         netConsumptionVarianceTotal: 0,
         servicesRequiringReview: 0,
+        pricingReadyServices: 0,
+        pricingIncompleteServices: 0,
+        legacyPricingUnavailableServices: 0,
+        serviceCostBasisTotal: 0,
+        extraLaborCostTotal: 0,
+        suggestedProfitTotal: 0,
+        suggestedServicePriceTotal: 0,
+        effectiveSuggestedMarginPct: null,
       },
       narrative: "Aún no hay servicios de catering con información financiera suficiente.",
     };
   }
 
-  const reports = await Promise.all(
-    plans.map((plan) => getCateringPlanFinancialReport(tenantSlug, plan.id)),
+  const reports = await mapWithConcurrency(plans, 4, (plan) =>
+    buildCateringPlanFinancialReport(tenantSlug, plan),
   );
 
-  const rows: CateringFinancialDashboardRow[] = reports.map((report) => {
+  const tenant = await resolveTenantModulePageContext(tenantSlug, "event_catering", "plans", "read");
+  const supabase = await getSupabaseServerClient();
+  const { data: recipeRows, error: recipeError } = await supabase
+    .from("event_catering_plan_recipes")
+    .select("plan_id")
+    .eq("tenant_id", tenant.tenantId)
+    .in("plan_id", plans.map((plan) => plan.id));
+  if (recipeError) throw new Error(`No se pudieron cargar recetas del dashboard financiero: ${recipeError.message}`);
+  const recipeCountByPlan = new Map<string, number>();
+  for (const row of recipeRows ?? []) {
+    const planId = String(row.plan_id);
+    recipeCountByPlan.set(planId, (recipeCountByPlan.get(planId) ?? 0) + 1);
+  }
+
+  const toRow = (report: CateringPlanFinancialReport): CateringFinancialDashboardRow => {
     const { summary } = report;
 
     const financialStatus: CateringFinancialDashboardStatus = (() => {
@@ -2260,8 +2440,9 @@ export async function getCateringFinancialDashboard(
       return "Sin problema relevante";
     })();
 
-    const operationalStatus =
-      financialStatus === "closed"
+    const operationalStatus = report.planStatus === "canceled"
+      ? "Cancelado"
+      : financialStatus === "closed"
         ? "Cerrado"
         : financialStatus === "consumed"
           ? "Consumido"
@@ -2299,14 +2480,21 @@ export async function getCateringFinancialDashboard(
       remainingInventoryValue: summary.remainingInventoryValue,
       grossPurchaseVariance: summary.grossPurchaseVariance,
       netConsumptionVariance: summary.netConsumptionVariance,
-      costPerPerson: summary.consumedCostPerPerson,
+      currentCostPerPerson: calculateServiceCostPerPerson(report.pricing.serviceCostBasis, report.plannedGuestCount),
+      consumedCostPerPerson: summary.consumedCostPerPerson,
       plannedGuestCount: report.plannedGuestCount,
+      lifecycleStatus: report.planStatus,
+      pricing: report.pricing,
       alerts,
       alertLabel,
       reading,
       detailHref: `/${tenantSlug}/kitchen/events/${report.eventId}/catering/${report.planId}`,
     };
-  });
+  };
+
+  const allRows = reports.map(toRow);
+  const rows = allRows.filter((row) => row.lifecycleStatus !== "canceled");
+  const historicalRows = allRows.filter((row) => row.lifecycleStatus === "canceled");
 
   rows.sort((left, right) => {
     const reviewScore = Number(right.financialStatus === "review_required") - Number(left.financialStatus === "review_required");
@@ -2316,6 +2504,7 @@ export async function getCateringFinancialDashboard(
     return new Date(right.eventDate ?? 0).getTime() - new Date(left.eventDate ?? 0).getTime();
   });
 
+  const pricingSummary = aggregateFinancialPricing(rows.map((row) => row.pricing));
   const summary: CateringFinancialDashboardSummary = {
     servicesAnalyzed: rows.length,
     estimatedInitialCostTotal: round4(rows.reduce((acc, row) => acc + row.estimatedInitialCost, 0)),
@@ -2327,14 +2516,85 @@ export async function getCateringFinancialDashboard(
     grossPurchaseVarianceTotal: round4(rows.reduce((acc, row) => acc + row.grossPurchaseVariance, 0)),
     netConsumptionVarianceTotal: round4(rows.reduce((acc, row) => acc + row.netConsumptionVariance, 0)),
     servicesRequiringReview: rows.filter((row) => row.financialStatus === "review_required").length,
+    ...pricingSummary,
   };
 
   const narrative = rows.length === 0
     ? "Aún no hay servicios de catering con información financiera suficiente."
     : `En el periodo visible se analizaron ${rows.length.toLocaleString("es-MX")} servicios. La compra total fue de $${summary.receivedCostTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, el consumo real fue de $${summary.consumedCostTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} y quedó remanente valorizado en $${summary.remainingInventoryValueTotal.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Los servicios con mayor variación se explican principalmente por presentaciones de compra, remanentes o merma.`;
 
+  const eventGroups = new Map<string, CateringFinancialEventReadModel>();
+  for (const report of reports.filter((item) => item.planStatus !== "canceled")) {
+    const service: CateringFinancialServiceReadModel = {
+      planId: report.planId,
+      planName: report.planName,
+      lifecycleStatus: report.planStatus,
+      plannedCovers: report.plannedGuestCount,
+      currentFoodCost: report.pricing.foodCost,
+      currentFoodCostSource: report.pricing.currentFoodCostSource,
+      currentServiceCostBasis: report.pricing.serviceCostBasis,
+      currentCostPerPerson: calculateServiceCostPerPerson(report.pricing.serviceCostBasis, report.plannedGuestCount),
+      suggestedServicePrice: report.pricing.suggestedServicePrice,
+      suggestedPricePerPerson: report.pricing.suggestedPricePerGuest,
+      suggestedProfit: report.pricing.suggestedProfit,
+      effectiveSuggestedMarginPct: report.pricing.suggestedServicePrice != null && report.pricing.suggestedServicePrice > 0 && report.pricing.suggestedProfit != null
+        ? round4((report.pricing.suggestedProfit / report.pricing.suggestedServicePrice) * 100)
+        : null,
+      pricingStatus: report.pricing.status,
+      costingStatus: resolveSingleServiceCostingStatus({
+        recipeCount: recipeCountByPlan.get(report.planId) ?? 0,
+        currentFoodCostSource: report.pricing.currentFoodCostSource,
+      }),
+      requiresManagerialAttention: false,
+      pricingAttentionLabel: report.pricing.status === "incomplete"
+        ? report.pricing.warnings.includes("missing_extra_staff_unit_cost")
+          ? "Falta tarifa de personal"
+          : "Falta completar configuración financiera"
+        : null,
+    };
+    service.requiresManagerialAttention = serviceRequiresManagerialAttention({
+      costingStatus: service.costingStatus,
+      pricingStatus: service.pricingStatus,
+    });
+    const current = eventGroups.get(report.eventId) ?? {
+      eventId: report.eventId,
+      eventName: report.eventName,
+      eventDate: report.eventStartsAt,
+      expectedAttendance: report.expectedAttendance,
+      activeServiceCount: 0,
+      attentionServiceCount: 0,
+      plannedCovers: 0,
+      recipeCount: 0,
+      currentServiceCostBasisTotal: 0,
+      suggestedServicePriceTotal: 0,
+      suggestedProfitTotal: 0,
+      effectiveSuggestedMarginPct: null,
+      services: [],
+    };
+    current.activeServiceCount += 1;
+    if (service.requiresManagerialAttention) current.attentionServiceCount += 1;
+    if (report.plannedGuestCount != null && report.plannedGuestCount > 0) current.plannedCovers += report.plannedGuestCount;
+    current.recipeCount += recipeCountByPlan.get(report.planId) ?? 0;
+    current.currentServiceCostBasisTotal += report.pricing.serviceCostBasis ?? 0;
+    current.suggestedServicePriceTotal += report.pricing.suggestedServicePrice ?? 0;
+    current.suggestedProfitTotal += report.pricing.suggestedProfit ?? 0;
+    current.services.push(service);
+    eventGroups.set(report.eventId, current);
+  }
+  const events = [...eventGroups.values()].map((event) => ({
+    ...event,
+    currentServiceCostBasisTotal: round4(event.currentServiceCostBasisTotal),
+    suggestedServicePriceTotal: round4(event.suggestedServicePriceTotal),
+    suggestedProfitTotal: round4(event.suggestedProfitTotal),
+    effectiveSuggestedMarginPct: event.suggestedServicePriceTotal > 0
+      ? round4((event.suggestedProfitTotal / event.suggestedServicePriceTotal) * 100)
+      : null,
+  }));
+
   return {
     rows,
+    historicalRows,
+    events,
     summary,
     narrative,
   };
@@ -2349,7 +2609,7 @@ export async function getCateringPlanOperationalSummary(
   const [plan, recipes, requirements, requisitions, receipts, consumptionRecords, consumptionLines] = await Promise.all([
     supabase.from("event_catering_plans").select("id,event_id,status,estimated_total_cost").eq("tenant_id", tenant.tenantId).eq("id", planId).maybeSingle(),
     supabase.from("event_catering_plan_recipes").select("id").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
-    supabase.from("event_catering_requirements").select("required_quantity,shortage_quantity,estimated_unit_cost").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
+    supabase.from("event_catering_requirements").select("required_quantity,shortage_quantity,estimated_unit_cost,unit_id").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
     supabase.from("event_catering_requisitions").select("id,status,estimated_total_cost").eq("tenant_id", tenant.tenantId).eq("plan_id", planId),
     supabase
       .from("event_catering_purchase_receipts")
@@ -2362,7 +2622,7 @@ export async function getCateringPlanOperationalSummary(
     supabase
       .from("event_catering_consumption_lines")
       .select(
-        "consumed_quantity,waste_quantity,unit_cost,event_catering_consumption_records:event_catering_consumption_records!event_catering_consumption_lines_tenant_record_fkey!inner(plan_id)",
+        "consumed_quantity,waste_quantity,unit_cost,unit_id,event_catering_consumption_records:event_catering_consumption_records!event_catering_consumption_lines_tenant_record_fkey!inner(plan_id)",
       )
       .eq("tenant_id", tenant.tenantId)
       .eq("event_catering_consumption_records.plan_id", planId),
@@ -2387,13 +2647,24 @@ export async function getCateringPlanOperationalSummary(
   const requisitionRows = requisitions.data ?? [];
   const receiptRows = receipts.data ?? [];
   const receivedReceiptRows = receiptRows.filter((row) => row.status === "received");
+  const receiptIds = receivedReceiptRows.map((row) => row.id);
+  const receiptLines = receiptIds.length > 0
+    ? await supabase
+        .from("event_catering_purchase_receipt_lines")
+        .select("receipt_id,unit_id,received_quantity")
+        .eq("tenant_id", tenant.tenantId)
+        .in("receipt_id", receiptIds)
+    : { data: [], error: null };
+  if (receiptLines.error) throw new Error(`No fue posible cargar cantidades recibidas del plan: ${receiptLines.error.message}`);
   const consumptionRows = consumptionRecords.data ?? [];
   const consumptionLineRows = consumptionLines.data ?? [];
 
-  const totalRequired = requirementRows.reduce((acc, row) => acc + Number(row.required_quantity ?? 0), 0);
-  const totalReceivedQty = 0;
-  const totalConsumedQty = consumptionLineRows.reduce((acc, row) => acc + Number(row.consumed_quantity ?? 0), 0);
-  const totalWasteQty = consumptionLineRows.reduce((acc, row) => acc + Number(row.waste_quantity ?? 0), 0);
+  const operationalQuantities = calculateOperationalQuantityMetrics(
+    requirementRows.map((row) => ({ unitId: row.unit_id == null ? null : String(row.unit_id), quantity: Number(row.required_quantity ?? 0) })),
+    (receiptLines.data ?? []).map((row) => ({ status: "received", unitId: row.unit_id == null ? null : String(row.unit_id), quantity: Number(row.received_quantity ?? 0) })),
+    consumptionLineRows.map((row) => ({ unitId: row.unit_id == null ? null : String(row.unit_id), consumed: Number(row.consumed_quantity ?? 0), waste: Number(row.waste_quantity ?? 0) })),
+  );
+  const totalRequired = operationalQuantities.totalRequiredQty;
   const shortageCount = requirementRows.filter((row) => Number(row.shortage_quantity ?? 0) > 0).length;
   const estimatedShortageCost = requirementRows.reduce((acc, row) => {
     const shortage = Number(row.shortage_quantity ?? 0);
@@ -2437,19 +2708,28 @@ export async function getCateringPlanOperationalSummary(
     confirmed_consumption_count: confirmedConsumptionCount,
     estimated_plan_cost: Number(plan.data.estimated_total_cost ?? 0),
     requisition_total: requisitionRows.reduce((acc, row) => acc + Number(row.estimated_total_cost ?? 0), 0),
-    received_total_cost: receivedReceiptRows.reduce((acc, row) => acc + Number(row.total_received_cost ?? 0), 0),
-    consumed_total_cost: consumptionLineRows.reduce(
-      (acc, row) => acc + Number(row.consumed_quantity ?? 0) * Number(row.unit_cost ?? 0),
-      0,
-    ),
-    waste_total_cost: consumptionLineRows.reduce(
-      (acc, row) => acc + Number(row.waste_quantity ?? 0) * Number(row.unit_cost ?? 0),
-      0,
-    ),
+    received_total_cost: calculateOperationalExecutionCosts({
+      receivedCosts: receivedReceiptRows.map((row) => Number(row.total_received_cost ?? 0)),
+      consumptionCosts: [],
+    }).receivedCost,
+    consumed_total_cost: calculateOperationalExecutionCosts({
+      receivedCosts: [],
+      consumptionCosts: consumptionLineRows.map((row) => ({
+        consumedCost: Number(row.consumed_quantity ?? 0) * Number(row.unit_cost ?? 0),
+        wasteCost: Number(row.waste_quantity ?? 0) * Number(row.unit_cost ?? 0),
+      })),
+    }).consumedCost,
+    waste_total_cost: calculateOperationalExecutionCosts({
+      receivedCosts: [],
+      consumptionCosts: consumptionLineRows.map((row) => ({
+        consumedCost: Number(row.consumed_quantity ?? 0) * Number(row.unit_cost ?? 0),
+        wasteCost: Number(row.waste_quantity ?? 0) * Number(row.unit_cost ?? 0),
+      })),
+    }).wasteCost,
     estimated_shortage_cost: Number(estimatedShortageCost.toFixed(4)),
     operational_status_label: operationalStatusLabel,
-    variance_received_vs_required: Number((totalReceivedQty - totalRequired).toFixed(4)),
-    variance_consumed_vs_received: Number((totalConsumedQty + totalWasteQty - totalReceivedQty).toFixed(4)),
+    variance_received_vs_required: operationalQuantities.varianceReceivedVsRequired == null ? null : Number(operationalQuantities.varianceReceivedVsRequired.toFixed(4)),
+    variance_consumed_vs_received: operationalQuantities.varianceConsumedVsReceived == null ? null : Number(operationalQuantities.varianceConsumedVsReceived.toFixed(4)),
   };
 }
 

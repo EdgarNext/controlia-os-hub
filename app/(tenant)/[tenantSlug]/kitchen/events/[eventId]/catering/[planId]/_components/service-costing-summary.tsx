@@ -1,75 +1,34 @@
+import Link from "next/link";
+import { StatePanel } from "@/components/ui/state-panel";
+import { ActionFeedbackForm } from "@/app/(tenant)/[tenantSlug]/kitchen/events/_components/action-feedback-form";
+import { KitchenSubmitButton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-submit-button";
+import { resetCateringPlanMarginToDefaultWithFeedbackAction, resetCateringPlanStaffRateToDefaultWithFeedbackAction, updateCateringPlanPricingWithFeedbackAction } from "@/lib/kitchen/event-catering/pricing-actions";
+import { getCateringPlanPricingPreview, getCateringPlanPricingSnapshots } from "@/lib/kitchen/event-catering/pricing-queries";
 import type { ChefServiceDetail } from "@/lib/kitchen/event-catering/chef-costing";
-import { CostingStatus } from "../../_components/costing-status";
 
-function formatMoney(value: number | null): string {
-  if (value == null) return "—";
-  return `$${value.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function money(value: number | null, currency = "MXN"): string { if (value == null) return "—"; return new Intl.NumberFormat("es-MX", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value); }
+function number(value: number | null): string { return value == null ? "—" : value.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function sourceLabel(source: "tenant_default" | "plan_override"): string { return source === "plan_override" ? "Personalizado para este servicio" : "Predeterminado"; }
+
+export async function ServiceCostingSummary({ detail, tenantSlug, canManage }: { detail: ChefServiceDetail; tenantSlug: string; canManage: boolean }) {
+  const loaded = await loadPreview(tenantSlug, detail.plan.id);
+  if (!loaded.preview) return <StatePanel kind="error" title="No se pudo cargar el costeo del servicio" message={loaded.error} />;
+  const preview = loaded.preview;
+  const result = preview.result;
+    return <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4" aria-labelledby="service-costing-title">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="service-costing-title" className="text-base font-semibold text-foreground">Costeo del servicio</h2><p className="mt-1 text-sm text-muted">Vista previa dinámica del costo del servicio y del precio sugerido.</p></div>{canManage ? <Link href={`/${tenantSlug}/kitchen/events/costing-settings`} className="text-sm text-primary underline-offset-4 hover:underline">Configurar valores predeterminados</Link> : null}</div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Costo de alimentos" value={money(result.foodCost, result.currency)} /><Metric label="Personal extra" value={result.extraStaffCount === 0 ? "No requerido" : `${result.extraStaffCount.toLocaleString("es-MX")} personas`} detail={result.extraStaffUnitCost == null ? "Tarifa por persona: No configurada" : `Tarifa por persona: ${money(result.extraStaffUnitCost, result.currency)} · ${sourceLabel(preview.pricing.staff_rate_source)}`} /><Metric label="Costo de personal extra" value={money(result.extraLaborCost, result.currency)} /><Metric label="Costo base del servicio" value={money(result.serviceCostBasis, result.currency)} emphasis /></div>
+      {result.status === "incomplete" ? <div className="mt-4 rounded-[var(--radius-base)] border border-border bg-surface-2 p-4"><p className="text-sm font-medium text-foreground">Falta definir la tarifa de personal extra para calcular el precio sugerido.</p><p className="mt-1 text-sm text-muted">El costo de alimentos, la cantidad de personal y el costo base permanecen visibles; no se muestra un precio incompleto.</p></div> : <><div className="mt-4 grid gap-3 md:grid-cols-3"><Metric label="Margen objetivo" value={`${number(result.targetMarginPct)}%`} detail={sourceLabel(preview.pricing.margin_source)} /><Metric label="Utilidad sugerida" value={money(result.suggestedProfit, result.currency)} /><Metric label="Precio sugerido por persona" value={result.suggestedPricePerGuest == null ? "—" : money(result.suggestedPricePerGuest, result.currency)} detail={result.plannedGuestCount == null || result.plannedGuestCount <= 0 ? "Sin personas válidas" : undefined} /></div><div className="mt-4 rounded-[var(--radius-base)] border border-border bg-surface-2 p-4"><p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">Precio sugerido del servicio</p><p className="mt-1 text-2xl font-semibold tracking-tight text-foreground">{money(result.suggestedServicePrice, result.currency)}</p><p className="mt-2 text-xs text-muted">Calculado a partir del costo base y el margen objetivo. No representa necesariamente el precio final de venta.</p></div></>}
+      {canManage ? <PricingEditor detail={detail} tenantSlug={tenantSlug} preview={preview} /> : null}<SnapshotNotice detail={detail} snapshots={loaded.snapshots} currency={result.currency} />
+    </section>;
 }
 
-function formatPercent(value: number | null): string {
-  if (value == null) return "—";
-  return `${value.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+async function loadPreview(tenantSlug: string, planId: string) {
+  try { const [preview, snapshots] = await Promise.all([getCateringPlanPricingPreview(tenantSlug, planId), getCateringPlanPricingSnapshots(tenantSlug, planId)]); return { preview, snapshots, error: "" }; }
+  catch (error) { return { preview: null, error: error instanceof Error ? error.message : "Intenta recargar la vista." }; }
 }
 
-export function ServiceCostingSummary({ detail }: { detail: ChefServiceDetail }) {
-  const isHistoricalView = detail.initialCostDisplay.semantic === "historical";
-
-  return (
-    <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">Resumen económico del servicio</h2>
-          <p className="mt-1 text-sm text-muted">
-            Evento: {detail.event.name} · Personas del servicio:{" "}
-            {detail.plan.planned_guest_count != null
-              ? Number(detail.plan.planned_guest_count).toLocaleString("es-MX")
-              : "Sin definir"}
-          </p>
-          {detail.latestUpdatedSnapshot ? (
-            <p className="mt-1 text-sm text-muted">
-              Último recosteo:{" "}
-              {new Date(detail.latestUpdatedSnapshot.createdAt).toLocaleString("es-MX", {
-                day: "2-digit",
-                month: "short",
-                year: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-                timeZone: "America/Mexico_City",
-              })}
-            </p>
-          ) : null}
-          {detail.configurationChanged ? (
-            <p className="mt-2 text-sm text-primary">
-              Este servicio cambió después del último costeo. Genera un nuevo costo inicial desde el evento.
-            </p>
-          ) : null}
-        </div>
-        <CostingStatus label={detail.costingLabel} />
-      </div>
-
-      {isHistoricalView ? (
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <MetricMini label="Último costo guardado" value={formatMoney(detail.serviceCostTotal)} />
-          <MetricMini label="Estado actual" value="Configuración anterior" />
-        </div>
-      ) : (
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <MetricMini label="Costo inicial del servicio" value={formatMoney(detail.serviceCostTotal)} />
-          <MetricMini label="Costo actualizado del servicio" value={formatMoney(detail.serviceUpdatedCostTotal)} />
-          <MetricMini label="Variación por precio" value={formatMoney(detail.priceVariationAmount)} />
-          <MetricMini label="Variación porcentual" value={formatPercent(detail.priceVariationPercent)} />
-          <MetricMini label="Costo actualizado por persona" value={formatMoney(detail.serviceUpdatedCostPerPerson)} />
-        </div>
-      )}
-    </section>
-  );
-}
-
-function MetricMini({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-      <p className="text-xs text-muted">{label}</p>
-      <p className="mt-1 text-base font-semibold text-foreground">{value}</p>
-    </div>
-  );
-}
+function PricingEditor({ detail, tenantSlug, preview }: { detail: ChefServiceDetail; tenantSlug: string; preview: Awaited<ReturnType<typeof getCateringPlanPricingPreview>> }) { return <details className="mt-4 rounded-[var(--radius-base)] border border-border p-4"><summary className="cursor-pointer list-none text-sm font-semibold text-foreground">Editar costeo</summary><ActionFeedbackForm action={updateCateringPlanPricingWithFeedbackAction} className="mt-4 grid gap-3 md:grid-cols-3"><input type="hidden" name="tenantSlug" value={tenantSlug} /><input type="hidden" name="planId" value={detail.plan.id} /><Field id="extraStaffCount" name="extraStaffCount" label="Personal extra" type="number" min="0" step="1" defaultValue={String(preview.pricing.extra_staff_count)} /><Field id="extraStaffUnitCost" name="extraStaffUnitCost" label="Tarifa por persona" type="number" min="0" step="0.01" defaultValue={preview.pricing.extra_staff_unit_cost == null ? "" : String(preview.pricing.extra_staff_unit_cost)} /><Field id="targetMarginPct" name="targetMarginPct" label="Margen objetivo" type="number" min="0" max="99.99" step="0.01" defaultValue={String(preview.pricing.target_margin_pct)} suffix="%" /><div className="md:col-span-3"><KitchenSubmitButton pendingLabel="Guardando costeo...">Guardar costeo</KitchenSubmitButton></div></ActionFeedbackForm><div className="mt-3 flex flex-wrap gap-2"><ActionFeedbackForm action={resetCateringPlanStaffRateToDefaultWithFeedbackAction}><input type="hidden" name="tenantSlug" value={tenantSlug} /><input type="hidden" name="planId" value={detail.plan.id} /><KitchenSubmitButton variant="secondary" pendingLabel="Restableciendo...">Usar tarifa predeterminada</KitchenSubmitButton></ActionFeedbackForm><ActionFeedbackForm action={resetCateringPlanMarginToDefaultWithFeedbackAction}><input type="hidden" name="tenantSlug" value={tenantSlug} /><input type="hidden" name="planId" value={detail.plan.id} /><KitchenSubmitButton variant="secondary" pendingLabel="Restableciendo...">Usar margen predeterminado</KitchenSubmitButton></ActionFeedbackForm></div></details>; }
+function Field({ id, name, label, type, min, max, step, defaultValue, suffix }: { id: string; name: string; label: string; type: string; min: string; max?: string; step: string; defaultValue: string; suffix?: string }) { return <div><label htmlFor={id} className="text-sm font-medium text-foreground">{label}</label><div className="mt-1 flex items-center gap-2"><input id={id} name={name} type={type} min={min} max={max} step={step} defaultValue={defaultValue} required={name !== "extraStaffUnitCost"} className="h-11 w-full rounded-[var(--radius-base)] border border-border bg-surface-2 px-3 text-sm text-foreground outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary" />{suffix ? <span className="text-sm text-muted">{suffix}</span> : null}</div></div>; }
+function SnapshotNotice({ detail, snapshots, currency }: { detail: ChefServiceDetail; snapshots: Awaited<ReturnType<typeof getCateringPlanPricingSnapshots>>; currency: string }) { if (!detail.latestInitialSnapshot && !detail.latestUpdatedSnapshot) return null; return <div className="mt-4 border-t border-border pt-4"><p className="text-sm font-semibold text-foreground">Costeo congelado</p><p className="mt-1 text-sm text-muted">Los snapshots históricos conservan sus propios valores y no cambian con esta vista previa.</p><div className="mt-3 grid gap-3 md:grid-cols-2">{snapshots.filter((snapshot, index, all) => all.findIndex((row) => row.snapshotKind === snapshot.snapshotKind) === index).map((snapshot) => snapshot.pricingModelVersion === "service_margin_v1" ? <div key={snapshot.snapshotKind} className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3"><p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">{snapshot.snapshotKind === "initial" ? "Inicial" : "Actualizado"} · service_margin_v1</p><div className="mt-2 grid grid-cols-2 gap-2 text-sm"><span className="text-muted">Costo de alimentos</span><span className="text-right">{money(snapshot.foodCost, currency)}</span><span className="text-muted">Personal extra</span><span className="text-right">{money(snapshot.extraStaffCost, currency)}</span><span className="text-muted">Costo base</span><span className="text-right">{money(snapshot.serviceCostBasis, currency)}</span><span className="text-muted">Margen aplicado</span><span className="text-right">{snapshot.targetMarginPct == null ? "—" : number(snapshot.targetMarginPct) + "%"}</span><span className="text-muted">Utilidad sugerida</span><span className="text-right">{money(snapshot.suggestedProfit, currency)}</span><span className="font-medium text-foreground">Precio sugerido</span><span className="text-right font-medium">{money(snapshot.suggestedServicePrice, currency)}</span></div></div> : <div key={snapshot.snapshotKind} className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3"><p className="text-sm font-medium text-foreground">{snapshot.snapshotKind === "initial" ? "Inicial" : "Actualizado"}</p><p className="mt-1 text-xs text-muted">Snapshot anterior al modelo de precio sugerido. Se conservan sus valores históricos sin inferir margen ni personal.</p></div>)}</div></div>; }
+function Metric({ label, value, detail, emphasis = false }: { label: string; value: string; detail?: string; emphasis?: boolean }) { return <div className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3"><p className="text-xs text-muted">{label}</p><p className={`mt-1 font-semibold text-foreground ${emphasis ? "text-lg" : "text-base"}`}>{value}</p>{detail ? <p className="mt-1 text-xs text-muted">{detail}</p> : null}</div>; }

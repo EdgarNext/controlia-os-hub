@@ -17,6 +17,7 @@ import {
   resolveRequisitionLineEffectiveUnitPrice,
   resolveRequisitionLineFinancialTotal,
 } from "./procurement-classification";
+import { ensureCateringPlanPricingForTenant } from "./pricing-actions";
 
 function toText(value: FormDataEntryValue | null): string {
   return String(value ?? "").trim();
@@ -801,6 +802,16 @@ export async function createCateringPlanAction(formData: FormData): Promise<void
     .select("id")
     .single();
   if (insertError || !plan) throw new Error(`No se pudo crear plan: ${insertError?.message ?? "error"}`);
+
+  try {
+    await ensureCateringPlanPricingForTenant(tenant.tenantId, plan.id, user.id);
+  } catch (error) {
+    throw new Error(
+      `El plan se creó, pero no se pudo inicializar su pricing. La lectura efectiva permanece disponible: ${
+        error instanceof Error ? error.message : "error inesperado"
+      }`,
+    );
+  }
 
   revalidateCateringPaths(tenant.tenantSlug, eventId, plan.id);
 }

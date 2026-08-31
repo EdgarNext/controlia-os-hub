@@ -19,7 +19,7 @@ export function EventCateringBadge({
   label,
   tone = "default",
 }: {
-  label: string;
+  label: ReactNode;
   tone?: EventCateringBadgeTone;
 }) {
   return (
@@ -28,3 +28,4 @@ export function EventCateringBadge({
     </span>
   );
 }
+import type { ReactNode } from "react";

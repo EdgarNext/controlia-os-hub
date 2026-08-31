@@ -1,220 +1,56 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { AlertTriangle, CalendarDays, CheckCircle2, ChevronDown, ChevronUp, CircleHelp, Layers3, Utensils, Users } from "lucide-react";
 import { StatePanel } from "@/components/ui/state-panel";
 import { KitchenMetricCard } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-metric-card";
 import { KitchenPageHeader } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-page-header";
 import { KitchenReportsContentSkeleton } from "@/app/(tenant)/[tenantSlug]/kitchen/_components/kitchen-loading-skeletons";
 import { EventCateringBadge } from "@/app/(tenant)/[tenantSlug]/kitchen/events/_components/event-catering-badge";
 import { getCateringFinancialDashboard } from "@/lib/kitchen/event-catering/queries";
-import type {
-  CateringFinancialDashboardAlert,
-  CateringFinancialDashboardRow,
-  CateringFinancialDashboardStatus,
-} from "@/lib/kitchen/event-catering/types";
+import type { CateringFinancialDashboard, CateringFinancialDashboardRow, CateringFinancialEventReadModel } from "@/lib/kitchen/event-catering/types";
 import { resolveKitchenPage } from "../_lib/page-access";
+import { getChefCostingStatusPresentation } from "@/lib/kitchen/event-catering/costing-status";
 
-type KitchenReportsPageProps = {
-  params: Promise<{ tenantSlug: string }>;
-};
-
+type KitchenReportsPageProps = { params: Promise<{ tenantSlug: string }>; searchParams: Promise<{ view?: string }> };
 export const metadata: Metadata = { title: "Dashboard gerencial de catering" };
 
-function formatMoney(value: number) {
-  return `$${Number(value).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function formatMoney(value: number | null) { return value == null ? "—" : `$${Number(value).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function formatNumber(value: number | null) { return value == null ? "—" : Number(value).toLocaleString("es-MX", { maximumFractionDigits: 2 }); }
+function formatPercent(value: number | null) { return value == null ? "—" : `${Number(value).toLocaleString("es-MX", { maximumFractionDigits: 2 })}%`; }
+function statusLabel(status: CateringFinancialEventReadModel["services"][number]["costingStatus"]) {
+  const presentation = getChefCostingStatusPresentation(status);
+  const Icon = presentation.severity === "informational" ? CheckCircle2 : presentation.severity === "attention" ? AlertTriangle : CircleHelp;
+  const tone = presentation.severity === "informational" ? "success" : presentation.severity === "attention" ? "warning" : "danger";
+  return <EventCateringBadge label={<span className="inline-flex items-center gap-1"><Icon className="h-3.5 w-3.5" aria-hidden="true" />{presentation.label}</span>} tone={tone} />;
+}
+function serviceRows(dashboard: CateringFinancialDashboard) { return new Map<string, CateringFinancialDashboardRow>(dashboard.rows.map((row) => [row.planId, row])); }
+
+function EventFinancialGroup({ event, rowsByPlanId }: { event: CateringFinancialEventReadModel; rowsByPlanId: Map<string, CateringFinancialDashboardRow> }) {
+  const attentionCount = event.attentionServiceCount;
+  const readyCount = event.services.filter((service) => service.pricingStatus === "ready").length;
+  return <details className="group rounded-[var(--radius-base)] border border-border bg-surface" open={attentionCount > 0}>
+    <summary className="cursor-pointer list-none rounded-[var(--radius-base)] p-4 transition-colors hover:border-border hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary group-open:border-b group-open:border-border">
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><h3 className="text-base font-semibold text-foreground">{event.eventName ?? event.eventId.slice(0, 8)}</h3><p className="mt-1 text-xs text-muted">{event.eventDate ? new Date(event.eventDate).toLocaleDateString("es-MX") : "Fecha no registrada"} · {event.expectedAttendance == null ? "Asistencia esperada no registrada" : `${formatNumber(event.expectedAttendance)} asistentes`} · {event.activeServiceCount} servicios · {event.recipeCount} recetas · {formatNumber(event.plannedCovers)} cubiertos planeados</p></div><div className="flex items-center gap-3 text-left sm:text-right"><div><p className="text-xs text-muted">{attentionCount > 0 ? `${attentionCount} requieren atención` : "Servicios al día"}</p></div><span className="inline-flex items-center gap-1 text-xs font-medium text-muted"><span className="group-open:hidden">Ver {event.activeServiceCount} servicios</span><span className="hidden group-open:inline">Ocultar servicios</span><ChevronDown className="h-4 w-4 group-open:hidden" aria-hidden="true" /><ChevronUp className="hidden h-4 w-4 group-open:inline" aria-hidden="true" /></span></div></div>
+      <div className="mt-4 grid gap-3 text-sm sm:grid-cols-4"><div><p className="text-xs text-muted">Costo base</p><p className="font-semibold text-foreground">{formatMoney(event.currentServiceCostBasisTotal)}</p></div><div><p className="text-xs text-muted">Precio sugerido</p><p className="font-semibold text-foreground">{formatMoney(event.suggestedServicePriceTotal)}</p></div><div><p className="text-xs text-muted">Utilidad sugerida</p><p className="font-semibold text-foreground">{formatMoney(event.suggestedProfitTotal)}</p></div><div><p className="text-xs text-muted">Margen efectivo</p><p className="font-semibold text-foreground">{formatPercent(event.effectiveSuggestedMarginPct)}</p></div></div>
+      {readyCount < event.activeServiceCount ? <p className="mt-2 text-xs text-warning">{readyCount} de {event.activeServiceCount} servicios con precio sugerido.</p> : null}
+      {attentionCount > 0 ? <p className="mt-3 text-xs font-medium text-warning">{attentionCount} servicio{attentionCount === 1 ? " requiere" : " requieren"} atención.</p> : null}
+    </summary>
+    <div className="space-y-3 border-t border-border p-4">{event.services.map((service) => { const row = rowsByPlanId.get(service.planId); return <article key={service.planId} className="rounded-[var(--radius-base)] border border-border bg-surface-2 p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-medium text-foreground">{service.planName ?? service.planId.slice(0, 8)}</h4><p className="mt-1 text-xs text-muted">{formatNumber(service.plannedCovers)} personas del servicio</p></div><div className="flex flex-wrap items-center gap-2">{statusLabel(service.costingStatus)}{service.pricingAttentionLabel ? <EventCateringBadge label={service.pricingAttentionLabel} tone="warning" /> : null}</div></div><div className="mt-3 grid gap-3 text-sm md:grid-cols-3"><div className="rounded-[var(--radius-base)] border border-border bg-surface p-3"><p className="text-xs font-medium text-muted">Costo</p><p className="mt-1 font-semibold text-foreground">{formatMoney(service.currentServiceCostBasis)}</p><p className="text-xs text-muted">{formatMoney(service.currentCostPerPerson)} por persona</p><p className="mt-1 text-[11px] text-muted">Alimentos + personal extra</p></div><div className="rounded-[var(--radius-base)] border border-border bg-surface p-3"><p className="text-xs font-medium text-muted">Precio sugerido</p><p className="mt-1 text-base font-semibold text-foreground">{formatMoney(service.suggestedServicePrice)}</p><p className="text-xs text-muted">{formatMoney(service.suggestedPricePerPerson)} por persona</p></div><div className="rounded-[var(--radius-base)] border border-border bg-surface p-3"><p className="text-xs font-medium text-muted">Resultado</p><p className="mt-1 font-semibold text-foreground">{formatMoney(service.suggestedProfit)} utilidad</p><p className="text-xs text-muted">{formatPercent(service.effectiveSuggestedMarginPct)} margen</p></div></div>{row ? <div className="mt-3"><Link href={row.detailHref} className="text-xs font-medium underline underline-offset-2">Ver servicio</Link></div> : null}</article>; })}</div>
+  </details>;
 }
 
-function getStatusBadge(status: CateringFinancialDashboardStatus) {
-  switch (status) {
-    case "closed":
-      return <EventCateringBadge label="Cerrado" tone="success" />;
-    case "consumed":
-      return <EventCateringBadge label="Consumido" tone="info" />;
-    case "received":
-      return <EventCateringBadge label="Recibido" tone="info" />;
-    case "requisitioned":
-      return <EventCateringBadge label="Requisicionado" tone="warning" />;
-    case "partial":
-      return <EventCateringBadge label="Reporte parcial" tone="muted" />;
-    case "review_required":
-      return <EventCateringBadge label="Requiere revisión" tone="danger" />;
-    case "planned":
-    default:
-      return <EventCateringBadge label="Planeado" tone="muted" />;
-  }
+function ReportsView({ dashboard, historical }: { dashboard: CateringFinancialDashboard; historical: boolean }) {
+  const rows = historical ? dashboard.historicalRows : dashboard.rows;
+  if (rows.length === 0) return <StatePanel kind="empty" title={historical ? "No hay históricos disponibles" : "Aún no hay eventos activos con costeo"} message={historical ? "Los servicios cancelados aparecerán aquí cuando exista información histórica." : "Cuando existan servicios activos de catering con costeo, aparecerán aquí para análisis gerencial."} />;
+  const rowsByPlanId = serviceRows(dashboard); const events = historical ? [] : dashboard.events;
+  const expectedAttendance = events.reduce((total, event) => total + (event.expectedAttendance ?? 0), 0);
+  const attentionCount = dashboard.events.reduce((total, event) => total + event.attentionServiceCount, 0);
+  return <div className="space-y-4"><nav aria-label="Vista de reportes" className="flex flex-wrap items-center gap-2 text-sm"><Link href="?view=active" className={!historical ? "rounded-[var(--radius-base)] bg-primary px-3 py-2 text-white" : "rounded-[var(--radius-base)] border border-border px-3 py-2 text-foreground"}>Activos</Link><Link href="?view=historical" className={historical ? "rounded-[var(--radius-base)] bg-primary px-3 py-2 text-white" : "rounded-[var(--radius-base)] border border-border px-3 py-2 text-foreground"}>Históricos / cancelados</Link></nav>
+    {!historical ? <><section aria-labelledby="global-financial-result" className="space-y-3"><h2 id="global-financial-result" className="text-sm font-semibold text-foreground">Resultado económico global</h2><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><KitchenMetricCard label="Costo base total" value={formatMoney(dashboard.summary.serviceCostBasisTotal)} hint="Alimentos + personal extra" /><KitchenMetricCard label="Precio sugerido total" value={formatMoney(dashboard.summary.suggestedServicePriceTotal)} /><KitchenMetricCard label="Utilidad sugerida" value={formatMoney(dashboard.summary.suggestedProfitTotal)} /><KitchenMetricCard label="Margen efectivo" value={formatPercent(dashboard.summary.effectiveSuggestedMarginPct)} /></div>{dashboard.summary.pricingIncompleteServices > 0 || dashboard.summary.legacyPricingUnavailableServices > 0 ? <p className="text-xs text-muted">Precio sugerido disponible para {dashboard.summary.pricingReadyServices} de {dashboard.summary.servicesAnalyzed} servicios activos. {dashboard.summary.pricingIncompleteServices + dashboard.summary.legacyPricingUnavailableServices} requieren completar o recuperar su costeo.</p> : null}</section><section aria-labelledby="managerial-context" className="rounded-[var(--radius-base)] border border-border bg-surface px-3 py-2"><h2 id="managerial-context" className="sr-only">Contexto</h2><div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted"><span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" aria-hidden="true" /><strong className="text-foreground">{events.length}</strong> eventos</span><span className="inline-flex items-center gap-1.5"><Layers3 className="h-3.5 w-3.5" aria-hidden="true" /><strong className="text-foreground">{dashboard.summary.servicesAnalyzed}</strong> servicios</span><span className="inline-flex items-center gap-1.5"><Users className="h-3.5 w-3.5" aria-hidden="true" /><strong className="text-foreground">{formatNumber(expectedAttendance)}</strong> asistencia esperada</span><span className="inline-flex items-center gap-1.5"><Utensils className="h-3.5 w-3.5" aria-hidden="true" /><strong className="text-foreground">{formatNumber(events.reduce((total, event) => total + event.plannedCovers, 0))}</strong> cubiertos planeados</span><span className={attentionCount > 0 ? "inline-flex items-center gap-1.5 text-warning" : "inline-flex items-center gap-1.5"}><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" /><strong className="text-foreground">{attentionCount}</strong> requieren atención</span></div></section></> : <section><h2 className="text-sm font-semibold text-foreground">Históricos y cancelados</h2><p className="mt-1 text-xs text-muted">Estos servicios no participan en los resultados activos.</p></section>}
+    <section aria-labelledby="event-groups" className="space-y-3"><div><h2 id="event-groups" className="text-sm font-semibold text-foreground">{historical ? "Servicios históricos" : "Eventos de catering"}</h2><p className="mt-1 text-xs text-muted">Cada evento agrupa sus servicios para comparar costo, precio, utilidad y margen.</p></div>{events.map((event) => <EventFinancialGroup key={event.eventId} event={event} rowsByPlanId={rowsByPlanId} />)}{historical ? rows.map((row) => <article key={row.planId} className="rounded-[var(--radius-base)] border border-border bg-surface p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-medium text-foreground">{row.eventName ?? row.eventId.slice(0, 8)} · {row.planName ?? row.planId.slice(0, 8)}</h3><p className="mt-1 text-xs text-muted">Cancelado · {row.plannedGuestCount ?? "—"} personas del servicio</p></div><Link href={row.detailHref} className="text-xs underline underline-offset-2">Ver servicio</Link></div><div className="mt-3 flex flex-wrap gap-4 text-sm"><span>Costo base: <strong>{formatMoney(row.pricing.serviceCostBasis)}</strong></span><span>Precio sugerido: <strong>{formatMoney(row.pricing.suggestedServicePrice)}</strong></span><span>Estado: <strong>{row.pricing.source === "legacy_unavailable" ? "Costeo histórico no disponible" : "Costeo histórico"}</strong></span></div></article>) : null}</section>
+  </div>;
 }
 
-function getAlertBadge(alert: CateringFinancialDashboardAlert) {
-  switch (alert) {
-    case "high_remaining_inventory":
-      return <EventCateringBadge label="Remanente alto" tone="warning" />;
-    case "purchase_above_estimate":
-      return <EventCateringBadge label="Compra mayor al estimado" tone="warning" />;
-    case "over_consumption":
-      return <EventCateringBadge label="Sobreconsumo" tone="danger" />;
-    case "material_waste":
-      return <EventCateringBadge label="Merma relevante" tone="danger" />;
-    case "partial_report":
-      return <EventCateringBadge label="Reporte parcial" tone="info" />;
-    case "no_material_issue":
-    default:
-      return <EventCateringBadge label="Sin problema relevante" tone="success" />;
-  }
-}
-
-function DashboardRow({ row }: { row: CateringFinancialDashboardRow }) {
-  return (
-    <tr className="border-t border-border align-top transition-colors hover:bg-surface-2/50">
-      <td className="px-2 py-2 text-foreground">
-        <div className="font-medium">{row.eventName ?? row.eventId.slice(0, 8)}</div>
-        <div className="text-muted">{row.planName ?? row.planId.slice(0, 8)}</div>
-      </td>
-      <td className="px-2 py-2 text-muted">
-        {row.eventDate ? new Date(row.eventDate).toLocaleDateString("es-MX") : "—"}
-      </td>
-      <td className="px-2 py-2 text-foreground">
-        <div>{getStatusBadge(row.financialStatus)}</div>
-        <div className="mt-1 text-muted">{row.operationalStatus}</div>
-      </td>
-      <td className="px-2 py-2 text-foreground">{formatMoney(row.estimatedInitialCost)}</td>
-      <td className="px-2 py-2 text-foreground">{formatMoney(row.requisitionedCost)}</td>
-      <td className="px-2 py-2 text-foreground">{formatMoney(row.receivedCost)}</td>
-      <td className="px-2 py-2 text-foreground">{formatMoney(row.consumedCost)}</td>
-      <td className="px-2 py-2 text-foreground">{formatMoney(row.remainingInventoryValue)}</td>
-      <td className="px-2 py-2 text-foreground">{formatMoney(row.wasteCost)}</td>
-      <td className="px-2 py-2 text-foreground">{formatMoney(row.grossPurchaseVariance)}</td>
-      <td className="px-2 py-2 text-foreground">{formatMoney(row.netConsumptionVariance)}</td>
-      <td className="px-2 py-2 text-foreground">
-        {row.costPerPerson != null ? formatMoney(row.costPerPerson) : "No disponible"}
-      </td>
-      <td className="px-2 py-2 text-foreground">
-        <div>{getAlertBadge(row.alerts[0] ?? "no_material_issue")}</div>
-        <div className="mt-1 text-muted">{row.reading}</div>
-      </td>
-      <td className="px-2 py-2">
-        <Link href={row.detailHref} className="text-xs underline underline-offset-2">
-          Ver servicio
-        </Link>
-      </td>
-    </tr>
-  );
-}
-
-export default async function KitchenReportsPage({ params }: KitchenReportsPageProps) {
-  const { tenantSlug } = await params;
-
-  return (
-    <div className="space-y-4">
-      <KitchenPageHeader
-        eyebrow="Reportes Cocina"
-        title="Dashboard gerencial de catering"
-        description="Resumen financiero de servicios: estimado, compra, consumo real y remanente recuperable."
-      />
-      <Suspense fallback={<KitchenReportsContentSkeleton />}>
-        <KitchenReportsContent tenantSlug={tenantSlug} />
-      </Suspense>
-    </div>
-  );
-}
-
-async function KitchenReportsContent({ tenantSlug }: { tenantSlug: string }) {
-  const [inventory, recipes, catering] = await Promise.all([
-    resolveKitchenPage(tenantSlug, "kitchen_inventory", "reports"),
-    resolveKitchenPage(tenantSlug, "kitchen_recipes", "reports"),
-    resolveKitchenPage(tenantSlug, "event_catering", "reports"),
-  ]);
-
-  if (!inventory.ok && !recipes.ok && !catering.ok) {
-    return (
-      <StatePanel
-        kind="permission"
-        title="Sin permisos para reportes"
-        message="No tienes acceso de lectura a reportes de kitchen-ops en este tenant."
-      />
-    );
-  }
-
-  if (!catering.ok) {
-    return (
-      <StatePanel
-        kind="permission"
-        title="Sin acceso a reportes de catering"
-        message="Tienes acceso a reportes de kitchen-ops, pero no al dashboard financiero de catering."
-      />
-    );
-  }
-
-  const dashboard = await getCateringFinancialDashboard(tenantSlug);
-
-  if (dashboard.rows.length === 0) {
-    return (
-      <StatePanel
-        kind="empty"
-        title="Aún no hay servicios con información financiera suficiente"
-        message="Cuando existan servicios de catering con costeo, requisición, recepción o consumo, aparecerán aquí para análisis gerencial."
-      />
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="text-xs text-muted">
-        <span>Servicios analizados: {dashboard.summary.servicesAnalyzed.toLocaleString("es-MX")}</span>
-        <span className="mx-2">·</span>
-        <span>Servicios con revisión: {dashboard.summary.servicesRequiringReview.toLocaleString("es-MX")}</span>
-      </div>
-
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <KitchenMetricCard label="Servicios analizados" value={dashboard.summary.servicesAnalyzed} />
-          <KitchenMetricCard label="Costo estimado total" value={formatMoney(dashboard.summary.estimatedInitialCostTotal)} />
-          <KitchenMetricCard label="Compra / recepción total" value={formatMoney(dashboard.summary.receivedCostTotal)} />
-          <KitchenMetricCard label="Consumo real total" value={formatMoney(dashboard.summary.consumedCostTotal)} />
-          <KitchenMetricCard label="Inventario remanente" value={formatMoney(dashboard.summary.remainingInventoryValueTotal)} tone={dashboard.summary.remainingInventoryValueTotal > 0 ? "warning" : "default"} />
-          <KitchenMetricCard label="Merma total" value={formatMoney(dashboard.summary.wasteCostTotal)} tone={dashboard.summary.wasteCostTotal > 0 ? "warning" : "default"} />
-          <KitchenMetricCard label="Variación bruta" value={formatMoney(dashboard.summary.grossPurchaseVarianceTotal)} tone={dashboard.summary.grossPurchaseVarianceTotal > 0 ? "warning" : "default"} />
-          <KitchenMetricCard label="Variación neta" value={formatMoney(dashboard.summary.netConsumptionVarianceTotal)} tone={Math.abs(dashboard.summary.netConsumptionVarianceTotal) > 0.01 ? "warning" : "default"} />
-          <KitchenMetricCard label="Servicios con revisión requerida" value={dashboard.summary.servicesRequiringReview} tone={dashboard.summary.servicesRequiringReview > 0 ? "warning" : "default"} />
-        </div>
-        <div className="mt-3 rounded-[var(--radius-base)] border border-border bg-surface-2 p-3">
-          <p className="text-xs font-medium text-foreground">Lectura gerencial global</p>
-          <p className="mt-1 text-xs text-muted">{dashboard.narrative}</p>
-        </div>
-      </section>
-
-      <section className="rounded-[var(--radius-base)] border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-foreground">Servicios de catering</h2>
-        <p className="mt-1 text-xs text-muted">
-          Vista ejecutiva para comparar estimado, compra, consumo real, remanente y alertas financieras por servicio.
-        </p>
-        <div className="mt-3 overflow-x-auto">
-          <table className="min-w-full text-xs">
-            <thead>
-              <tr className="text-left text-muted">
-                <th className="px-2 py-1">Evento / servicio</th>
-                <th className="px-2 py-1">Fecha</th>
-                <th className="px-2 py-1">Estado</th>
-                <th className="px-2 py-1">Estimado inicial</th>
-                <th className="px-2 py-1">Requisicionado</th>
-                <th className="px-2 py-1">Recibido / comprado</th>
-                <th className="px-2 py-1">Consumido real</th>
-                <th className="px-2 py-1">Remanente</th>
-                <th className="px-2 py-1">Merma</th>
-                <th className="px-2 py-1">Variación bruta</th>
-                <th className="px-2 py-1">Variación neta</th>
-                <th className="px-2 py-1">Costo por persona</th>
-                <th className="px-2 py-1">Alerta / lectura</th>
-                <th className="px-2 py-1">Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dashboard.rows.map((row) => (
-                <DashboardRow key={row.planId} row={row} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
-}
+export default async function KitchenReportsPage({ params, searchParams }: KitchenReportsPageProps) { const { tenantSlug } = await params; const { view } = await searchParams; const historical = view === "historical"; return <div className="space-y-4"><KitchenPageHeader eyebrow="Reportes Cocina" title="Dashboard gerencial de catering" description="Compara el costo base, precio sugerido, utilidad y margen de tus eventos y servicios." /><Suspense fallback={<KitchenReportsContentSkeleton />}><KitchenReportsContent tenantSlug={tenantSlug} historical={historical} /></Suspense></div>; }
+async function KitchenReportsContent({ tenantSlug, historical }: { tenantSlug: string; historical: boolean }) { const [inventory, recipes, catering] = await Promise.all([resolveKitchenPage(tenantSlug, "kitchen_inventory", "reports"), resolveKitchenPage(tenantSlug, "kitchen_recipes", "reports"), resolveKitchenPage(tenantSlug, "event_catering", "reports")]); if (!inventory.ok && !recipes.ok && !catering.ok) return <StatePanel kind="permission" title="Sin permisos para reportes" message="No tienes acceso de lectura a reportes de kitchen-ops en este tenant." />; if (!catering.ok) return <StatePanel kind="permission" title="Sin acceso a reportes de catering" message="Tienes acceso a reportes de kitchen-ops, pero no al dashboard gerencial de catering." />; const dashboard = await getCateringFinancialDashboard(tenantSlug); return <ReportsView dashboard={dashboard} historical={historical} />; }

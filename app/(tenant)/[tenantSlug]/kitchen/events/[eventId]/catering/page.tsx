@@ -74,7 +74,7 @@ function resolveServiceCostBlock(service: ChefServiceRow) {
 
   if (service.updatedCostDisplay.kind === "money") {
     return {
-      label: "Costo actualizado vigente",
+      label: "Costo con precios vigentes",
       value: formatMoney(service.updatedCostDisplay.value),
       detail: service.updatedCostDisplay.detail,
     };

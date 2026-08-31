@@ -161,7 +161,7 @@ export function EventCostingComparison({
             detail={detail.initialCostDisplay.detail}
           />
           <MetricCard
-            label="Costo actualizado vigente"
+            label="Costo con precios vigentes"
             value={updatedCostValue}
             detail={detail.updatedCostDisplay.detail}
           />

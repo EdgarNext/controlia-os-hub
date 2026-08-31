@@ -543,8 +543,8 @@ export type CateringPlanOperationalSummary = {
   waste_total_cost: number;
   estimated_shortage_cost: number;
   operational_status_label: string;
-  variance_received_vs_required: number;
-  variance_consumed_vs_received: number;
+  variance_received_vs_required: number | null;
+  variance_consumed_vs_received: number | null;
 };
 
 export type CateringPlanFinancialVarianceReason =
@@ -594,6 +594,27 @@ export type CateringPlanFinancialSummary = {
   varianceExplainedByRemaining: boolean;
 };
 
+export type CateringPlanFinancialPricingSource = "snapshot_v1" | "current_preview" | "legacy_unavailable";
+export type CateringPlanFinancialPricingStatus = "ready" | "incomplete" | "unavailable";
+
+export type CateringPlanFinancialPricing = {
+  source: CateringPlanFinancialPricingSource;
+  status: CateringPlanFinancialPricingStatus;
+  pricingModelVersion: string | null;
+  foodCost: number | null;
+  currentFoodCostSource: "updated_snapshot" | "initial_snapshot" | "current_preview" | "unavailable";
+  extraStaffCount: number | null;
+  extraStaffUnitCost: number | null;
+  extraLaborCost: number | null;
+  serviceCostBasis: number | null;
+  targetMarginPct: number | null;
+  suggestedProfit: number | null;
+  suggestedServicePrice: number | null;
+  suggestedPricePerGuest: number | null;
+  currency: string;
+  warnings: string[];
+};
+
 export type CateringPlanFinancialLine = {
   itemId: string;
   itemName: string | null;
@@ -629,6 +650,7 @@ export type CateringPlanFinancialReport = {
   eventId: string;
   eventName: string | null;
   eventStartsAt: string | null;
+  expectedAttendance: number | null;
   planId: string;
   planName: string | null;
   planStatus: EventCateringPlan["status"];
@@ -637,6 +659,7 @@ export type CateringPlanFinancialReport = {
   receiptIds: string[];
   consumptionIds: string[];
   summary: CateringPlanFinancialSummary;
+  pricing: CateringPlanFinancialPricing;
   lines: CateringPlanFinancialLine[];
   narrative: string;
 };
@@ -674,8 +697,11 @@ export type CateringFinancialDashboardRow = {
   remainingInventoryValue: number;
   grossPurchaseVariance: number;
   netConsumptionVariance: number;
-  costPerPerson: number | null;
+  currentCostPerPerson: number | null;
+  consumedCostPerPerson: number | null;
   plannedGuestCount: number | null;
+  lifecycleStatus: EventCateringPlan["status"];
+  pricing: CateringPlanFinancialPricing;
   alerts: CateringFinancialDashboardAlert[];
   alertLabel: string;
   reading: string;
@@ -693,12 +719,57 @@ export type CateringFinancialDashboardSummary = {
   grossPurchaseVarianceTotal: number;
   netConsumptionVarianceTotal: number;
   servicesRequiringReview: number;
+  pricingReadyServices: number;
+  pricingIncompleteServices: number;
+  legacyPricingUnavailableServices: number;
+  serviceCostBasisTotal: number;
+  extraLaborCostTotal: number;
+  suggestedProfitTotal: number;
+  suggestedServicePriceTotal: number;
+  effectiveSuggestedMarginPct: number | null;
 };
 
 export type CateringFinancialDashboard = {
   rows: CateringFinancialDashboardRow[];
+  historicalRows: CateringFinancialDashboardRow[];
+  events: CateringFinancialEventReadModel[];
   summary: CateringFinancialDashboardSummary;
   narrative: string;
+};
+
+export type CateringFinancialServiceReadModel = {
+  planId: string;
+  planName: string | null;
+  lifecycleStatus: EventCateringPlan["status"];
+  plannedCovers: number | null;
+  currentFoodCost: number | null;
+  currentFoodCostSource: CateringPlanFinancialPricing["currentFoodCostSource"];
+  currentServiceCostBasis: number | null;
+  currentCostPerPerson: number | null;
+  suggestedServicePrice: number | null;
+  suggestedPricePerPerson: number | null;
+  suggestedProfit: number | null;
+  effectiveSuggestedMarginPct: number | null;
+  pricingStatus: CateringPlanFinancialPricingStatus;
+  costingStatus: import("./costing-status").ChefCostingStatus;
+  requiresManagerialAttention: boolean;
+  pricingAttentionLabel: string | null;
+};
+
+export type CateringFinancialEventReadModel = {
+  eventId: string;
+  eventName: string | null;
+  eventDate: string | null;
+  expectedAttendance: number | null;
+  activeServiceCount: number;
+  attentionServiceCount: number;
+  plannedCovers: number;
+  recipeCount: number;
+  currentServiceCostBasisTotal: number;
+  suggestedServicePriceTotal: number;
+  suggestedProfitTotal: number;
+  effectiveSuggestedMarginPct: number | null;
+  services: CateringFinancialServiceReadModel[];
 };
 
 export type CateringPlanPriceReviewSummary = {
