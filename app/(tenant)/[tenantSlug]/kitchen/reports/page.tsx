@@ -161,11 +161,11 @@ function EventFinancialGroup({
           <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
             Totales del evento
           </h4>
-          <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <div>
-              <p className="text-xs text-muted">Costo base</p>
+              <p className="text-xs text-muted">Costo base · insumos</p>
               <p className="font-semibold tabular-nums text-foreground">
-                {formatMoney(event.currentServiceCostBasisTotal)}
+                {formatMoney(event.currentServiceCostBasisTotal - event.extraLaborCostTotal)}
               </p>
             </div>
             <div>
@@ -174,6 +174,13 @@ function EventFinancialGroup({
                 {formatMoney(event.extraLaborCostTotal)}
               </p>
               <p className="text-[11px] text-muted">Suma de servicios</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted">Costo base total</p>
+              <p className="font-semibold tabular-nums text-foreground">
+                {formatMoney(event.currentServiceCostBasisTotal)}
+              </p>
+              <p className="text-[11px] text-muted">Insumos + personal</p>
             </div>
             <div>
               <p className="text-xs text-muted">Precio sugerido</p>
@@ -246,17 +253,14 @@ function EventFinancialGroup({
                     ) : null}
                   </div>
                 </div>
-                <div className="mt-3 grid gap-3 border-t border-border pt-3 text-sm md:grid-cols-4">
+                <div className="mt-3 grid gap-3 border-t border-border pt-3 text-sm md:grid-cols-5">
                   <div>
-                    <p className="text-xs text-muted">Costo</p>
+                    <p className="text-xs text-muted">Costo · insumos</p>
                     <p className="font-semibold tabular-nums text-foreground">
-                      {formatMoney(service.currentServiceCostBasis)}
+                      {formatMoney(service.currentFoodCost)}
                     </p>
                     <p className="text-xs text-muted">
-                      {formatMoney(service.currentCostPerPerson)} por persona
-                    </p>
-                    <p className="mt-1 text-[11px] text-muted">
-                      Alimentos + personal extra
+                      {formatMoney(service.currentFoodCost != null && service.plannedCovers ? service.currentFoodCost / service.plannedCovers : null)} por persona
                     </p>
                   </div>
                   <div>
@@ -266,6 +270,15 @@ function EventFinancialGroup({
                     </p>
                     <p className="text-xs text-muted">
                       Costo: {formatMoney(service.extraLaborCost)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted">Costo base total</p>
+                    <p className="font-semibold tabular-nums text-foreground">
+                      {formatMoney(service.currentServiceCostBasis)}
+                    </p>
+                    <p className="text-xs text-muted">
+                      {formatMoney(service.currentCostPerPerson)} por persona
                     </p>
                   </div>
                   <div>
