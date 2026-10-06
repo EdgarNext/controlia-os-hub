@@ -4,6 +4,7 @@ import { calculateCateringServicePricing } from "./financial-model";
 import { ensureCateringPlanPricingForTenant } from "./pricing-actions";
 import { getCateringPlanPricingBatchForTenant } from "./pricing-queries";
 import type { CateringEffectivePlanPricing } from "./pricing-types";
+import { buildOperationalConfigurationPayload, type OperationalConfigurationPayload } from "./operational-identity";
 
 type ConversionMap = Map<string, number>;
 
@@ -187,6 +188,7 @@ export type EventInitialCostingPreview = {
   eventName: string | null;
   configFingerprint: string;
   configurationPayload: Record<string, unknown>;
+  operationalPayload: OperationalConfigurationPayload;
   warnings: CostingWarning[];
   serviceRows: EventCostingDraft["serviceRows"];
   recipeRows: EventCostingDraft["recipeRows"];
@@ -411,6 +413,7 @@ async function buildDetailedRequirementsForEvent(
   lines: DetailedRequirementLine[];
   warnings: CostingWarning[];
   configPayload: Record<string, unknown>;
+  operationalPayload: OperationalConfigurationPayload;
   configFingerprint: string;
 }> {
   const supabase = await getSupabaseServerClient();
@@ -646,6 +649,7 @@ async function buildDetailedRequirementsForEvent(
       }))
       .sort((left, right) => left.plan_id.localeCompare(right.plan_id)),
   };
+  const operationalPayload = buildOperationalConfigurationPayload(context.event, context.plans, context.planRecipes);
 
   return {
     ...context,
@@ -656,6 +660,7 @@ async function buildDetailedRequirementsForEvent(
     ),
     warnings,
     configPayload,
+    operationalPayload,
     configFingerprint: buildFingerprint(configPayload),
   };
 }
@@ -1277,6 +1282,7 @@ export async function previewInitialEventCostingSnapshot(
     eventId,
     configFingerprint: buildFingerprint(configurationPayload),
     configurationPayload,
+    operationalPayload: requirements.operationalPayload,
     warnings: requirements.warnings,
     serviceRows: financialPricing.serviceRows,
     recipeRows,
@@ -1299,60 +1305,56 @@ export async function createInitialEventCostingSnapshot(
   if (plansError) throw new Error(`No se pudieron validar servicios para pricing histórico: ${plansError.message}`);
   await Promise.all((plans ?? []).map((plan) => ensureCateringPlanPricingForTenant(tenantId, plan.id, userId)));
   const preview = await previewInitialEventCostingSnapshot(tenantId, eventId);
-  const { data: existingSnapshot, error: existingSnapshotError } = await supabase
-    .from("event_catering_costing_snapshots")
-    .select(
-      "id,event_id,snapshot_kind,total_cost,base_total_cost,price_variation_amount,price_variation_percent,service_count,recipe_count,item_line_count,config_fingerprint,warnings",
-    )
-    .eq("tenant_id", tenantId)
-    .eq("event_id", eventId)
-    .eq("snapshot_kind", "initial")
-    .eq("snapshot_status", "completed")
-    .eq("config_fingerprint", preview.configFingerprint)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (existingSnapshotError) {
-    throw new Error(
-      `No se pudo validar si ya existía un costo inicial vigente: ${existingSnapshotError.message}`,
-    );
-  }
-  if (existingSnapshot) {
-    return {
-      snapshotId: String(existingSnapshot.id),
-      eventId: String(existingSnapshot.event_id),
-      snapshotKind: existingSnapshot.snapshot_kind as "initial" | "updated",
-      totalCost: Number(existingSnapshot.total_cost ?? 0),
-      baseTotalCost: Number(existingSnapshot.base_total_cost ?? 0),
-      priceVariationAmount: Number(existingSnapshot.price_variation_amount ?? 0),
-      priceVariationPercent:
-        existingSnapshot.price_variation_percent == null
-          ? null
-          : Number(existingSnapshot.price_variation_percent),
-      serviceCount: Number(existingSnapshot.service_count ?? 0),
-      recipeCount: Number(existingSnapshot.recipe_count ?? 0),
-      itemLineCount: Number(existingSnapshot.item_line_count ?? 0),
-      configFingerprint: String(existingSnapshot.config_fingerprint ?? preview.configFingerprint),
-      warnings: Array.isArray(existingSnapshot.warnings)
-        ? (existingSnapshot.warnings as CostingWarning[])
-        : [],
-    };
-  }
-
-  return insertCompletedSnapshot({
-    tenantId,
-    userId,
-    eventId,
-    eventName: preview.eventName,
-    snapshotKind: "initial",
-    baseSnapshotId: null,
-    configFingerprint: preview.configFingerprint,
-    configurationPayload: preview.configurationPayload,
+  const totalCost = round4(preview.itemRows.reduce((acc, row) => acc + row.lineTotalCost, 0));
+  const baseTotalCost = round4(preview.itemRows.reduce((acc, row) => acc + row.baseLineTotalCost, 0));
+  const priceVariationAmount = round4(totalCost - baseTotalCost);
+  const priceVariationPercent = toPercentDelta(totalCost, baseTotalCost);
+  const snapshotPayload = {
+    event_name: preview.eventName,
+    currency: preview.itemRows[0]?.currency ?? "MXN",
+    service_count: preview.serviceRows.length,
+    recipe_count: preview.recipeRows.length,
+    item_line_count: preview.itemRows.length,
+    total_cost: totalCost,
+    base_total_cost: baseTotalCost,
+    price_variation_amount: priceVariationAmount,
+    price_variation_percent: priceVariationPercent,
+    total_extra_staff_cost: round4(preview.serviceRows.reduce((acc, row) => acc + row.extraStaffTotalCost, 0)),
+    total_service_cost_basis: round4(preview.serviceRows.reduce((acc, row) => acc + row.serviceCostBasis, 0)),
+    total_suggested_profit: round4(preview.serviceRows.reduce((acc, row) => acc + row.suggestedProfit, 0)),
+    total_suggested_service_price: round4(preview.serviceRows.reduce((acc, row) => acc + row.suggestedServicePrice, 0)),
+    config_fingerprint: preview.configFingerprint,
+    configuration_payload: preview.configurationPayload,
     warnings: preview.warnings,
-    serviceRows: preview.serviceRows,
-    recipeRows: preview.recipeRows,
-    itemRows: preview.itemRows,
+    service_rows: preview.serviceRows,
+    recipe_rows: preview.recipeRows,
+    item_rows: preview.itemRows,
+  };
+  const { data, error } = await supabase.rpc("event_catering_create_initial_costing_snapshot_v1", {
+    p_tenant_id: tenantId,
+    p_event_id: eventId,
+    p_created_by: userId,
+    p_operational_payload: preview.operationalPayload,
+    p_snapshot: snapshotPayload,
   });
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error(`No se pudo guardar el costo inicial: ${error?.message ?? "respuesta inválida"}`);
+  }
+  const result = data as Record<string, unknown>;
+  return {
+    snapshotId: String(result.snapshot_id),
+    eventId: String(result.event_id),
+    snapshotKind: "initial",
+    totalCost: Number(result.total_cost ?? 0),
+    baseTotalCost: Number(result.base_total_cost ?? 0),
+    priceVariationAmount: Number(result.price_variation_amount ?? 0),
+    priceVariationPercent: result.price_variation_percent == null ? null : Number(result.price_variation_percent),
+    serviceCount: Number(result.service_count ?? 0),
+    recipeCount: Number(result.recipe_count ?? 0),
+    itemLineCount: Number(result.item_line_count ?? 0),
+    configFingerprint: String(result.config_fingerprint ?? preview.configFingerprint),
+    warnings: Array.isArray(result.warnings) ? (result.warnings as CostingWarning[]) : [],
+  };
 }
 
 export async function createUpdatedEventCostingSnapshot(

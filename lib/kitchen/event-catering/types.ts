@@ -710,6 +710,8 @@ export type CateringFinancialDashboardRow = {
 
 export type CateringFinancialDashboardSummary = {
   servicesAnalyzed: number;
+  extraStaffCountTotal: number;
+  extraLaborCostUnavailable: boolean;
   estimatedInitialCostTotal: number;
   requisitionedCostTotal: number;
   receivedCostTotal: number;
@@ -745,6 +747,8 @@ export type CateringFinancialServiceReadModel = {
   currentFoodCost: number | null;
   currentFoodCostSource: CateringPlanFinancialPricing["currentFoodCostSource"];
   currentServiceCostBasis: number | null;
+  extraStaffCount: number | null;
+  extraLaborCost: number | null;
   currentCostPerPerson: number | null;
   suggestedServicePrice: number | null;
   suggestedPricePerPerson: number | null;
@@ -766,6 +770,7 @@ export type CateringFinancialEventReadModel = {
   plannedCovers: number;
   recipeCount: number;
   currentServiceCostBasisTotal: number;
+  extraLaborCostTotal: number;
   suggestedServicePriceTotal: number;
   suggestedProfitTotal: number;
   effectiveSuggestedMarginPct: number | null;

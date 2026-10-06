@@ -74,14 +74,21 @@ async function KitchenEventsContent({
 
   if (overview.totalEvents === 0) {
     return (
-      <div className="space-y-4">
-        {canCreateEvent ? <CreateEventLink tenantSlug={tenantSlug} /> : null}
-        <StatePanel
-          kind="empty"
-          title="Todavía no hay eventos para costear."
-          message="Crea el primer evento para empezar a configurar servicios y recetas."
-        />
-      </div>
+      <EventsNavigationShell>
+        <div className="space-y-4">
+          {canCreateEvent ? <CreateEventLink tenantSlug={tenantSlug} /> : null}
+          <EventCostingFilters
+            initialQuery={overview.filters.q}
+            initialStatus={overview.filters.status}
+            initialPeriod={overview.filters.period}
+          />
+          <StatePanel
+            kind="empty"
+            title="No encontramos eventos con estos filtros."
+            message="Cambia el periodo, el estado o el texto de búsqueda para consultar otros eventos."
+          />
+        </div>
+      </EventsNavigationShell>
     );
   }
 

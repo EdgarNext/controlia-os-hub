@@ -294,7 +294,10 @@ async function CateringContent({ tenantSlug, eventId }: { tenantSlug: string; ev
                               </div>
                             ))}
                             {service.recipes.length > 3 ? (
-                              <Collapsible title={`Ver ${service.recipes.length - 3} recetas más`}>
+                              <Collapsible
+                                title={`Ver ${service.recipes.length - 3} recetas más`}
+                                contentId={`service-${service.plan.id}-recipes-more`}
+                              >
                                 <div className="space-y-2">
                                   {service.recipes.slice(3).map((recipe) => (
                                     <div key={recipe.planRecipe.id} className="flex items-start gap-2 rounded-[var(--radius-base)] bg-surface px-2 py-2">

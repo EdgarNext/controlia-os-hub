@@ -31,6 +31,11 @@ import type {
   EventCateringPlanRecipe,
   ReadyRecipeForCatering,
 } from "./types";
+import {
+  buildOperationalConfigurationPayload,
+  hasSameOperationalConfiguration,
+  type OperationalConfigurationPayload,
+} from "./operational-identity";
 
 export type { ChefCostingStatus } from "./costing-status";
 import type { ChefCostingStatus } from "./costing-status";
@@ -307,27 +312,6 @@ function round4(value: number): number {
   return Number(value.toFixed(4));
 }
 
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
-      left.localeCompare(right),
-    );
-    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function hasSameConfiguration(
-  currentPayload: Record<string, unknown>,
-  snapshotPayload: Record<string, unknown> | null,
-): boolean {
-  if (!snapshotPayload) return false;
-  return stableStringify(currentPayload) === stableStringify(snapshotPayload);
-}
-
 function costPerPerson(totalCost: number | null, people: number | null | undefined): number | null {
   if (totalCost == null) return null;
   const denominator = Number(people ?? 0);
@@ -340,38 +324,37 @@ function toPercentDelta(current: number | null, base: number | null): number | n
   return round4(((current - base) / base) * 100);
 }
 
-function buildCurrentEventConfigurationPayload(
-  event: CateringEventLite,
-  plans: EventCateringPlan[],
-  planRecipes: EventCateringPlanRecipe[],
-): Record<string, unknown> {
-  return {
-    event_id: event.id,
-    event_name: event.name ?? null,
-    services: plans
-      .map((plan) => ({
-        plan_id: plan.id,
-        service_name: plan.name ?? null,
-        planned_guest_count: plan.planned_guest_count ?? null,
-        status: plan.status,
-        recipes: planRecipes
-          .filter((planRecipe) => planRecipe.plan_id === plan.id)
-          .map((planRecipe) => ({
-            plan_recipe_id: planRecipe.id,
-            recipe_id: planRecipe.recipe_id,
-            recipe_version_id: planRecipe.recipe_version_id,
-            recipe_name: planRecipe.kitchen_recipe_recipes?.name ?? null,
-            planned_servings: Number(planRecipe.planned_servings ?? 0),
-            multiplier: Number(planRecipe.multiplier ?? 0),
-          }))
-          .sort((left, right) => left.plan_recipe_id.localeCompare(right.plan_recipe_id)),
-      }))
-      .sort((left, right) => left.plan_id.localeCompare(right.plan_id)),
-  };
-}
-
 function isActiveCateringPlan(plan: EventCateringPlan): boolean {
   return plan.status !== "canceled";
+}
+
+function sortSnapshotsNewestFirst(snapshots: ChefSnapshotLite[]): ChefSnapshotLite[] {
+  return [...snapshots].sort(
+    (left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+  );
+}
+
+function resolveCurrentSnapshotLineage(
+  currentPayload: OperationalConfigurationPayload,
+  snapshots: ChefSnapshotLite[],
+): { latestInitialSnapshot: ChefSnapshotLite | null; latestUpdatedSnapshot: ChefSnapshotLite | null } {
+  const equivalentInitials = sortSnapshotsNewestFirst(
+    snapshots.filter(
+      (snapshot) =>
+        snapshot.snapshotKind === "initial" &&
+        hasSameOperationalConfiguration(currentPayload, snapshot.configurationPayload),
+    ),
+  );
+  const initialIds = new Set(equivalentInitials.map((snapshot) => snapshot.id));
+  return {
+    latestInitialSnapshot: equivalentInitials[0] ?? null,
+    latestUpdatedSnapshot:
+      sortSnapshotsNewestFirst(
+        snapshots.filter(
+          (snapshot) => snapshot.snapshotKind === "updated" && snapshot.baseSnapshotId != null && initialIds.has(snapshot.baseSnapshotId),
+        ),
+      )[0] ?? null,
+  };
 }
 
 function resolveChefRecipeStateMessage(readiness: KitchenRecipeReadiness | null): string {
@@ -1176,20 +1159,11 @@ async function buildChefEventOverviewRows(
       const eventPlans = (plansByEventId.get(event.id) ?? []).filter(isActiveCateringPlan);
       const eventPlanIdSet = new Set(eventPlans.map((plan) => plan.id));
       const eventRecipes = planRecipes.filter((row) => eventPlanIdSet.has(row.plan_id));
-      const currentPayload = buildCurrentEventConfigurationPayload(event, eventPlans, eventRecipes);
+      const currentPayload = buildOperationalConfigurationPayload(event, eventPlans, eventRecipes);
       const snapshots = snapshotsByEvent.get(event.id) ?? [];
       const initialSnapshots = snapshots.filter((row) => row.snapshotKind === "initial");
       const latestHistoricalInitialSnapshot = initialSnapshots[0] ?? null;
-      const latestInitialSnapshot =
-        initialSnapshots.find((snapshot) =>
-          hasSameConfiguration(currentPayload, snapshot.configurationPayload),
-        ) ?? null;
-      const latestUpdatedSnapshot =
-        snapshots.find(
-          (snapshot) =>
-            snapshot.snapshotKind === "updated" &&
-            snapshot.baseSnapshotId === latestInitialSnapshot?.id,
-        ) ?? null;
+      const { latestInitialSnapshot, latestUpdatedSnapshot } = resolveCurrentSnapshotLineage(currentPayload, snapshots);
       return {
         event,
         servicesCount: eventPlans.length,
@@ -1480,21 +1454,12 @@ export async function getChefEventDetail(
   const activePlans = plans.filter(isActiveCateringPlan);
   const activePlanIds = new Set(activePlans.map((plan) => plan.id));
   const activePlanRecipes = planRecipes.filter((planRecipe) => activePlanIds.has(planRecipe.plan_id));
-  const currentPayload = buildCurrentEventConfigurationPayload(event, activePlans, activePlanRecipes);
+  const currentPayload = buildOperationalConfigurationPayload(event, activePlans, activePlanRecipes);
   const snapshots = snapshotsByEvent.get(eventId) ?? [];
   const initialSnapshots = snapshots.filter((row) => row.snapshotKind === "initial");
   const latestHistoricalInitialSnapshot = initialSnapshots[0] ?? null;
-  const latestInitialSnapshot =
-    initialSnapshots.find((snapshot) =>
-      hasSameConfiguration(currentPayload, snapshot.configurationPayload),
-    ) ?? null;
+  const { latestInitialSnapshot, latestUpdatedSnapshot } = resolveCurrentSnapshotLineage(currentPayload, snapshots);
   const configurationChanged = initialSnapshots.length > 0 && latestInitialSnapshot == null;
-  const latestUpdatedSnapshot =
-    snapshots.find(
-      (snapshot) =>
-        snapshot.snapshotKind === "updated" &&
-        snapshot.baseSnapshotId === latestInitialSnapshot?.id,
-    ) ?? null;
 
   const todayKey = getKitchenBusinessDateKey();
   const dateContext = resolveEventDateContext(event.starts_at, todayKey);

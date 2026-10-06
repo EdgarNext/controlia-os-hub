@@ -52,6 +52,7 @@ import { calculateCateringServicePricing } from "./financial-model";
 import { resolveSingleServiceCostingStatus, serviceRequiresManagerialAttention } from "./costing-status";
 import { aggregateFinancialPricing, calculateServiceCostPerPerson, resolveCateringPricingSource, resolveCurrentServiceFoodCost, selectPreferredV1Snapshot } from "./financial-reporting";
 import { calculateOperationalExecutionCosts, calculateOperationalQuantityMetrics } from "./operational-metrics";
+import { getKitchenBusinessDateKey } from "./business-date";
 import {
   classifyConsumptionItemStockBehavior,
   isOperationalZeroCostWaterItemName,
@@ -2340,15 +2341,33 @@ async function mapWithConcurrency<T, R>(
 
 export async function getCateringFinancialDashboard(
   tenantSlug: string,
+  period?: { from: string; to: string },
 ): Promise<CateringFinancialDashboard> {
-  const plans = await listCateringPlans(tenantSlug);
-  if (plans.length === 0) {
+  const allPlans = await listCateringPlans(tenantSlug);
+  const resolvedPlans = period
+    ? await (async () => {
+        const tenant = await resolveTenantModulePageContext(tenantSlug, "event_catering", "plans", "read");
+        const events = await getEvents(tenant.tenantId, { limit: 200 });
+        const allowedEventIds = new Set(
+          events
+            .filter((event) => {
+              const dateKey = event.starts_at ? getKitchenBusinessDateKey(event.starts_at) : null;
+              return dateKey != null && dateKey >= period.from && dateKey <= period.to;
+            })
+            .map((event) => event.id),
+        );
+        return allPlans.filter((plan) => allowedEventIds.has(plan.event_id));
+      })()
+    : allPlans;
+  if (resolvedPlans.length === 0) {
     return {
       rows: [],
       historicalRows: [],
       events: [],
       summary: {
         servicesAnalyzed: 0,
+        extraStaffCountTotal: 0,
+        extraLaborCostUnavailable: false,
         estimatedInitialCostTotal: 0,
         requisitionedCostTotal: 0,
         receivedCostTotal: 0,
@@ -2371,7 +2390,7 @@ export async function getCateringFinancialDashboard(
     };
   }
 
-  const reports = await mapWithConcurrency(plans, 4, (plan) =>
+  const reports = await mapWithConcurrency(resolvedPlans, 4, (plan) =>
     buildCateringPlanFinancialReport(tenantSlug, plan),
   );
 
@@ -2381,7 +2400,7 @@ export async function getCateringFinancialDashboard(
     .from("event_catering_plan_recipes")
     .select("plan_id")
     .eq("tenant_id", tenant.tenantId)
-    .in("plan_id", plans.map((plan) => plan.id));
+    .in("plan_id", resolvedPlans.map((plan) => plan.id));
   if (recipeError) throw new Error(`No se pudieron cargar recetas del dashboard financiero: ${recipeError.message}`);
   const recipeCountByPlan = new Map<string, number>();
   for (const row of recipeRows ?? []) {
@@ -2507,6 +2526,8 @@ export async function getCateringFinancialDashboard(
   const pricingSummary = aggregateFinancialPricing(rows.map((row) => row.pricing));
   const summary: CateringFinancialDashboardSummary = {
     servicesAnalyzed: rows.length,
+    extraStaffCountTotal: rows.reduce((acc, row) => acc + (row.pricing.extraStaffCount ?? 0), 0),
+    extraLaborCostUnavailable: rows.some((row) => (row.pricing.extraStaffCount ?? 0) > 0 && row.pricing.extraLaborCost == null),
     estimatedInitialCostTotal: round4(rows.reduce((acc, row) => acc + row.estimatedInitialCost, 0)),
     requisitionedCostTotal: round4(rows.reduce((acc, row) => acc + row.requisitionedCost, 0)),
     receivedCostTotal: round4(rows.reduce((acc, row) => acc + row.receivedCost, 0)),
@@ -2533,6 +2554,8 @@ export async function getCateringFinancialDashboard(
       currentFoodCost: report.pricing.foodCost,
       currentFoodCostSource: report.pricing.currentFoodCostSource,
       currentServiceCostBasis: report.pricing.serviceCostBasis,
+      extraStaffCount: report.pricing.extraStaffCount,
+      extraLaborCost: report.pricing.extraLaborCost,
       currentCostPerPerson: calculateServiceCostPerPerson(report.pricing.serviceCostBasis, report.plannedGuestCount),
       suggestedServicePrice: report.pricing.suggestedServicePrice,
       suggestedPricePerPerson: report.pricing.suggestedPricePerGuest,
@@ -2566,6 +2589,7 @@ export async function getCateringFinancialDashboard(
       plannedCovers: 0,
       recipeCount: 0,
       currentServiceCostBasisTotal: 0,
+      extraLaborCostTotal: 0,
       suggestedServicePriceTotal: 0,
       suggestedProfitTotal: 0,
       effectiveSuggestedMarginPct: null,
@@ -2576,6 +2600,7 @@ export async function getCateringFinancialDashboard(
     if (report.plannedGuestCount != null && report.plannedGuestCount > 0) current.plannedCovers += report.plannedGuestCount;
     current.recipeCount += recipeCountByPlan.get(report.planId) ?? 0;
     current.currentServiceCostBasisTotal += report.pricing.serviceCostBasis ?? 0;
+    current.extraLaborCostTotal += report.pricing.extraLaborCost ?? 0;
     current.suggestedServicePriceTotal += report.pricing.suggestedServicePrice ?? 0;
     current.suggestedProfitTotal += report.pricing.suggestedProfit ?? 0;
     current.services.push(service);
@@ -2584,6 +2609,7 @@ export async function getCateringFinancialDashboard(
   const events = [...eventGroups.values()].map((event) => ({
     ...event,
     currentServiceCostBasisTotal: round4(event.currentServiceCostBasisTotal),
+    extraLaborCostTotal: round4(event.extraLaborCostTotal),
     suggestedServicePriceTotal: round4(event.suggestedServicePriceTotal),
     suggestedProfitTotal: round4(event.suggestedProfitTotal),
     effectiveSuggestedMarginPct: event.suggestedServicePriceTotal > 0

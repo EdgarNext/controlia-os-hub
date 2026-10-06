@@ -5,6 +5,7 @@ import { type ReactNode, useId, useState } from "react";
 
 type CollapsibleProps = {
   title: string;
+  contentId?: string;
   defaultOpen?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -13,12 +14,14 @@ type CollapsibleProps = {
 
 export function Collapsible({
   title,
+  contentId: providedContentId,
   defaultOpen = false,
   open,
   onOpenChange,
   children,
 }: CollapsibleProps) {
-  const contentId = useId();
+  const generatedContentId = useId();
+  const contentId = providedContentId ?? generatedContentId;
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
 
   const isControlled = typeof open === "boolean";
